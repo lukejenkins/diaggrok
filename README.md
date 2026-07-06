@@ -19,6 +19,14 @@ The thing I care most about: each parser knows its own byte layout and **refuses
 
 I'll be putting up some example tooling and use cases in the near future to show what you can actually do with this.
 
+## Installation
+
+Not on PyPI yet — install straight from GitHub:
+
+```bash
+pip install "diaggrok @ git+https://github.com/lukejenkins/diaggrok@main"
+```
+
 ## Usage
 
 The high-level entry point is `parse()`: give it a log code, a timestamp, and the raw payload bytes, and get back a decoded object (or `None` if nothing's registered for that code).
