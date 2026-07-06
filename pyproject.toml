@@ -1,0 +1,26 @@
+[project]
+name = "diaggrok"
+version = "0.1.0"
+description = "Qualcomm DIAG log code parser library"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+# Transitive-closure "is diaggrok still publishable?" checker (#N / epic
+# #N D3). Also runnable headlessly as `python -m diaggrok.provenance`, which
+# is how the tests and the (deferred, spec §9) pre-commit hook invoke it — the
+# dev venv loads diaggrok via a .pth, not a pip install, so this entry point is
+# realized only when the package is actually built/installed (e.g. public fork).
+diaggrok-publishable = "diaggrok.provenance:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

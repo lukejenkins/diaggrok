@@ -1,0 +1,58 @@
+"""diaggrok — Qualcomm DIAG log code parser library."""
+from diaggrok._version import __version__
+from diaggrok.frame import parse_outer_frame
+from diaggrok.registry import (
+    Canary,
+    FieldGround,
+    GROUND_TRUTH_STATUSES,
+    GroundTruth,
+    SOURCE_KINDS,
+    SOURCE_TYPES,
+    Source,
+    TEST_MODES,
+    TIMEBASE_ROLES,
+    VALIDATION_STATES,
+    ParserEntry,
+    WIGLE_DIRECT_ROLES,
+    WIGLE_INDIRECT_ROLES,
+    WIGLE_TIMING_SUBFLAGS,
+    all_parser_info,
+    clear_registry,
+    entries_for,
+    load_plugins,
+    parse,
+    parser_info,
+    register,
+    registered_codes,
+    resolve,
+)
+
+__all__ = [
+    "__version__",
+    "Canary",
+    "FieldGround",
+    "GROUND_TRUTH_STATUSES",
+    "GroundTruth",
+    "SOURCE_KINDS",
+    "SOURCE_TYPES",
+    "Source",
+    "TEST_MODES",
+    "TIMEBASE_ROLES",
+    "VALIDATION_STATES",
+    "ParserEntry",
+    "WIGLE_DIRECT_ROLES",
+    "WIGLE_INDIRECT_ROLES",
+    "WIGLE_TIMING_SUBFLAGS",
+    "all_parser_info",
+    "clear_registry",
+    "entries_for",
+    "load_plugins",
+    "parse",
+    "parse_outer_frame",
+    "parser_info",
+    "register",
+    "registered_codes",
+    "resolve",
+]
+
+import diaggrok.parsers  # noqa: E402, F401 — trigger built-in parser registration
