@@ -261,7 +261,7 @@ class Diag0x147E:
 # tick. fw_id/sdr_chip/board_id are GNSS hardware-identity strings (constant per
 # unit, no AT readback) — documented in notes, not grounded.
 
-@register(LOG_GNSS_PRX_RF_HW_STATUS_REPORT,
+@register(LOG_GNSS_PRX_RF_HW_STATUS_REPORT, domain="gnss",
     name="0x147E",
     primary_issue=None,  # #N: per-code diag 0x147E tracker (vs #N recipe meta)
     description="GNSS front-end RF hardware status: version, fw_id, SDR chip, constellation config, ms counter; v3 extracts per-band RF block labels (rf_bands) + GLONASS FDMA channels (glonass_channels) from the v5/v6 body; remaining binary measurement region preserved as raw (#N)",

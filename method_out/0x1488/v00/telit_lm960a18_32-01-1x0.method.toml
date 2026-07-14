@@ -1,0 +1,58 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.1X0"
+
+[[field_map]]
+parser_field = "f_hdop_like"
+quantity = "gnss_horizontal_dilution_of_precision_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "f_measure_0"
+quantity = "gnss_receiver_clock_bias_candidate"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "f_elev_like"
+quantity = "gnss_elevation_or_signed_dop_candidate"
+sources = [
+    { kind = "nmea", value = "$GPGSA / $GPGSV elevation of used/in-view SVs" },
+]
+
+[[field_map]]
+parser_field = "f_variance_0"
+quantity = "gnss_measurement_variance_candidate"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "f_bias_like"
+quantity = "gnss_secondary_bias_candidate"
+
+[[field_map.sources]]
+kind = "other"
+value = "no live-AT reference; characterize vs f_measure_0 across acquisition walk"
+
+[[field_map]]
+parser_field = "counter_u32"
+quantity = "cgps_slow_clock_record_counter_candidate"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "monotonic-increment check across consecutive 0x1488 records during a held fix"
+
+[[field_map]]
+parser_field = "size_class"
+quantity = "cgps_slow_clock_size_class"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "structural: size_class == 0x00 and payload_size == 51 (LM960 SDX20)"

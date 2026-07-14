@@ -1,0 +1,56 @@
+version = 1
+cond = "connected"
+modem_make = "Quectel"
+modem_model = "EG25-G"
+modem_firmware = "EG25GGBR07A08M2G_30.201.30.201"
+
+[[field_map]]
+parser_field = "entries[].pci"
+quantity = "lte_neighbor_pci"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "entries[].earfcn"
+quantity = "lte_neighbor_earfcn_dl"
+status = "verified"
+
+[[field_map.sources]]
+kind = "f3"
+value = "rflte_mc_rx.c — 'MC has built Rx tune scripts for band:%d channel:%d'"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QENG=\"neighbourcell\""
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetCellLocationInfo"
+
+[[field_map]]
+parser_field = "entries[].rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "mbim", value = "MBIM_CID_SIGNAL_STATE" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]

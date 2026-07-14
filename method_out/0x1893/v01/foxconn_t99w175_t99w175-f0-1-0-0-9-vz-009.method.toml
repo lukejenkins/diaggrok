@@ -1,0 +1,30 @@
+version = 1
+cond = "connected"
+modem_make = "Foxconn"
+modem_model = "T99W175"
+modem_firmware = "T99W175.F0.1.0.0.9.VZ.009"
+
+[[field_map]]
+parser_field = "occupied_count"
+quantity = "cxm_active_arbitration_slot_count_candidate"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+    { kind = "qmi", value = "QMI_NAS GetTxRxInfo" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+    { kind = "mbim", value = "MBIM_CID_SIGNAL_STATE" },
+]
+
+[[field_map]]
+parser_field = "version_b"
+quantity = "cxm_chipset_form_discriminant"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "structural: payload_size == 888 (T99W175 SDX55 888B form, byte0 version==0x01)"
+
+[[field_map]]
+parser_field = "counter"
+quantity = "cxm_log_record_counter_candidate"
+sources = [
+    { kind = "trigger", value = "monotonic-increment check across consecutive 0x1893 records" },
+]

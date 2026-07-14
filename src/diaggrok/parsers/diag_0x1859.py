@@ -139,7 +139,7 @@ _GNSS_1859_EXPECTED_VERSION = 0x01
 
 
 @register(
-    0x1859,
+    0x1859, domain="gnss",
     name="0x1859",
     description="GNSS XTRA assistance server URL event (0x1859) — MC7455 (#N)",
     version=2,

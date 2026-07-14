@@ -63,7 +63,7 @@ class Diag0x197F:
 
 
 @register(
-    0x197F,
+    0x197F, domain="gnss",
     name="0x197F",
     description="GNSS/RF state flag (0x197F) — 4B fixed, constant u32 during mode transitions (#N)",
     version=1,

@@ -144,7 +144,7 @@ class Diag0xB195:
 # neighbor log only fires while the UE is RRC_CONNECTED (active data session),
 # so the capture must drive a sustained download while polling QENG.
 
-@register(LOG_LTE_ML1_CONNECTED_NEIGHBOR_MEAS,
+@register(LOG_LTE_ML1_CONNECTED_NEIGHBOR_MEAS, domain="lte-signal",
     name="0xB195",
     description="Connected-mode neighbor PCI, EARFCN, RSRP, RSRQ from 0xB195 sp31v4/v40 — all variants",
     version=6,

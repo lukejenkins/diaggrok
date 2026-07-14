@@ -113,7 +113,7 @@ class Diag0x18F8:
 # Sierra AT dialect (AT!*/AT+CESQ), not Quectel AT+Q*.
 
 @register(
-    0x18F8,
+    0x18F8, domain="gnss",
     name="0x18F8",
     description="GNSS misc status (0x18F8) — 20B fixed v0x01, version-gated (#N)",
     version=2,

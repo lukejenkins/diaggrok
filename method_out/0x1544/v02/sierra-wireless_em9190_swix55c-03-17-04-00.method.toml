@@ -1,0 +1,44 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Sierra"
+modem_model = "EM9190"
+modem_firmware = "SWIX55C_03.17.04.00"
+
+[[field_map]]
+parser_field = "sv_slots.sv_id"
+quantity = "gnss_sv_prn_id"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GxGSV per-SV PRN / $GxGSA active PRN list" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.elevation_deg"
+quantity = "gnss_sv_elevation_deg"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GxGSV elevation field per satellite" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.azimuth_deg"
+quantity = "gnss_sv_azimuth_deg"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GxGSV azimuth field per satellite" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.cn0_db_hz"
+quantity = "gnss_sv_cn0_db_hz"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GxGSV SNR/CNo field per satellite" },
+]
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_embedded_nmea_sentence"
+sources = [
+    { kind = "nmea", value = "the modem's NMEA-port sentence matching nmea_sentence_type" },
+]

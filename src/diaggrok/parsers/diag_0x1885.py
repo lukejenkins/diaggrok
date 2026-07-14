@@ -162,7 +162,7 @@ _GNSS_1885_SIZE_FAMILY = {35: 'sz35', 36: 'sz36', 40: 'sz40', 42: 'sz42',
 
 
 @register(
-    0x1885,
+    0x1885, domain="gnss",
     name="0x1885",
     description="GNSS measurement/status (0x1885) — variable size (35/36/40/42/44/47/51B) shared header + sz=47 structured tail",
     version=6,

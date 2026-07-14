@@ -1,0 +1,14 @@
+version = 10
+cond = "sky-fix"
+modem_make = "Sierra"
+modem_model = "EM9291"
+modem_firmware = "SWIX65C_02.17.08.00"
+
+[[field_map]]
+parser_field = "state"
+quantity = "gnss_engine_rf_state_candidate"
+sources = [
+    { kind = "at", value = "AT!GPSSTATUS?" },
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "at", value = "AT!GPSSATINFO?" },
+]

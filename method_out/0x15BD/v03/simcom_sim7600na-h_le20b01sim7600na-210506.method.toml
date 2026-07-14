@@ -1,0 +1,27 @@
+version = 3
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM7600NA-H"
+modem_firmware = "LE20B01SIM7600NA_210506"
+
+[[field_map]]
+parser_field = "header_tick"
+quantity = "gnss_engine_log_tick"
+sources = [
+    { kind = "trigger", value = "GNSS engine running (AT+CGPS=1,1)" },
+]
+
+[[field_map]]
+parser_field = "v3_sub_records.tick"
+quantity = "gnss_subrecord_measurement_tick"
+sources = [
+    { kind = "trigger", value = "GNSS engine running (AT+CGPS=1,1)" },
+]
+
+[[field_map]]
+parser_field = "v3_sub_records.field_x"
+quantity = "gnss_measurement_epoch_index_candidate"
+sources = [
+    { kind = "trigger", value = "GNSS warm restart (AT+CGPS=0; AT+CGPS=1,1)" },
+    { kind = "at", value = "AT+CGPSINFO" },
+]

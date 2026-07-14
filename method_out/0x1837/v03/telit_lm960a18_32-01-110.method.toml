@@ -1,0 +1,37 @@
+version = 3
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.110"
+
+[[field_map]]
+parser_field = "latitude_deg"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GPGGA field 2/3 / $GPRMC field 3/4 (Telit $GPSNMUN stream)" },
+]
+
+[[field_map]]
+parser_field = "longitude_deg"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GPGGA field 4/5 / $GPRMC field 5/6 (Telit $GPSNMUN stream)" },
+]
+
+[[field_map]]
+parser_field = "altitude_m"
+quantity = "gnss_altitude_m"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GPGGA field 9 (MSL alt) + field 11 (geoid separation)" },
+]
+
+[[field_map]]
+parser_field = "position_uncertainty_m"
+quantity = "gnss_horizontal_position_uncertainty_m"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "other", value = "QMI_LOC position-report event HEPE (not in poller set yet)" },
+]

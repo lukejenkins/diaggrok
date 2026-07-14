@@ -1,0 +1,46 @@
+version = 1
+cond = "connected"
+modem_make = "Casa"
+modem_model = "CFW-3212"
+modem_firmware = "RG520NNADAR03A03M4G"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "other", value = "DIAG 0xB116 config_word" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "lte_serving_rsrq_db"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_serving_meas_cell_count"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+]

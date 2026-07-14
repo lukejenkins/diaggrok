@@ -1,0 +1,39 @@
+version = 5
+cond = "connected"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.110"
+
+[[field_map]]
+parser_field = "earfcn_or_freq"
+quantity = "lte_intrafreq_neighbor_earfcn_candidate"
+status = "refuted"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 rflte_mc_rx.c 'MC has built Rx tune scripts for band:%d channel:%d' (qdb GUID 209a8edf, LM960 32.01.1X0 slot-3 qdsp6m.qdb; 0x99 QSR4 resolved 100%)"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#MONI"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#RFSTS"
+
+[[field_map]]
+parser_field = "measurement_raw"
+quantity = "lte_intrafreq_neighbor_rsrp_or_rsrq_raw_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT#MONI" },
+    { kind = "at", value = "AT#RFSTS" },
+]
+
+[[field_map]]
+parser_field = "measured_cell_count"
+quantity = "lte_intrafreq_neighbor_count"
+status = "refuted"
+sources = [
+    { kind = "at", value = "AT#MONI" },
+]

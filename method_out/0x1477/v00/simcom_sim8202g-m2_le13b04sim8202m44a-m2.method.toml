@@ -1,0 +1,75 @@
+version = 0
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM8202G-M2"
+modem_firmware = "LE13B04SIM8202M44A-M2"
+
+[[field_map]]
+parser_field = "svs[].sv_id"
+quantity = "gps_sv_prn"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 mc_peak.c 'Gnss:0 ... SV:<prn>' (SimCom build qdb) @sim8202g-m2"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GPGSV satellite-PRN field (1st of each 4-tuple, talker GP)"
+
+[[field_map]]
+parser_field = "svs[].cno_db"
+quantity = "gnss_carrier_to_noise_dbhz"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 mc_peak.c 'Gnss:0,...,C/No:<n>' (SimCom build qdb) @sim8202g-m2"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GPGSV SNR field (4th of each 4-tuple, integer dB-Hz, null when untracked)"
+
+[[field_map]]
+parser_field = "svs[].az_deg"
+quantity = "gnss_sv_azimuth_deg"
+sources = [
+    { kind = "nmea", value = "$GPGSV azimuth field (3rd of each PRN 4-tuple, deg)" },
+]
+
+[[field_map]]
+parser_field = "svs[].el_deg"
+quantity = "gnss_sv_elevation_deg"
+sources = [
+    { kind = "nmea", value = "$GPGSV elevation field (2nd of each PRN 4-tuple, deg)" },
+]
+
+[[field_map]]
+parser_field = "gps_week"
+quantity = "gps_week_number"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 mc_gnssmeasreport.c 'Gps_MeasBlk Wk <n>' (SimCom build qdb) @sim8202g-m2"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+CGNSSINFO"
+
+[[field_map]]
+parser_field = "gps_milliseconds"
+quantity = "gps_time_of_week_ms"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 mc_gnssmeasreport.c 'Gps_MeasBlk Ms/FC' (SimCom build qdb) @sim8202g-m2"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+CGNSSINFO"
+
+[[field_map]]
+parser_field = "time_bias"
+quantity = "gnss_receiver_clock_bias_ms"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 mc_gnssmeasreport.c 'Gps_MeasBlk CB/ClkBiasMs' (SimCom build qdb) @sim8202g-m2"

@@ -1,0 +1,21 @@
+version = 4
+cond = "any-drive"
+modem_make = "Sierra"
+modem_model = "EM9190"
+modem_firmware = "SWIX55C_03.17.04.00"
+
+[[field_map]]
+parser_field = "v4_cells.meas_high_byte"
+quantity = "lte_neighbor_interfreq_measurement_candidate"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_interfreq_cell_count_candidate"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+]

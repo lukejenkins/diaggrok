@@ -1,0 +1,29 @@
+version = 1
+cond = "connected"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.1X0"
+
+[[field_map]]
+parser_field = "occupied_count"
+quantity = "cxm_active_arbitration_slot_count_candidate"
+sources = [
+    { kind = "at", value = "AT#RFSTS" },
+    { kind = "at", value = "AT#SERVINFO" },
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "version_b"
+quantity = "cxm_chipset_form_discriminant"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "structural: version_b == 0x02 and payload_size == 888 (LM960 888B form)"
+
+[[field_map]]
+parser_field = "counter"
+quantity = "cxm_log_record_counter_candidate"
+sources = [
+    { kind = "trigger", value = "monotonic-increment check across consecutive 0x1893 records" },
+]

@@ -1,0 +1,47 @@
+version = 1
+cond = "connected"
+modem_make = "Wistron"
+modem_model = "LV55"
+modem_firmware = "MPSS.HI.2.0.c3-00246-SDX55_CPEALL_PACK-1"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+status = "refuted"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "other", value = "DIAG 0xB116 / 0xB0C0" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+status = "refuted"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "lte_serving_rsrq_db"
+status = "refuted"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+
+[[field_map.sources]]
+kind = "f3"
+value = "rflte_mc_rx.c — 'MC has built Rx tune scripts for band:%d channel:%d'"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 rflte_mc_rx.c:11432 'band:13 channel:5230' (qdb GUID 9f1532ab)"
+
+[[field_map.sources]]
+kind = "other"
+value = "DIAG 0xB0C0 / 0xB192 earfcn"

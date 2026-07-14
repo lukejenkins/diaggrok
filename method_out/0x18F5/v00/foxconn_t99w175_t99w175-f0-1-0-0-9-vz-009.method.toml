@@ -1,0 +1,25 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Foxconn"
+modem_model = "T99W175"
+modem_firmware = "T99W175.F0.1.0.0.9.VZ.009"
+
+[[field_map]]
+parser_field = "block_count"
+quantity = "gnss_sbas_measured_signal_count_candidate"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "count SBAS PRNs (120-158) in the co-temporal $GPGSV snapshot (modem gsi.gps NMEA); LG290P reference GSV is an alternate SBAS-in-view source"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_LOC GetGnssEngineState"
+
+[[field_map]]
+parser_field = "blocks"
+quantity = "gnss_uncomputed_angle_sentinel_check"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "structural: each block angle_rad_48 == -1.5707963 (-pi/2 not-computed sentinel) on the T99W175 layout"

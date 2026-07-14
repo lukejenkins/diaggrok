@@ -1,0 +1,63 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Foxconn"
+modem_model = "T99W175"
+modem_firmware = "T99W175.F0.1.0.0.9.VZ.009"
+
+[[field_map]]
+parser_field = "sequence_counter"
+quantity = "gnss_epoch_sequence_counter"
+sources = [
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]
+
+[[field_map]]
+parser_field = "constellation_mask"
+quantity = "gnss_active_constellation_config"
+sources = [
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+    { kind = "nmea", value = "$GxGSV talker set (GP/GL/GA/GB/GQ) — constellations in view" },
+]
+
+[[field_map]]
+parser_field = "num_constellations"
+quantity = "gnss_tracked_entity_count_candidate"
+sources = [
+    { kind = "nmea", value = "count of distinct constellation talkers across $GxGSV sentences" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.sv_id"
+quantity = "gnss_sv_prn_id"
+sources = [
+    { kind = "nmea", value = "$GxGSV satellite-id column per constellation" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.cn0_db_hz"
+quantity = "gnss_sv_cn0_db_hz"
+sources = [
+    { kind = "nmea", value = "$GxGSV C/N0 (SNR) column per SV" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.elevation_deg"
+quantity = "gnss_sv_elevation_deg"
+sources = [
+    { kind = "nmea", value = "$GxGSV elevation column (degrees) per SV" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.azimuth_deg"
+quantity = "gnss_sv_azimuth_deg"
+sources = [
+    { kind = "nmea", value = "$GxGSV azimuth column (degrees) per SV" },
+]
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_embedded_nmea_sentence"
+sources = [
+    { kind = "nmea", value = "same-type, same-epoch sentence on the T99W175 native NMEA port" },
+]

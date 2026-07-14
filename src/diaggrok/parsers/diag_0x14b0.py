@@ -177,7 +177,7 @@ class Diag0x14B0:
 
 
 @register(
-    0x14B0,
+    0x14B0, domain="gnss",
     name="0x14B0",
     description="GNSS data report (0x14B0) — 166B fixed, full decode: header + 6-slot tail + trailer (#N)",
     version=6,

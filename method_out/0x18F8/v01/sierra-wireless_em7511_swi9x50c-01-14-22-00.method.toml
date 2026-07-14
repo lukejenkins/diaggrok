@@ -1,0 +1,21 @@
+version = 1
+cond = "cops-dereg"
+modem_make = "Sierra"
+modem_model = "EM7511"
+modem_firmware = "SWI9X50C_01.14.22.00"
+
+[[field_map]]
+parser_field = "measurement"
+quantity = "mcs_misc_status_measurement_candidate"
+sources = [
+    { kind = "at", value = "AT+CESQ" },
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "trigger", value = "LTE mode transition (airplane / SIM cycle)" },
+]
+
+[[field_map]]
+parser_field = "measurement_valid"
+quantity = "measurement_availability_flag"
+sources = [
+    { kind = "at", value = "AT+CEREG?" },
+]

@@ -1,0 +1,60 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Sierra"
+modem_model = "EM9190"
+modem_firmware = "SWIX55C_01.07.19.00"
+
+[[field_map]]
+parser_field = "svs[].sv_id"
+quantity = "gps_sv_prn"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GPGSV satellite-PRN field (1st of each 4-tuple)" },
+]
+
+[[field_map]]
+parser_field = "svs[].cno_db"
+quantity = "gnss_carrier_to_noise_dbhz"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GPGSV SNR field (4th of each PRN 4-tuple)" },
+]
+
+[[field_map]]
+parser_field = "svs[].az_deg"
+quantity = "gnss_sv_azimuth_deg"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GPGSV azimuth field (3rd of each PRN 4-tuple)" },
+]
+
+[[field_map]]
+parser_field = "svs[].el_deg"
+quantity = "gnss_sv_elevation_deg"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GPGSV elevation field (2nd of each PRN 4-tuple)" },
+]
+
+[[field_map]]
+parser_field = "gps_week"
+quantity = "gps_week_number"
+sources = [
+    { kind = "nmea", value = "$GxRMC field 9 (date) → GPS-week conversion" },
+]
+
+[[field_map]]
+parser_field = "gps_milliseconds"
+quantity = "gps_time_of_week_ms"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 1 (UTC) — GPS→UTC reconciliation" },
+]
+
+[[field_map]]
+parser_field = "clock_freq_bias"
+quantity = "gnss_receiver_clock_freq_bias"
+
+[[field_map.sources]]
+kind = "other"
+value = "co-captured F3 mc_gnssmeasreport CB print (EM9190 SWIX55C site to be confirmed on the HW run)"

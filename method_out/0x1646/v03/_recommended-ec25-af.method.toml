@@ -1,0 +1,33 @@
+version = 3
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "EC25-AF"
+
+[[field_map]]
+parser_field = "slots[].rf_metric_1"
+quantity = "glonass_rf_bandpass_metric_candidate"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GLGSV" },
+]
+
+[[field_map]]
+parser_field = "slots[].rf_metric_2"
+quantity = "glonass_rf_bandpass_metric_2_candidate"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+]
+
+[[field_map]]
+parser_field = "slots[].state_flag"
+quantity = "glonass_fcn_tracking_state_candidate"
+sources = [
+    { kind = "nmea", value = "$GLGSV row presence/C/N0 over time" },
+]
+
+[[field_map]]
+parser_field = "slots[].metric_a"
+quantity = "glonass_fcn_channel_id_candidate"
+sources = [
+    { kind = "nmea", value = "$GLGSV satellite IDs (GLONASS slot numbers 65-96)" },
+]

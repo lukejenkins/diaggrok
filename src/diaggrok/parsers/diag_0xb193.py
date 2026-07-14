@@ -64,11 +64,21 @@ from diaggrok.registry import register
 
 @dataclass
 class LteMl1ServingCellMeasEntry:
-    """A single serving cell measurement from 0xB193."""
+    """A single per-cell measurement from 0xB193.
+
+    ``rsrp``/``rsrq`` are validated ground-truth-matched values ONLY for the
+    serving cell of a record (``serving_flag == 1``). On v59 (SDX62) multi-cell
+    records the non-serving (neighbour) cells carry validated ``pci``/``earfcn``
+    but their cell+44 RSRP/RSRQ field is ~3-8 dB low vs AT+QENG ground truth
+    (#N, refuted 2026-07-09), so neighbour ``rsrp``/``rsrq`` are gated to
+    ``None`` rather than emitting a known-wrong value.
+    """
     pci: int
     earfcn: int
-    rsrp: float | None  # dBm (None when the subpacket version's RSRP scale is not yet RE'd, e.g. v18)
-    rsrq: float | None  # dB (primary Rx; None when not yet decoded for this subpacket version)
+    rsrp: float | None  # dBm (None when not validated for this cell/version: v18, v48, or v59 neighbour)
+    rsrq: float | None  # dB (primary Rx; None when not decoded/validated for this cell)
+    serving_flag: int | None = None  # v59: bit15 of the PCI word; 1 = serving/primary cell of the record
+    meas_type: str | None = None     # v59: RX-antenna mask -> "intra_2rx" (0x3) / "inter_4rx" (0xF)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +86,8 @@ class LteMl1ServingCellMeasEntry:
             'earfcn': self.earfcn,
             'rsrp': self.rsrp,
             'rsrq': self.rsrq,
+            'serving_flag': self.serving_flag,
+            'meas_type': self.meas_type,
         }
 
 
@@ -190,10 +202,10 @@ _V18_SUBPACKET = 18
 # known scale, so this grounds by direct numeric equality against the LTE serving
 # row of AT+QENG="servingcell" — the cleanest validation kind.
 
-@register(LOG_LTE_ML1_SERVING_CELL_MEAS_RSP,
+@register(LOG_LTE_ML1_SERVING_CELL_MEAS_RSP, domain="lte-signal",
     name="0xB193",
     description="Serving cell PCI, EARFCN, RSRP, RSRQ from 0xB193 subpacket — 7-size variable-length family, v=1 corpus-wide (#N). v13: carrier-header EARFCN F3-verified 100%% on SDX55 v48 (#N). v17: MC7411 (SDX50M sp35) earfcn F3-hardened vs rflte_mc_rx.c channel:66786. v18: SDX55 v48 +4 carrier-header PCI FIX (pci_off=4, true sp+12) — serving PCI REFUTED→VERIFIED on RM500Q-AE WLSN (#N/#N/#N). v19: EM7565 (MDM9x50 X16) v0x01/sp35 per-modem recipe — serving earfcn+pci VERIFIED on CBRS B48 (#N, <redacted-ref> 1b-sib re-key). v22: SDX62 v59 per-cell RSRP/RSRQ re-RE'd as bit-exact 12-bit fields (raw/16-180 dBm @cell+44 b12..23; raw/16-30 dB @cell+56 b20..31), replacing the #N-refuted byte scales (#N).",
-    version=23,
+    version=24,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -290,7 +302,7 @@ _V18_SUBPACKET = 18
         "LV55 reference FW). FIX (follow-up on #N): an SDX55 v48 branch with a 12-byte "
         "carrier header, regression-checked against the other v48 SDX55 emitters before "
         "promotion. "
-        "v10 (<redacted-ref> session b113xsrc, 2026-06-11, cfw3212-scoped): added a Casa "
+        "v10 (<redacted-ref> <redacted-ref>, 2026-06-11, cfw3212-scoped): added a Casa "
         "Systems CFW-3212 (SDX62 via Quectel RG520N-NA OpenCPU) subpacket-v59 sibling of "
         "the RM520N-GL v59 cell — SAME SDX62 silicon so the v59 per-cell offsets port "
         "directly. LIMSRV cell-search HW run: entries.pci=236 + entries.earfcn=2300 == "
@@ -449,7 +461,16 @@ def parse_0xb193(
         if pci > 503:
             continue
 
+        serving_flag = None
+        meas_type = None
+
         if subpacket_version == _V59_SUBPACKET:
+            # serving/primary cell of the record = bit15 of the PCI word;
+            # meas_type from the cell+0 RX-antenna mask (0x3 = 2-RX intra-freq,
+            # 0xF = 4-RX inter-freq gap). (#N)
+            serving_flag = (pci_raw >> 15) & 1
+            mask = unpack_from('<I', sp, cell_offset)[0]
+            meas_type = {0x3: "intra_2rx", 0xF: "inter_4rx"}.get(mask, f"0x{mask:x}")
             # Bit-exact 12-bit fields (see #N + the _V59_* constants block).
             # raw == 0 means the field is unpopulated -> None (keep pci/earfcn).
             rsrp_raw = (unpack_from('<I', sp, cell_offset + _V59_RSRP_WORD_OFF)[0]
@@ -457,6 +478,14 @@ def parse_0xb193(
             rsrq_raw = unpack_from('<I', sp, cell_offset + _V59_RSRQ_WORD_OFF)[0] >> 20
             rsrp = round(rsrp_raw / 16.0 - 180.0, 2) if rsrp_raw else None
             rsrq = round(rsrq_raw / 16.0 - 30.0, 2) if rsrq_raw else None
+            # cell+44/cell+56 are ground-truth-validated ONLY for the serving
+            # cell; on non-serving (neighbour) cells they read ~3-8 dB low vs
+            # concurrent AT+QENG (#N, refuted on a 2026-07-09 RM520N-GL-AP
+            # dual-mask capture). Gate neighbour signal to None rather than emit
+            # a known-wrong value; pci/earfcn stay (neighbour identity IS valid).
+            if serving_flag != 1:
+                rsrp = None
+                rsrq = None
         elif subpacket_version == _V48_SUBPACKET:
             # SDX55 v48: RSRP-tracking field located (in-cell +24, energy-like)
             # but its energy->dBm scale is not lockable yet -> None, not guessed.
@@ -482,6 +511,8 @@ def parse_0xb193(
             earfcn=earfcn,
             rsrp=round(rsrp, 2) if rsrp is not None else None,
             rsrq=round(rsrq, 2) if rsrq is not None else None,
+            serving_flag=serving_flag,
+            meas_type=meas_type,
         ))
 
     return Diag0xB193(

@@ -1,0 +1,33 @@
+version = 3
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM8202G-M2"
+modem_firmware = "LE13B04SIM8202M44A-M2"
+
+[[field_map]]
+parser_field = "session_tag"
+quantity = "gnss_me_wideband_boot_session_tag_candidate"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+CGPS?"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "GNSS engine restart (AT+CGPS=0 then AT+CGPS=1) — session_tag should change across the cycle"
+
+[[field_map]]
+parser_field = "size_variant"
+quantity = "gnss_l1c_session_init_report_type_candidate"
+sources = [
+    { kind = "at", value = "AT+CGPS?" },
+    { kind = "at", value = "AT+CGNSSINFO" },
+]
+
+[[field_map]]
+parser_field = "config_word"
+quantity = "gnss_l1c_subsystem_config_word_candidate"
+sources = [
+    { kind = "at", value = "AT+CGPS?" },
+    { kind = "at", value = "AT+CGNSSINFO" },
+]

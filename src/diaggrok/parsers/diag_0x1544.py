@@ -745,7 +745,7 @@ def _decode_binary_sv_table(body: bytes) -> list[SvSlot] | None:
 # left out of the field_map — grounding them would overclaim.
 
 @register(
-    LOG_GNSS_SV_AGGREGATE,
+    LOG_GNSS_SV_AGGREGATE, domain="gnss",
     name="0x1544",
     description=(
         "Variable-length GNSS SV aggregate report (0x1544) — header + "

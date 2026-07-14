@@ -1,0 +1,20 @@
+version = 1
+cond = "sky-fix"
+modem_make = "Sierra"
+modem_model = "EM9190"
+modem_firmware = "SWIX55C_03.17.04.00"
+
+[[field_map]]
+parser_field = "field_b"
+quantity = "gnss_actively_measuring_indicator_candidate"
+sources = [
+    { kind = "at", value = "AT!GPSSTATUS?" },
+    { kind = "at", value = "AT+CGPS?" },
+]
+
+[[field_map]]
+parser_field = "counter1"
+quantity = "gnss_measurement_epoch_counter"
+sources = [
+    { kind = "other", value = "host capture timestamp deltas — cadence cross-check only" },
+]

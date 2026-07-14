@@ -1,0 +1,68 @@
+version = 10
+cond = "sky-fix"
+modem_make = "Fibocom"
+modem_model = "FM101-GL"
+modem_firmware = "19500.0000.00.01.01.52"
+
+[[field_map]]
+parser_field = "lat_deg"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT+FGPS_LOCDATA" },
+    { kind = "nmea", value = "FM101-GL GNSS NMEA-port $GxGGA field 2/3 / $GxRMC field 3/4" },
+]
+
+[[field_map]]
+parser_field = "lon_deg"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT+FGPS_LOCDATA" },
+    { kind = "nmea", value = "FM101-GL GNSS NMEA-port $GxGGA field 4/5 / $GxRMC field 5/6" },
+]
+
+[[field_map]]
+parser_field = "alt_m"
+quantity = "gnss_altitude_m"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+FGPS_LOCDATA"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "FM101-GL GNSS NMEA-port $GxGGA field 9 (MSL) + field 11 (geoid separation)"
+
+[[field_map]]
+parser_field = "speed_mps"
+quantity = "gnss_ground_speed_mps"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "FM101-GL GNSS NMEA-port $GxRMC field 7 (knots x 0.514444) / $GxVTG (km/h / 3.6)"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+FGPS_LOCDATA"
+
+[[field_map]]
+parser_field = "heading_deg"
+quantity = "gnss_course_over_ground_deg"
+sources = [
+    { kind = "nmea", value = "FM101-GL GNSS NMEA-port $GxRMC field 8 / $GxVTG field 1" },
+]
+
+[[field_map]]
+parser_field = "hdop"
+quantity = "gnss_hdop"
+sources = [
+    { kind = "nmea", value = "FM101-GL GNSS NMEA-port $GxGSA field 17 (HDOP)" },
+    { kind = "other", value = "AT+FGPS_INFO HEPE/uncertainty (not a direct HDOP)" },
+]
+
+[[field_map]]
+parser_field = "svs.gps.used"
+quantity = "gnss_gps_svs_used_in_fix"
+sources = [
+    { kind = "at", value = "AT+FGPS_INFO" },
+    { kind = "nmea", value = "FM101-GL GNSS NMEA-port $GPGSA used-SV list / $GxGGA field 7" },
+]

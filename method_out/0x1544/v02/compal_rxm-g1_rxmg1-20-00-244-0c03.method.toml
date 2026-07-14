@@ -1,0 +1,46 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Compal"
+modem_model = "RXM-G1"
+modem_firmware = "RXMG1.20.00.244_0C03"
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_embedded_nmea_sentence"
+status = "verified"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "the RXM-G1 native NMEA-port sentence matching nmea_sentence_type"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_LOC GetGnssEngineState"
+
+[[field_map.sources]]
+kind = "other"
+value = "co-captured QSR4 F3 GNSS/NMEA print; build-matched qdb GUID 77c0963a (source_kind modem-dump / running build), origin -> image/sdx55/qdsp6m.qdb (byte-identical to the ADB fs-dump /firmware/image/sdx55/qdsp6m.qdb); firmware RXMG1.20.00.244_0C03 — resolves 100% on this build"
+
+[[field_map]]
+parser_field = "sequence_counter"
+quantity = "gnss_epoch_sequence_counter"
+sources = [
+    { kind = "trigger", value = "GNSS epoch tick — increment correlation, no direct readback" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]
+
+[[field_map]]
+parser_field = "constellation_mask"
+quantity = "gnss_active_constellation_config"
+sources = [
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+    { kind = "nmea", value = "$GxGSV talker set (GP/GL/GA/GB/GQ) — constellations in view" },
+]
+
+[[field_map]]
+parser_field = "num_constellations"
+quantity = "gnss_tracked_entity_count_candidate"
+sources = [
+    { kind = "nmea", value = "total SVs across $GxGSV sentences (in-view count)" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]

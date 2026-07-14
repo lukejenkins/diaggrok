@@ -1,0 +1,31 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.1X0"
+
+[[field_map]]
+parser_field = "state_byte"
+quantity = "gnss_engine_state_phase"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT$GPSP?"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "AT$GPSP=1 (engine on) / AT$GPSP=0 (engine off) to force a boot transition"
+
+[[field_map]]
+parser_field = "status"
+quantity = "gnss_fix_state_toggle"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "event_flag"
+quantity = "gnss_pd_event_transition"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+]

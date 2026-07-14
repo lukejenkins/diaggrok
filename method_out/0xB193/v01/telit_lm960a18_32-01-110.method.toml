@@ -1,0 +1,82 @@
+version = 1
+cond = "idle"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.110"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+status = "verified"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#MONI=0"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetCellLocationInfo (PCI 451 for cell <redacted-cell-id> — external same-cell reference via bench EM7565)"
+
+[[field_map.sources]]
+kind = "other"
+value = "<redacted-see-evidence>"
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT#RFSTS" },
+    { kind = "at", value = "AT#MONI=0" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+status = "verified"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#RFSTS"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+CESQ"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetSignalInfo"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 lte_ml1_common_rssi_ind.c:1075 (pci/rsrq/rsrp/rssi) + lte_ml1_sm_conn_wb_stm.c:3587 (per-antenna LL RSRP) (qdb GUID 2f5667ef; 0x99 resolved 100%) — firmware logs serving RSRP=-85 (== decoded -84.1), RSSI=-58 (!= decoded) for PCI 451; the decisive RSRP-not-RSSI discriminator (#N)."
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "lte_serving_rsrq_db"
+status = "refuted"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#RFSTS"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+CESQ"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetSignalInfo"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 lte_ml1_common_rssi_ind.c:1075 (pci/rsrq/rsrp/rssi) + =CM= cmss_report_rssi (qdb GUID 2f5667ef, 0x99 resolved 100%) — firmware logs serving RSRQ=-7 for PCI 451; the v36 (raw-60)/2 decode gives -10.0, REFUTED (#N)."
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_serving_meas_cell_count"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT#MONI=0" },
+]

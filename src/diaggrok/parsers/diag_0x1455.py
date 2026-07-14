@@ -6,15 +6,31 @@ LM960 32.01.110/120/140/150 + LM960A18 (SDX20).
 
 Field map:
   [0]    u8    version          = 0x00 (CONSTANT 4204/4204)
-  [1:5]  u32LE sequence         monotonic-increasing epoch counter (per-
-                                  capture-scoped, +1 per record with occasional
-                                  skip gaps on LM960). Range observed up to
-                                  ~2800 in longer captures — the value is a
-                                  u32 not u8, corrected from the prior stub.
+  [1:5]  u32LE sequence         cumulative count of successful GNSS position
+                                  fixes (F3-grounded, see below). +1 per record;
+                                  cumulative across sessions (NOT per-capture-
+                                  scoped: an EG18-NA capture opened mid-count at
+                                  seq=233/299). The "occasional skip gaps" noted
+                                  originally are an LM960-specific artifact; the
+                                  EG18-NA showed strict +1 steps. u32 not u8
+                                  (corrected from the prior stub; observed up to
+                                  ~2800 in long captures).
   [5]    u8    flags            = 0x02 (CONSTANT 4204/4204)
   [6]    u8    reserved_6       = 0x00 (CONSTANT 4204/4204)
 
 All 7 bytes named; no body_raw region; fully decoded across 14 chipsets.
+
+F3 semantic grounding (2026-07-13, #N, offline oracle): `sequence` was
+confirmed to be the cumulative successful-fix count by aligning 0x1455 records
+against the firmware's own fix-report F3 debug prints (`ale_proc.c` "NF: PFR,
+Report FIX to SM" / `lm_mgp.c` "=LM TASK= Received FIX REPORT from MGP") on two
+GUID-matched-qdb EG18-NA captures (guid f1007b36). Each 0x1455 record trails a
+fix-report F3 event by a near-constant ~0.37M ticks (<1% of the ~52M-tick inter-
+fix interval), and `sequence` increments in exact 1:1 lockstep with those events
+(253 records / 250 fix events across 2 captures; per-record delta == 1
+throughout). This validates the vendor name LOG_CGPS_DIAG_SUCCESSFUL_FIX_COUNT_C
+without hardware, independent of the AT$GPSACP HW recipe (which remains blocked
+on #N/#N).
 
 Split from `gnss_demod.py` per #N tier-2 batch 12.
 
@@ -88,7 +104,7 @@ class Diag0x1455:
 
 
 @register(
-    LOG_GNSS_COUNTER_1455,
+    LOG_GNSS_COUNTER_1455, domain="gnss",
     name="0x1455",
     description="GNSS epoch counter (0x1455) — 7B fixed, all bytes named",
     version=2,

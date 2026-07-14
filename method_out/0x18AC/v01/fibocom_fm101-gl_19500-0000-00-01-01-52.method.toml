@@ -1,0 +1,22 @@
+version = 1
+cond = "any-drive"
+modem_make = "Fibocom"
+modem_model = "FM101-GL"
+modem_firmware = "19500.0000.00.01.01.52"
+
+[[field_map]]
+parser_field = "v1_cells.meas_high_byte"
+quantity = "lte_neighbor_interfreq_measurement_candidate"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "num_carriers"
+quantity = "lte_neighbor_interfreq_carrier_count_candidate"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (inter-freq neighbor list length)" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]

@@ -1068,7 +1068,7 @@ def _parse_0x1476_mdm9600(log_time: int, data: bytes) -> Diag0x1476:
 # Parsers
 # ---------------------------------------------------------------------------
 
-@register(LOG_GNSS_POSITION_REPORT,
+@register(LOG_GNSS_POSITION_REPORT, domain="gnss",
     name="0x1476",
     description="Fix position, velocity, DOP, SV counts; v10 (SDX20 V2) trailer fully RE'd with per-SV Kalman residuals + intermediate block + multi-constellation secondary SV block (all 7 observed const_ids named — GPS/GLONASS/BeiDou/Galileo/SBAS, odd const_ids are measurement-engine tracks, via EM7511+LG290P + LM960 same-record R20 FCN cross-ref — #N, #N); v1/v2/v13/v24 + MDM9600/SWI9200X 797B legacy gpsOne variant — header + velocity block (heading/vel/vel_sigma) + DOP triple (pythagorean-pinned) + per-SV GPS PRN array (offset-198 stride-20, cross-capture-RE'd on the 16-SV run1 fix; the earlier SVs-in-view@196 hypothesis refuted), #N — supported",
     version=14,

@@ -1,0 +1,59 @@
+version = 1
+cond = "connected"
+modem_make = "Wistron"
+modem_model = "LV55"
+modem_firmware = "MPSS.HI.2.0.c3-00246-SDX55_CPEALL_PACK-1"
+
+[[field_map]]
+parser_field = "entries[].pci"
+quantity = "lte_neighbor_pci"
+status = "verified"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (mald /tmp/libmal.log)" },
+]
+
+[[field_map]]
+parser_field = "entries[].earfcn"
+quantity = "lte_neighbor_earfcn_dl"
+status = "verified"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (mald /tmp/libmal.log)" },
+    { kind = "other", value = "F3 rflte_mc_rx.c:11432 channel:5230 (qdb GUID 9f1532ab)" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+status = "refuted"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetSignalInfo (JSONRPC get_modem_signalinfo)"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 lte_LL1_meas_ncell.c:420 NB_MEAS max_SE energy (qdb GUID 9f1532ab)"
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+status = "partial"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo (JSONRPC)" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+status = "partial"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo (JSONRPC)" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_cell_count"
+status = "partial"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]

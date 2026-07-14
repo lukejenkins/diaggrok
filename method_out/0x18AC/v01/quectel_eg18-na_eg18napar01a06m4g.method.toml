@@ -1,0 +1,23 @@
+version = 1
+cond = "any-drive"
+modem_make = "Quectel"
+modem_model = "EG18-NA"
+modem_firmware = "EG18NAPAR01A06M4G"
+
+[[field_map]]
+parser_field = "v1_cells.meas_high_byte"
+quantity = "lte_neighbor_interfreq_measurement_candidate"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "num_carriers"
+quantity = "lte_neighbor_interfreq_carrier_count_candidate"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (inter-freq neighbor list length)" },
+]

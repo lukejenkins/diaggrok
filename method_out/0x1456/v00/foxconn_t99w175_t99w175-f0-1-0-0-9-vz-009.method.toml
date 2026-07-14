@@ -1,0 +1,29 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Foxconn"
+modem_model = "T99W175"
+modem_firmware = "T99W175.F0.1.0.0.9.VZ.009"
+
+[[field_map]]
+parser_field = "flag"
+quantity = "gnss_engine_active_flag"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_LOC GetGnssEngineState"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GxGGA fix-quality field (modem gsi.gps NMEA): 0=no fix asserts flag=0, >=1 asserts flag=1"
+
+[[field_map]]
+parser_field = "state"
+quantity = "gnss_tracking_dpo_phase_candidate"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GxGGA fix-quality transition (no-fix->fix) — correlate to the state enum"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "cold-start -> fix-held -> antenna-covered fix-loss walk (engine phase transitions)"

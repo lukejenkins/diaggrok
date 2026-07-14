@@ -1,0 +1,76 @@
+version = 10
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "latitude_deg"
+quantity = "wgs84_latitude_deg"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GNRMC / $GNGGA latitude (modem NMEA port)" },
+]
+
+[[field_map]]
+parser_field = "longitude_deg"
+quantity = "wgs84_longitude_deg"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GNRMC / $GNGGA longitude (modem NMEA port)" },
+]
+
+[[field_map]]
+parser_field = "altitude_msl_m"
+quantity = "altitude_above_msl_m"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GNGGA field 9 (orthometric height, MSL)" },
+]
+
+[[field_map]]
+parser_field = "hdop"
+quantity = "horizontal_dilution_of_precision"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GNGSA field 17 (HDOP)" },
+]
+
+[[field_map]]
+parser_field = "n_svs_used_in_fix"
+quantity = "satellites_used_in_fix"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GNGGA field 7 (satellites used)" },
+]
+
+[[field_map]]
+parser_field = "gps_svs_used_mask"
+quantity = "gps_svs_used_bitmask"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GPGSV PRNs; $GNGSA used-SV list" },
+]
+
+[[field_map]]
+parser_field = "speed_2d_mps"
+quantity = "ground_speed_mps"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GNRMC field 7 (SOG, knots) / $GNVTG" },
+    { kind = "trigger", value = "drive the modem (moving fix)" },
+]
+
+[[field_map]]
+parser_field = "heading_deg"
+quantity = "course_over_ground_deg"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GNRMC field 8 (track) / $GNVTG" },
+    { kind = "trigger", value = "drive the modem (moving fix)" },
+]

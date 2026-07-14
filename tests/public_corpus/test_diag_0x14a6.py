@@ -1,4 +1,4 @@
-"""Public zero-PII fixture for 0x14A6 (GNSS per-SV CNo snapshot).
+"""Public zero-PII fixture for 0x14A6 (GNSS per-SV ephemeris/IODE snapshot).
 
 Tier 1 (synthetic-only): fw_tag is an explicit firmware-tag field (see
 public_corpus.risk_tiers.RISK_TIER[0x14A6] == 1), so this frame is built
@@ -8,7 +8,7 @@ bytes are copied from any capture, private test, or real DIAG log.
 Targets the 151-byte fixed layout documented at the top of
 diaggrok.parsers.diag_0x14a6: version=0x02 (hard-gated), a fully-decoded
 header, and a 12-slot x 4-byte per-SV table at payload offset [23:71]
-(sv_id u16LE + cno_metric u16LE per slot).
+(sv_id u16LE + iode u16LE per slot; iode was named cno_metric ≤v8, #N).
 """
 from public_corpus.support.synthetic import pack
 from diaggrok.parsers.diag_0x14a6 import parse_0x14a6
@@ -25,7 +25,7 @@ _NUM_SV_TRACKED = 6       # byte 18
 _FW_TAG = 0x6d            # byte 21 -- ASCII 'm', one of the documented enum values
 _SUB_TYPE = 9             # byte 22 -- populated-record discriminator
 _SLOT0_SV_ID = 10         # u16LE at slot [23:25]
-_SLOT0_CNO = 350          # u16LE at slot [25:27]
+_SLOT0_IODE = 350         # u16LE at slot [25:27] (renamed from _SLOT0_CNO, #N)
 
 _TOTAL_LEN = 151
 
@@ -45,7 +45,7 @@ def _synthetic_14a6() -> bytes:
     buf[21] = _FW_TAG
     buf[22] = _SUB_TYPE
     buf[23:25] = pack('<H', _SLOT0_SV_ID)
-    buf[25:27] = pack('<H', _SLOT0_CNO)
+    buf[25:27] = pack('<H', _SLOT0_IODE)
     # remaining 11 sv_slots [27:71] and reserved_tail [71:151] left zero
     assert len(buf) == _TOTAL_LEN
     return bytes(buf)
@@ -63,7 +63,8 @@ def test_14a6_decodes_synthetic_frame():
     assert rec.sub_type == _SUB_TYPE
     assert len(rec.sv_slots) == 12
     assert rec.sv_slots[0].sv_id == _SLOT0_SV_ID
-    assert rec.sv_slots[0].cno_metric == _SLOT0_CNO
+    assert rec.sv_slots[0].iode == _SLOT0_IODE
+    assert rec.sv_slots[0].cno_metric == _SLOT0_IODE  # deprecated alias (#N)
     assert rec.sv_slots[0].is_populated is True
     assert rec.sv_slots[1].is_populated is False
     assert rec.payload_size == _TOTAL_LEN

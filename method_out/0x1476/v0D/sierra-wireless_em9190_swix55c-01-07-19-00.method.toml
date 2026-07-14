@@ -1,0 +1,59 @@
+version = 13
+cond = "sky-fix"
+modem_make = "Sierra"
+modem_model = "EM9190"
+modem_firmware = "SWIX55C_01.07.19.00"
+
+[[field_map]]
+parser_field = "lat_deg"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 2/3 / $GxRMC field 3/4 (lat + N/S)" },
+]
+
+[[field_map]]
+parser_field = "lon_deg"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 4/5 / $GxRMC field 5/6 (lon + E/W)" },
+]
+
+[[field_map]]
+parser_field = "alt_m"
+quantity = "gnss_altitude_m"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 9 (MSL) + field 11 (geoid separation)" },
+]
+
+[[field_map]]
+parser_field = "speed_mps"
+quantity = "gnss_ground_speed_mps"
+sources = [
+    { kind = "nmea", value = "$GxRMC field 7 (knots) / $GxVTG ground speed" },
+]
+
+[[field_map]]
+parser_field = "heading_deg"
+quantity = "gnss_course_over_ground_deg"
+sources = [
+    { kind = "nmea", value = "$GxRMC field 8 / $GxVTG field 1 (course true)" },
+]
+
+[[field_map]]
+parser_field = "hdop"
+quantity = "gnss_hdop"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGSA field 17 (HDOP)" },
+]
+
+[[field_map]]
+parser_field = "svs.gps.used"
+quantity = "gnss_gps_svs_used_in_fix"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GPGSA used-SV list / $GxGGA field 7" },
+]

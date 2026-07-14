@@ -1,0 +1,37 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "triplet"
+quantity = "gnss_per_constellation_sv_count_candidate"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "AT+QGPSCFG=\"gnssconfig\" → enable GPS+GLONASS+Galileo+BeiDou, then AT+QGPS=1 + AT+QGPSLOC=2 under open sky for a true multi-GNSS fix (the GPS-only capture is what refuted the SV-count hypothesis)"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QGPSGNMEA=\"GSV\""
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QGPSGNMEA=\"GSA\""
+
+[[field_map]]
+parser_field = "chunk_3_10"
+quantity = "candidate_counter_or_timestamp"
+
+[[field_map.sources]]
+kind = "other"
+value = "self-consistency — monotonicity vs log_time across consecutive records; no AT/QMI surface returns this chunk"
+
+[[field_map]]
+parser_field = "vendor_tag"
+quantity = "vendor_firmware_variant_tag"
+
+[[field_map.sources]]
+kind = "other"
+value = "Quectel firmware-revision readback (AT+QGMR / AT+CGMR) — correlate the per-build vendor_tag value against the running build string across firmwares"

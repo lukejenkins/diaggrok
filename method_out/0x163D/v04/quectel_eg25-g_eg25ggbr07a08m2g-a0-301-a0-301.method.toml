@@ -1,0 +1,41 @@
+version = 4
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "EG25-G"
+modem_firmware = "EG25GGBR07A08M2G_A0.301.A0.301"
+
+[[field_map]]
+parser_field = "agc_pair_a"
+quantity = "gnss_frontend_agc_chain_a"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QCSQ"
+
+[[field_map.sources]]
+kind = "other"
+value = "vary antenna/shielding to sweep input power — no command returns AGC directly"
+
+[[field_map]]
+parser_field = "agc_pair_b"
+quantity = "gnss_frontend_agc_chain_b"
+sources = [
+    { kind = "at", value = "AT+QCSQ" },
+    { kind = "other", value = "antenna/shielding sweep" },
+]
+
+[[field_map]]
+parser_field = "rf_metric_a"
+quantity = "gnss_rf_metric_db_candidate_a"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QCSQ" },
+]
+
+[[field_map]]
+parser_field = "rf_metric_b"
+quantity = "gnss_rf_metric_db_candidate_b"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QCSQ" },
+]

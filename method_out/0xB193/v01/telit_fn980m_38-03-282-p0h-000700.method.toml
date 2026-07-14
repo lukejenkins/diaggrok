@@ -1,0 +1,50 @@
+version = 1
+cond = "idle"
+modem_make = "Telit"
+modem_model = "FN980m"
+modem_firmware = "38.03.282-P0H.000700"
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+
+[[field_map.sources]]
+kind = "f3"
+value = "rflte_mc_rx.c — 'MC has built Rx tune scripts for band:%d channel:%d'"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#RFSTS"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+sources = [
+    { kind = "at", value = "AT#RFSTS" },
+    { kind = "other", value = "co-captured DIAG 0xB0C0 / 0xB116 serving PCI @fn980m" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+sources = [
+    { kind = "at", value = "AT#RFSTS" },
+    { kind = "at", value = "AT$QCRSRP?" },
+    { kind = "at", value = "AT+CESQ" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "lte_serving_rsrq_db"
+sources = [
+    { kind = "at", value = "AT#RFSTS" },
+    { kind = "at", value = "AT$QCRSRQ?" },
+    { kind = "at", value = "AT+CESQ" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_serving_meas_cell_count"
+sources = [
+    { kind = "at", value = "AT#RFSTS" },
+]

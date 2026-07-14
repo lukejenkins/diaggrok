@@ -265,7 +265,7 @@ class Diag0x158C:
 # constellation map, to recover which metric is CN0 (dB-Hz) and its scale.
 
 @register(
-    LOG_GNSS_RF_STATS,
+    LOG_GNSS_RF_STATS, domain="gnss",
     name="0x158C",
     primary_issue=None,  # #N: per-code diag 0x158C tracker (vs #N recipe meta)
     description="Per-constellation RF signal statistics (0x158C)",

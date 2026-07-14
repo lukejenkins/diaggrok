@@ -1,0 +1,54 @@
+version = 1
+cond = "idle"
+modem_make = "Foxconn"
+modem_model = "T99W175"
+modem_firmware = "T99W175.F0.1.0.0.9.VZ.009"
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+
+[[field_map.sources]]
+kind = "f3"
+value = "rflte_mc_rx.c — 'MC has built Rx tune scripts for band:%d channel:%d'"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetServingSystem"
+
+[[field_map.sources]]
+kind = "mbim"
+value = "MBIM_CID_REGISTER_STATE"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+    { kind = "other", value = "co-captured DIAG 0xB0C0 / 0xB116 serving PCI @t99w175" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "mbim", value = "MBIM_CID_SIGNAL_STATE" },
+    { kind = "at", value = "AT+CESQ" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "lte_serving_rsrq_db"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "at", value = "AT+CESQ" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_serving_meas_cell_count"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]

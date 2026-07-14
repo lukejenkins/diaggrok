@@ -1,0 +1,22 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.110"
+
+[[field_map]]
+parser_field = "flag"
+quantity = "gnss_engine_active_flag"
+sources = [
+    { kind = "at", value = "AT$GPSP?" },
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "state"
+quantity = "gnss_tracking_dpo_phase_candidate"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "at", value = "AT$GPSP?" },
+    { kind = "other", value = "QMI_LOC engine-state event (not in poller set yet)" },
+]

@@ -1,0 +1,45 @@
+version = 1
+cond = "idle"
+modem_make = "Sierra"
+modem_model = "EM9190"
+modem_firmware = "SWIX55C_03.17.04.00"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (LTE serving PCI)" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "at", value = "AT!LTEINFO?" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "at", value = "AT!LTEINFO?" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "lte_serving_rsrq_db"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "at", value = "AT!LTEINFO?" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_serving_meas_cell_count"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+]

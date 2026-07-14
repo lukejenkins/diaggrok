@@ -325,7 +325,7 @@ class Diag0x18AC:
 # prescribes the AT+QENG="neighbourcell" correlation that recovers its identity
 # AND scale. The magic_a/magic_b anchors are structural constants (not grounded).
 
-@register(LOG_LTE_ML1_INTER_FREQ_MEAS,
+@register(LOG_LTE_ML1_INTER_FREQ_MEAS, domain="lte-signal",
     name="0x18AC",
     description="Per-carrier inter-frequency cell measurements (neighbor frequencies)",
     version=14,

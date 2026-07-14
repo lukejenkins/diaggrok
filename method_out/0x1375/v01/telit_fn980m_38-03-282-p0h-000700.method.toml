@@ -1,0 +1,29 @@
+version = 1
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "FN980m"
+modem_firmware = "38.03.282-P0H.000700"
+
+[[field_map]]
+parser_field = "msg_id"
+quantity = "cgps_ipc_message_dispatch_id"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "AT$GPSP=1 to power the GNSS receiver, then capture under open sky so the CGPS-IPC bus runs; compare against an engine-off capture"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT$GPSP?"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GxGSA / $GxGGA standard NMEA — present while the engine tracks and the CGPS-IPC bus runs (emission-liveness correlate; the $PQME ME-engine sentences live inside the 0x1375 payload itself, not the NMEA port)"
+
+[[field_map]]
+parser_field = "payload_len"
+quantity = "cgps_ipc_envelope_structural_fit"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "capture 0x1375 on this modem and decode; confirm ~100% of records satisfy marker==0x0101 and payload_len==len−28 (envelope fits this firmware)"

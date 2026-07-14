@@ -1,4 +1,13 @@
-"""0x1456 — GNSS Heartbeat (11B fixed; 5 named bytes + 6 reserved-zero invariants).
+"""0x1456 - CGPS tracking-DPO status (11B fixed; 5 named bytes + 6 reserved-zero invariants).
+
+Vendor name ``LOG_CGPS_MC_TRACK_DPO_STATUS_C`` (qualcomm_diag_log_codes_h,
+vendor_official), now corroborated at firmware-build authority by the QSR4 F3
+string ``mc_srchstrategy.c: "Log packet allocation for
+LOG_CGPS_MC_TRACK_DPO_STATUS_C failed"`` (source
+qualcomm_firmware_f3_log_emission_oracles, #N). The historical "GNSS
+Heartbeat" label is a ~1Hz-cadence *behavioural* nickname, not the vendor name;
+the community QXDM-2017 ``LOG_RMAC_CARRIER_STATE_CHANGED`` (CDMA reverse-MAC) is
+a wrong-subsystem attribution and is max-demoted to disproven_names in-index.
 
 Cross-chipset RE corpus (2026-05-08 corpus walk, 67,045 records / 194
 captures / 15 chipset families): 11-byte fixed payload with 6 invariant
@@ -39,14 +48,16 @@ Split from `gnss_demod.py` per #N tier-2 batch 12.
 
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_CGPS_MC_TRACK_DPO_STATUS_C
-        source: qualcomm_diag_log_codes_h (authority: vendor_official)
+        source: qualcomm_firmware_f3_log_emission_oracles (authority: vendor_official)
     aliases:
         LOG_CGPS_MC_TRACK_DYNAMIC_POWER_OPTIMIZATION_STATUS
             source: qxdm_3_12_714_2017_diag_log_codes
-        LOG_RMAC_CARRIER_STATE_CHANGED
-            source: qxdm_3_12_714_2017_diag_log_codes
         LOG_CGPS_MC_TRACKING_DPO_STATUS
             source: qxdm_itemtype_list_zukgit_2025_04_03
+    disproven_names (WRONG - explicitly refuted, do NOT use):
+        LOG_RMAC_CARRIER_STATE_CHANGED
+            source: qxdm_3_12_714_2017_diag_log_codes (refuted by: qualcomm_firmware_f3_log_emission_oracles)
+            reason: Community QXDM-2017 name for an unrelated subsystem (CDMA 1x/EVDO reverse-MAC carrier state). Firmware mc_srchstrategy.c proves 0x1456 is a CGPS tracking-DPO status log - wrong subsystem, not merely older.
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).
@@ -110,9 +121,9 @@ class Diag0x1456:
 
 
 @register(
-    LOG_GNSS_HEARTBEAT_1456,
+    LOG_GNSS_HEARTBEAT_1456, domain="gnss",
     name="0x1456",
-    description="GNSS heartbeat/status (0x1456) — 11B fixed; 5 named bytes + 6 reserved-zero invariants",
+    description="CGPS tracking-DPO status (0x1456, LOG_CGPS_MC_TRACK_DPO_STATUS_C; ~1Hz heartbeat cadence) - 11B fixed; 5 named bytes + 6 reserved-zero invariants",
     version=3,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",

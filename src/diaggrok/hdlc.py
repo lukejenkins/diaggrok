@@ -363,6 +363,11 @@ class HdlcStats:
     crc_ok: int = 0
     crc_bad: int = 0
     skipped_short: int = 0
+    # LOG_F frames dropped by the opt-in `drop_desync` length-consistency gate
+    # (#N/#N): the inner outer_len field (bytes[2:4]) disagrees with the
+    # frame's true length, so a strict flat-DLF reader stepping by that field
+    # would desync. Only counted when drop_desync=True; 0 otherwise.
+    desync_dropped: int = 0
     # Monotonic u16 LE counter values pulled from 0x80 wrappers in order
     # encountered. Consecutive entries should increment by 1 (mod 2**16);
     # gaps indicate dropped QShrink4 batches. See ``parse_subsys_v2_header``.
@@ -566,11 +571,27 @@ def _extract_log_f(frame_no_crc: bytes) -> tuple[int, int, bytes] | None:
     return log_code, ts64, payload
 
 
+def _is_len_desync(inner: bytes) -> bool:
+    """True when a LOG_F inner frame's outer_len field (bytes[2:4], u16 LE)
+    disagrees with the frame's true byte length.
+
+    A well-formed DIAG_LOG_F carries ``outer_len == len(inner) - 4`` (the 4 bytes
+    a flat-DLF record drops: cmd+pending at [0:2] and the redundant inner_len
+    duplicate at [4:6]). A boot-blob fragment that merely *starts* with 0x10 but
+    carries a bogus length violates this (#N: the ``rec_len=1`` frame that
+    desynced a capture's flat-DLF stream). ``inner`` must be the CRC-stripped
+    LOG_F frame (bare 0x10, or the inner frame already unwrapped from a 0x98
+    envelope) and at least ``_LOG_F_MIN_LEN`` bytes.
+    """
+    return (inner[2] | (inner[3] << 8)) != len(inner) - 4
+
+
 def _process_frame(
     raw_frame: bytes,
     *,
     verify_crc: bool,
     stats: HdlcStats,
+    drop_desync: bool = False,
 ) -> tuple[int, int, bytes] | None:
     """Decode ONE raw (still-escaped, delimiter-stripped) HDLC frame.
 
@@ -584,6 +605,14 @@ def _process_frame(
     else (too-short, bad CRC, non-LOG opcode). ``stats`` is mutated in
     place either way — opcode/byte counts, CRC tallies, and ``0x80``
     QShrink4 counters accrue even when no record is yielded.
+
+    ``drop_desync``: when True, a LOG_F frame whose outer_len field disagrees
+    with its true length (:func:`_is_len_desync`) is dropped (counted in
+    ``stats.desync_dropped``) instead of yielded. This lets a caller that
+    re-encodes records into a strict flat-DLF byte stream (whose reader steps by
+    that length field) stay in sync when a capture carries a boot-blob fragment
+    with a bogus length. Default False preserves the historical yield-everything
+    behavior for all existing consumers.
     """
     if len(raw_frame) < 4:  # need opcode + 2 CRC + at least 1 byte
         return None
@@ -609,6 +638,9 @@ def _process_frame(
     body = frame[:-2]
 
     if opcode == 0x10:
+        if drop_desync and len(body) >= _LOG_F_MIN_LEN and _is_len_desync(body):
+            stats.desync_dropped += 1
+            return None
         rec = _extract_log_f(body)
         if rec is not None:
             stats.log_records += 1
@@ -621,7 +653,12 @@ def _process_frame(
         stats.inner_0x98_opcodes[body[wrap_off]] += 1
         # The 0x98 wrapper holds a complete inner 0x10 LOG_F frame;
         # it does NOT carry its own inner CRC, so no second strip.
-        rec = _extract_log_f(body[wrap_off:])
+        inner = body[wrap_off:]
+        if (drop_desync and body[wrap_off] == 0x10
+                and len(inner) >= _LOG_F_MIN_LEN and _is_len_desync(inner)):
+            stats.desync_dropped += 1
+            return None
+        rec = _extract_log_f(inner)
         if rec is not None:
             stats.log_records += 1
             stats.log_records_from_wrapper += 1
@@ -645,6 +682,7 @@ def iter_log_records(
     *,
     verify_crc: bool = False,
     stats: HdlcStats | None = None,
+    drop_desync: bool = False,
 ) -> Iterator[tuple[int, int, bytes]]:
     """Yield ``(log_code, ts64, payload)`` for every LOG packet in a raw
     HDLC-framed DIAG byte stream.
@@ -678,7 +716,8 @@ def iter_log_records(
         stats = HdlcStats()
 
     for raw_frame in data.split(b"\x7e"):
-        rec = _process_frame(raw_frame, verify_crc=verify_crc, stats=stats)
+        rec = _process_frame(raw_frame, verify_crc=verify_crc, stats=stats,
+                             drop_desync=drop_desync)
         if rec is not None:
             yield rec
 
@@ -689,6 +728,7 @@ def iter_log_records_stream(
     verify_crc: bool = False,
     stats: HdlcStats | None = None,
     flush_tail: bool = True,
+    drop_desync: bool = False,
 ) -> Iterator[tuple[int, int, bytes]]:
     """Streaming equivalent of :func:`iter_log_records` (#N).
 
@@ -746,12 +786,14 @@ def iter_log_records_stream(
         # possibly-incomplete frame. Hold it for the next chunk.
         residual = parts.pop()
         for raw_frame in parts:
-            rec = _process_frame(raw_frame, verify_crc=verify_crc, stats=stats)
+            rec = _process_frame(raw_frame, verify_crc=verify_crc, stats=stats,
+                                 drop_desync=drop_desync)
             if rec is not None:
                 yield rec
 
     if flush_tail and residual:
-        rec = _process_frame(residual, verify_crc=verify_crc, stats=stats)
+        rec = _process_frame(residual, verify_crc=verify_crc, stats=stats,
+                             drop_desync=drop_desync)
         if rec is not None:
             yield rec
 

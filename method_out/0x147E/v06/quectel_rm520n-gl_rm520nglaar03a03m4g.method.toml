@@ -1,0 +1,41 @@
+version = 6
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "constellations"
+quantity = "gnss_enabled_constellations"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QGPSCFG=\"gnssconfig\"" },
+    { kind = "nmea", value = "$GPGSV / $GLGSV / $GAGSV / $BDGSV" },
+]
+
+[[field_map]]
+parser_field = "rf_bands"
+quantity = "gnss_rf_frontend_active_bands_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QGPSCFG=\"gnssconfig\"" },
+]
+
+[[field_map]]
+parser_field = "glonass_channels"
+quantity = "glonass_fdma_channel_numbers_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GLGSV" },
+]
+
+[[field_map]]
+parser_field = "ms_counter"
+quantity = "gnss_engine_ms_tick"
+status = "partial"
+sources = [
+    { kind = "trigger", value = "GNSS engine running (AT+QGPSLOC=2 succeeding)" },
+]

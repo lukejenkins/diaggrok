@@ -1,0 +1,64 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Compal"
+modem_model = "RXM-G1"
+modem_firmware = "RXMG1.20.00.244_0C03"
+
+[[field_map]]
+parser_field = "svs[].sv_id"
+quantity = "gps_sv_prn"
+status = "verified"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$PQWM1 per-SV PRN field on the RXM-G1 if2 AT port (AT+BNMEA=1)"
+
+[[field_map.sources]]
+kind = "f3"
+value = "sm_api.c 'Dropping SV %d: q_MeasStatus=%x Cno=%d' SV identifier (co-captured QSR4, qdb 77c0963a)"
+
+[[field_map]]
+parser_field = "svs[].cno_db"
+quantity = "gnss_carrier_to_noise_dbhz"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$PQWM1 SNR/CNo field on the RXM-G1 AT port"
+
+[[field_map.sources]]
+kind = "f3"
+value = "sm_api.c 'Dropping SV %d ... Cno=%d' carrier level (co-captured QSR4, qdb 77c0963a)"
+
+[[field_map]]
+parser_field = "svs[].az_deg"
+quantity = "gnss_sv_azimuth_deg"
+sources = [
+    { kind = "nmea", value = "$PQWM1 azimuth field on the RXM-G1 AT port" },
+]
+
+[[field_map]]
+parser_field = "svs[].el_deg"
+quantity = "gnss_sv_elevation_deg"
+sources = [
+    { kind = "nmea", value = "$PQWM1 elevation field on the RXM-G1 AT port" },
+]
+
+[[field_map]]
+parser_field = "gps_week"
+quantity = "gps_week_number"
+
+[[field_map.sources]]
+kind = "f3"
+value = "tle_base.cpp 'TPC: Wk:<week>, msec:<ms>' (co-captured QSR4, qdb 77c0963a)"
+
+[[field_map]]
+parser_field = "gps_milliseconds"
+quantity = "gps_time_of_week_ms"
+
+[[field_map.sources]]
+kind = "f3"
+value = "tle_base.cpp 'TPC: Wk:..., msec:<ms>' (co-captured QSR4, qdb 77c0963a)"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$PQWP2 UTC time field on the RXM-G1 AT port"

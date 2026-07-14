@@ -25,11 +25,14 @@ from diaggrok.registry import register
 
 
 # --- #N ground-truth recipe -------------------------------------------
-# 0x14A6 is a GNSS per-SV C/N0 snapshot: a 12-slot table of (sv_id,
-# cno_metric) plus SV-count fields. The cleanest ground is the modem's own
-# NMEA GSV sentence (per-satellite PRN + SNR) under a real sky fix, with the
-# fix-SV count cross-checked against QGPSLOC. Authored offline (3ccc
-# playbook); a later agent validates on hardware (hw_run_performed=False).
+# 0x14A6 is a GNSS per-SV ephemeris snapshot: a 12-slot table of (sv_id,
+# iode) plus SV-count fields. sv_id grounds against the modem's NMEA GSV PRN
+# set under a real sky fix (HW-VERIFIED 2026-06-11, sv_id == GPS PRN). The
+# per-SV `iode` scalar was previously guessed as C/N0 (`cno_metric`); the
+# F3-grounded #N analysis refuted that (frozen-per-session u8, reaches 235;
+# real C/N0 lives in the co-temporal `mc_glodebits`/`mc_meas` F3). IODE has NO
+# NMEA source — ground it against a RINEX .nav ephemeris IODE per PRN or a
+# 0x99/QSR4 F3 IODE print, NOT GSV SNR. Authored offline (3ccc playbook).
 # --- end #N recipe ----------------------------------------------------
 
 
@@ -80,34 +83,56 @@ from diaggrok.registry import register
 #                slot count; populated slots ≤ byte[18] on 3195/3195.
 #   [19]     u8  aux_19
 #   [20]     u8  aux_20
-#   [21]     u8  fw_tag ∈ {0, 0x6d, 0x6e, 0x6f, 0x74, 0x75} — same build-channel
-#                tag that 0x1509 exposes at its byte[1]: cross-parser
-#                invariant. ASCII letters 'm'/'n'/'o'/'t'/'u' (sierra SWIX65C
-#                contributed 't', #N; sierra EM7565 SWI9X50C contributed
-#                'u', #N/<redacted-ref>).
+#   [21]     u8  fw_tag ∈ {0, 0x6d, 0x6e, 0x6f, 0x74, 0x75, 0x7a} — same
+#                build-channel tag that 0x1509 exposes at its byte[1]: cross-
+#                parser invariant. ASCII letters 'm'/'n'/'o'/'t'/'u'/'z'
+#                (sierra SWIX65C contributed 't', #N; sierra EM7565
+#                SWI9X50C contributed 'u', #N/<redacted-ref>; quectel EG18-NA
+#                EG18NAPAR01A06M4G/MDM9640 contributed 'z', #N — the tag is
+#                thus neither chipset- nor vendor-locked).
 #   [22]     u8  sub_type ∈ {0, 9} (= 0 only on empty records)
 #   [23:71]  48B sv_slots — 12 slots × 4 bytes each:
 #                - slot[i][0:2]  u16 LE sv_id
-#                - slot[i][2:4]  u16 LE cno_metric
-#                (sv_id and cno_metric values fit in u8 range, hence the
+#                - slot[i][2:4]  u16 LE iode (was `cno_metric` ≤v8; #N)
+#                (sv_id and iode values fit in u8 range, hence the
 #                 "every other byte is zero" pattern.)
 #                Populated count matches byte[16] on 3195/3195 records.
 #   [71:151] 80B reserved_tail = 0 (constant 3195/3195)
 
 @dataclass
 class GnssSvCno14A6Slot:
-    """One slot in the 12-slot SV table of 0x14A6."""
+    """One slot in the 12-slot SV table of 0x14A6.
+
+    (Class name retained for API stability; the ``Cno`` in it is historical —
+    the per-SV scalar was renamed ``cno_metric`` → ``iode`` in v9, see #N.)
+    """
     sv_id: int         # u16 LE
-    cno_metric: int    # u16 LE
+    iode: int          # u16 LE (u8-range) — per-SV Issue Of Data, Ephemeris (#N)
+
+    @property
+    def cno_metric(self) -> int:
+        """Deprecated back-compat alias for :attr:`iode`.
+
+        The field was named ``cno_metric`` (a C/N0 guess) from v2's structural
+        RE. The 2026-07-14 F3-grounded analysis (#N) refuted C/N0: the scalar
+        is frozen per-SV across whole captures (0-1 changes over 600-1259
+        records, in stationary *and* moving drives) and reaches raw 235 —
+        impossible for any dB-Hz scale — while co-temporal F3 (`mc_glodebits`
+        CNo / `mc_meas` G_CNo) carries the *actual*, time-varying C/N0. The
+        frozen-until-eph-refresh u8 behaviour + the canonical name
+        ``LOG_CGPS_SM_EPH_RANDOMIZATION_INFO_C`` identify it as IODE. Alias
+        kept so existing consumers keep working; new code should read ``iode``.
+        """
+        return self.iode
 
     @property
     def is_populated(self) -> bool:
-        return self.sv_id != 0 or self.cno_metric != 0
+        return self.sv_id != 0 or self.iode != 0
 
 
 @dataclass
 class Diag0x14A6:
-    """GNSS per-SV CNo snapshot (0x14A6) — 151B fixed, fully decoded.
+    """GNSS per-SV ephemeris (IODE) snapshot (0x14A6) — 151B fixed, fully decoded.
 
     Renamed from the pre-v2 stub (which called the same class GnssData14A6
     but only exposed version/sub_type/counter/body_raw).  The post-v2
@@ -169,7 +194,12 @@ class Diag0x14A6:
             'fw_tag': self.fw_tag,
             'sub_type': self.sub_type,
             'sv_slots': [
-                {'sv_id': s.sv_id, 'cno_metric': s.cno_metric}
+                # `iode` is the canonical key (v9, #N). `cno_metric` is a
+                # deprecated back-compat mirror for existing consumers (e.g. the
+                # 0x147D f32-outlier `_cno_summary` walker + external JSON
+                # readers); it carries the identical value and will be dropped
+                # once those consumers migrate to `iode`.
+                {'sv_id': s.sv_id, 'iode': s.iode, 'cno_metric': s.iode}
                 for s in self.sv_slots if s.is_populated
             ],
             'reserved_tail_zero': self.reserved_tail == b'\x00' * 80,
@@ -178,10 +208,10 @@ class Diag0x14A6:
 
 
 @register(
-    0x14A6,
+    0x14A6, domain="gnss",
     name="0x14A6",
-    description="GNSS per-SV CNo snapshot (0x14A6) — 151B fixed, fully decoded",
-    version=7,
+    description="GNSS per-SV ephemeris (IODE) snapshot (0x14A6) — 151B fixed, fully decoded",
+    version=9,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -242,7 +272,44 @@ class Diag0x14A6:
         "fix). sv_slots.sv_id VERIFIED: 10/10 GPS-range sv_id contained in the GSV "
         "GPS PRN set (sv_id == GPS PRN, no offset). num_sv_fix / num_sv_tracked / "
         "cno_metric → PARTIAL (GPS-family counts ~10, not the multi-constellation "
-        "QGPSLOC nsat / 53-SV GSV total; cno raw→dB-Hz scale unrecovered)."
+        "QGPSLOC nsat / 53-SV GSV total; cno raw→dB-Hz scale unrecovered). "
+        "v8 (2026-07-07, #N): widened fw_tag enum to include 0x7a ('z') "
+        "after Quectel EG18-NA (EG18NAPAR01A06M4G, MDM9640) surfaced 290/290 "
+        "invariant-violation records with fw_tag=122 in the gnss_comparison_"
+        "2026-07-07 4-stream capture (eg18na.corpus_sweep.yaml). This is the "
+        "first NON-Sierra contributor to the tag ('m'/'n'/'o'/'t'/'u' were all "
+        "Sierra/Quectel-QCA builds; 'z' from Quectel MDM9640 confirms the tag "
+        "is a generic Qualcomm firmware-family letter, neither chipset- nor "
+        "vendor-locked). payload_size=151 and version=0x02 both held (0 parse "
+        "errors — pure enum rejection), so the format is identical; build-"
+        "channel tag only. Explicit-value widening (not whole-range) keeps the "
+        "invariant meaningful. Cross-parser 0x1509 CORROBORATION: the same "
+        "capture emitted 41 × 0x1509 records, all 41 carrying byte[1]=0x7a "
+        "('z') — exact match, so both codes widen together as in the v4/v5 "
+        "cases (0x1509's byte[1] doc set widened to 'z'; it is doc-only there, "
+        "not layer-2 gated). SEPARATE finding for #N: all 290 EG18-NA "
+        "records also carry nav_state=0x0010 at [11:13] (non-zero on a non-"
+        "EM7565 chipset — a new nav_state data point, tracked out of this "
+        "fw_tag-scoped change). "
+        "v9 (2026-07-14, #N): RENAMED per-SV scalar sv_slots.cno_metric → "
+        "sv_slots.iode. The v2 structural RE named the u16 at slot[2:4] "
+        "'cno_metric' (a C/N0 guess) with no signal-quality ground truth; the "
+        "F3-grounded <redacted-ref> analysis refutes C/N0. Evidence: the scalar is "
+        "FROZEN per-SV across whole captures (slot-set changes/record = 0/1104 "
+        "on the RM520N-GL R03A04 F3 characterization capture, 1/1259 on a "
+        "MOVING R03A03 drive, 1/605 on EM9291 — the single change is always the "
+        "fix→no-fix transition), whereas live C/N0 jitters every 1 Hz epoch; "
+        "and it reaches raw 235 (EM9291), impossible for any dB-Hz scale "
+        "(ceiling ~50). The co-temporal 0x79 F3 carries the ACTUAL time-varying "
+        "C/N0 (mc_glodebits 'GLOID n CNo v' at 0.1 dB-Hz; mc_meas G_CNo/S_CNo) "
+        "— orthogonal to these frozen values. Frozen-until-eph-refresh u8 + the "
+        "canonical name LOG_CGPS_SM_EPH_RANDOMIZATION_INFO_C identify it as "
+        "IODE (Issue Of Data, Ephemeris). `cno_metric` retained as a deprecated "
+        "back-compat property + to_dict mirror key. IODE label is corpus-"
+        "behaviour-inferred; a 0x99/QSR4 F3 IODE per-PRN print (needs GUID-"
+        "matched qdb) or a multi-hour value-step-at-refresh capture would "
+        "upgrade it from inferred to confirmed. No structural/byte change; "
+        "field name + semantics only."
     ),
     source_url="",
     issues=(),
@@ -278,7 +345,12 @@ class Diag0x14A6:
         # fw_tag=117. Next ASCII letter after 't'; payload_size/version
         # unchanged so the record format is identical — build-channel tag
         # only. Paired 0x1509 NOT widened (EM7565 emitted no 0x1509).
-        "fw_tag": {"enum": [0, 0x6d, 0x6e, 0x6f, 0x74, 0x75]},
+        # 2026-07-07 #N (v8): added 0x7a ('z') after Quectel EG18-NA
+        # (EG18NAPAR01A06M4G / MDM9640) surfaced 290/290 records with
+        # fw_tag=122 — first non-Sierra contributor. Paired 0x1509 DID
+        # co-occur here (41 records, all byte[1]=0x7a), so both widen
+        # together (0x1509 doc-only, fw_tag not gated at layer-2 there).
+        "fw_tag": {"enum": [0, 0x6d, 0x6e, 0x6f, 0x74, 0x75, 0x7a]},
         "sub_type": {"enum": [0, 9]},
     },
 )
@@ -296,7 +368,7 @@ def parse_0x14a6(log_time: int, data: bytes) -> Diag0x14A6 | None:
         base = 23 + i * 4
         slots.append(GnssSvCno14A6Slot(
             sv_id=unpack_from('<H', data, base)[0],
-            cno_metric=unpack_from('<H', data, base + 2)[0],
+            iode=unpack_from('<H', data, base + 2)[0],
         ))
     return Diag0x14A6(
         log_time=log_time,

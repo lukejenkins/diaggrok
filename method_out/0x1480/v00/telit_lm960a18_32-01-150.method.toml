@@ -1,0 +1,48 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.150"
+
+[[field_map]]
+parser_field = "glonass_days"
+quantity = "glonass_day_number"
+status = "verified"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 mc_gnssmeasreport.c 'Glo_MeasBlk Days' (qdb GUID 2f5667ef) @lm960"
+
+[[field_map]]
+parser_field = "milliseconds"
+quantity = "glonass_time_of_day_ms"
+status = "verified"
+sources = [
+    { kind = "other", value = "F3 mc_gnssmeasreport.c 'Glo_MeasBlk Ms/FC' @lm960" },
+]
+
+[[field_map]]
+parser_field = "time_bias"
+quantity = "gnss_receiver_clock_bias_ms"
+status = "verified"
+sources = [
+    { kind = "other", value = "F3 mc_gnssmeasreport.c 'Glo_MeasBlk ClkBiasMs' @lm960" },
+]
+
+[[field_map]]
+parser_field = "svs[].cno_db"
+quantity = "gnss_carrier_to_noise_dbhz"
+status = "partial"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 mc_peak.c 'GnssType:1 ... C/No' @lm960 (absent this window — GLONASS unusable, GloSvMask=0)"
+
+[[field_map]]
+parser_field = "svs[].freq_index"
+quantity = "glonass_fdma_channel"
+status = "partial"
+
+[[field_map.sources]]
+kind = "other"
+value = "GLONASS slot→FDMA-channel almanac table (no NMEA/AT/F3-per-SV field exposes the channel this run)"

@@ -1,0 +1,21 @@
+version = 1
+cond = "any-drive"
+modem_make = "Sierra"
+modem_model = "EM7511"
+modem_firmware = "SWI9X50C_01.14.22.00"
+
+[[field_map]]
+parser_field = "v1_cells.meas_high_byte"
+quantity = "lte_neighbor_interfreq_measurement_candidate"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "num_carriers"
+quantity = "lte_neighbor_interfreq_carrier_count_candidate"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]

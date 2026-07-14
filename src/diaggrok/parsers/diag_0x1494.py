@@ -265,7 +265,7 @@ class Diag0x1494:
 
 
 @register(
-    0x1494,
+    0x1494, domain="gnss",
     primary_issue=None,
     name="0x1494",
     description="Large GNSS constellation data (0x1494) — per-tracker-channel slot table (#N, #N, #N, #N)",

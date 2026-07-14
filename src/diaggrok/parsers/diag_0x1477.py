@@ -16,7 +16,7 @@ batch (session: this round). The companion log codes 0x1478
 
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_GNSS_GPS_MEASUREMENT_REPORT_C
-        source: qualcomm_diag_log_codes_h (authority: vendor_official)
+        source: qualcomm_firmware_f3_log_emission_oracles (authority: vendor_official)
     aliases:
         LOG_GAN_CALL_RELEASE_COMPLETE
             source: qxdm_3_12_714_2017_diag_log_codes
@@ -192,7 +192,7 @@ class Diag0x1477:
 # Parser
 # ---------------------------------------------------------------------------
 
-@register(LOG_GNSS_GPS_MEASUREMENT_REPORT,
+@register(LOG_GNSS_GPS_MEASUREMENT_REPORT, domain="gnss",
     name="0x1477",
     description="Per-SV carrier noise, azimuth, elevation, Doppler, measurement status; validated on MDM9207, SDX20 V2, SDX55, SDX20 (LM960)",
     version=6,

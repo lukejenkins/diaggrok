@@ -1,0 +1,29 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A04M4G_01.203.01.203"
+
+[[field_map]]
+parser_field = "parser_format"
+quantity = "sdx62_galileo_slot_layout_discovery"
+sources = [
+    { kind = "f3", value = "Log packet allocation ... GAL E1 (0x1886) (mc_gnssmeasreport.c)" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+]
+
+[[field_map]]
+parser_field = "svs.prn"
+quantity = "galileo_sv_prn"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "GAGSV: satellite id (Galileo PRN)" },
+]
+
+[[field_map]]
+parser_field = "svs.float_d_possibly_cno_db"
+quantity = "galileo_sv_cno_dbhz_candidate"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "GAGSV: C/N0 (SNR) column per Galileo SV" },
+]

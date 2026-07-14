@@ -1,0 +1,46 @@
+version = 1
+cond = "sky-fix"
+modem_make = "Foxconn"
+modem_model = "T99W640"
+modem_firmware = "FDE2.F0.0.0.1.2.TO.001"
+
+[[field_map]]
+parser_field = "version"
+quantity = "gnss_0x158c_format_version"
+status = "verified"
+
+[[field_map.sources]]
+kind = "other"
+value = "DIAG /dev/mhi_DIAG capture (owned corpus) byte[0]/byte[1] histogram"
+
+[[field_map]]
+parser_field = "metric_c"
+quantity = "gnss_rf_chain_metric_c_candidate"
+status = "verified"
+sources = [
+    { kind = "other", value = "DIAG capture metric_c/metric_b ratio (t99w640)" },
+]
+
+[[field_map]]
+parser_field = "metric_d"
+quantity = "gnss_rf_chain_metric_d_candidate"
+status = "verified"
+sources = [
+    { kind = "other", value = "DIAG capture metric_d/metric_b ratio (t99w640)" },
+]
+
+[[field_map]]
+parser_field = "metric_a"
+quantity = "gnss_rf_chain_cn0_or_signal_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+]
+
+[[field_map]]
+parser_field = "constellation"
+quantity = "gnss_constellation_id"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+]

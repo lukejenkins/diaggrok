@@ -1,0 +1,74 @@
+version = 1
+cond = "idle"
+modem_make = "Quectel"
+modem_model = "EG25-G"
+modem_firmware = "EG25GGBR07A08M2G_A0.301.A0.301"
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_neighbor_earfcn"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-neighbor EARFCN)" },
+    { kind = "other", value = "F3 lte_ml1_md.c:2753 'Ngbr srch req (earfcn %d)'" },
+]
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_neighbor_physical_cell_id"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell PCI)" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO (LTE neighbor list)" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+status = "refuted"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QENG=\"neighbourcell\""
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetSignalInfo (neighbor RSRP)"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 lte_ml1_mdb_idle.c 'apply rsrp offset flag %d ... offset %d'"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 0x92-index lte_ml1_mdb_idle.c (40 sites/8576 frames, e.g. :10131)"
+
+[[field_map]]
+parser_field = "entries.rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell RSRQ)" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell RSRQ)" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_cell_count"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (neighbor list length)" },
+]

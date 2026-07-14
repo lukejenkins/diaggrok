@@ -1,0 +1,22 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "state_byte"
+quantity = "gnss_engine_state_phase"
+status = "partial"
+sources = [
+    { kind = "qmi", value = "QMI_LOC GetEngineState" },
+    { kind = "trigger", value = "AT+QGPS=1 / AT+QGPSEND to force a boot transition" },
+]
+
+[[field_map]]
+parser_field = "status"
+quantity = "gnss_fix_state_toggle"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+]

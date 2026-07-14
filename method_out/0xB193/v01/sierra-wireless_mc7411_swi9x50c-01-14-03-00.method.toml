@@ -1,0 +1,50 @@
+version = 1
+cond = "idle"
+modem_make = "Sierra"
+modem_model = "MC7411"
+modem_firmware = "SWI9X50C_01.14.03.00"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (LTE serving PCI)" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "f3", value = "rflte_mc_rx.c — 'MC has tuned Rx chains for band:%d channel:%d'" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+status = "refuted"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "at", value = "AT!LTEINFO?" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "lte_serving_rsrq_db"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_serving_meas_cell_count"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+]

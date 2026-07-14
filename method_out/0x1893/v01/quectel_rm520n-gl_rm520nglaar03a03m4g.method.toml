@@ -1,0 +1,15 @@
+version = 1
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "occupied_count"
+quantity = "gnss_me_tracked_sv_count_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]

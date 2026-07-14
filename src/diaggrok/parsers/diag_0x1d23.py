@@ -101,7 +101,7 @@ class Diag0x1D23:
 
 
 @register(
-    0x1D23,
+    0x1D23, domain="gnss",
     name="0x1D23",
     description="LOG_GNSS_POWER_PROFILING_REPORT_C (0x1D23) — GNSS structural stub (#N)",
     version=1,

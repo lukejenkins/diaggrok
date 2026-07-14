@@ -397,7 +397,7 @@ def _classify_size(n: int) -> str:
 # so it is deliberately not a field_map entry.
 
 @register(
-    LOG_GNSS_ME_GPS_L1C,
+    LOG_GNSS_ME_GPS_L1C, domain="gnss",
     name="0x1855",
     description="GPS L1C signal measurements — skeleton parser, per-SV RE pending (#N)",
     version=6,

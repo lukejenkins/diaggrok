@@ -1,0 +1,24 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "flag"
+quantity = "gnss_engine_active_flag"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "trigger", value = "toggle GNSS engine (AT+QGPS=1 / AT+QGPSEND) to flip flag" },
+]
+
+[[field_map]]
+parser_field = "state"
+quantity = "gnss_tracking_dpo_phase_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "at", value = "AT+QGPSCFG=\"gnssconfig\"" },
+    { kind = "other", value = "QMI_LOC engine-state event (not in poller set yet)" },
+]

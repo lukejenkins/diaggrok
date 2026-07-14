@@ -71,7 +71,7 @@ class Diag0x1636:
 
 
 @register(
-    0x1636,
+    0x1636, domain="gnss",
     name="0x1636",
     description="0x1636 — structural-header stub (legacy GnssSvInfo1636, GNSS_ME_RF_NOISE_EST)",
     version=2,

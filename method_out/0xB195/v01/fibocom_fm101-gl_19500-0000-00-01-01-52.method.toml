@@ -1,0 +1,43 @@
+version = 1
+cond = "connected"
+modem_make = "Fibocom"
+modem_model = "FM101-GL"
+modem_firmware = "19500.0000.00.01.01.52"
+
+[[field_map]]
+parser_field = "entries[].pci"
+quantity = "lte_neighbor_pci"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "entries[].earfcn"
+quantity = "lte_neighbor_earfcn_dl"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "mbim", value = "MBIM_CID_SIGNAL_STATE" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]

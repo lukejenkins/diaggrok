@@ -1,0 +1,51 @@
+version = 1
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM8202G-M2"
+modem_firmware = "LE13B04SIM8202M44A-M2"
+
+[[field_map]]
+parser_field = "constellation"
+quantity = "gnss_constellation_id"
+sources = [
+    { kind = "nmea", value = "$GxGSV talker ID (GP/GL/GA/GB/GS) — SIM8202G-M2 native NMEA" },
+    { kind = "at", value = "AT+CGNSSINFO" },
+]
+
+[[field_map]]
+parser_field = "metric_a"
+quantity = "gnss_rf_chain_cn0_or_signal_candidate"
+status = "partial"
+sources = [
+    { kind = "nmea", value = "$GxGSV per-SV C/N0 dB-Hz, aggregated per constellation" },
+]
+
+[[field_map]]
+parser_field = "metric_b"
+quantity = "gnss_rf_chain_metric_b_candidate"
+sources = [
+    { kind = "nmea", value = "$GxGSV aggregate C/N0 vs metric_b trend" },
+    { kind = "nmea", value = "$GxGSA fix type / DOP as a quality cross-reference" },
+]
+
+[[field_map]]
+parser_field = "metric_c"
+quantity = "gnss_rf_chain_metric_c_candidate"
+sources = [
+    { kind = "nmea", value = "$GxGSV aggregate C/N0 vs metric_c trend" },
+]
+
+[[field_map]]
+parser_field = "metric_d"
+quantity = "gnss_rf_chain_metric_d_candidate"
+sources = [
+    { kind = "nmea", value = "aggregate $GxGSV C/N0 vs metric_d trend" },
+]
+
+[[field_map]]
+parser_field = "active"
+quantity = "gnss_constellation_active_flag"
+sources = [
+    { kind = "nmea", value = "constellation has ≥1 tracked SV in $GxGSV ⇒ active expected true" },
+    { kind = "at", value = "AT+CGNSSINFO" },
+]

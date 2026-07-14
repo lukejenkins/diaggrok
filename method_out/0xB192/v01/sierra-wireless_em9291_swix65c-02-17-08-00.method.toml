@@ -1,0 +1,55 @@
+version = 1
+cond = "idle"
+modem_make = "Sierra"
+modem_model = "EM9291"
+modem_firmware = "SWIX65C_02.17.08.00"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_neighbor_physical_cell_id"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (LTE neighbor list → per-cell PCI)" },
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO (LTE neighbor list)" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_neighbor_earfcn"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-neighbor EARFCN)" },
+    { kind = "at", value = "AT!LTEINFO?" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (neighbor RSRP)" },
+    { kind = "at", value = "AT+CESQ" },
+    { kind = "at", value = "AT!GSTATUS?" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell RSRQ; per-Rx not guaranteed)" },
+    { kind = "at", value = "AT+CESQ" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell RSRQ)" },
+    { kind = "at", value = "AT+CESQ" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_cell_count"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (length of the neighbor list)" },
+    { kind = "at", value = "AT!LTEINFO?" },
+]

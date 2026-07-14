@@ -349,7 +349,7 @@ def _classify_size(payload_size: int, version: int) -> str:
 # GLONASS GSV rows, NOT slot[i]→specific-SV value-equality.
 
 @register(
-    LOG_GNSS_ME_RF_GLO_BP,
+    LOG_GNSS_ME_RF_GLO_BP, domain="gnss",
     name="0x1646",
     description="GLONASS L1/L2 RF front-end + per-FCN state — header + 9-slot internals decoded (v2 + v3)",
     version=6,

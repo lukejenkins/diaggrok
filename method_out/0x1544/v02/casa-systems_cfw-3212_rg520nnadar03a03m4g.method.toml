@@ -1,0 +1,48 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Casa"
+modem_model = "CFW-3212"
+modem_firmware = "RG520NNADAR03A03M4G"
+
+[[field_map]]
+parser_field = "sv_slots.sv_id"
+quantity = "gnss_sv_prn_id"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "nmea", value = "$GxGSV per-SV PRN / $GxGSA active PRN list" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.elevation_deg"
+quantity = "gnss_sv_elevation_deg"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GxGSV elevation field per satellite" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.azimuth_deg"
+quantity = "gnss_sv_azimuth_deg"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GxGSV azimuth field per satellite" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.cn0_db_hz"
+quantity = "gnss_sv_cn0_db_hz"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GxGSV SNR/CNo field per satellite" },
+]
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_embedded_nmea_sentence"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"VTG\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GGA\"" },
+    { kind = "nmea", value = "the QGPSGNMEA talker matching nmea_sentence_type" },
+]

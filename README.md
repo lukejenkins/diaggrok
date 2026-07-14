@@ -1,7 +1,5 @@
 # diaggrok
 
-> Part of the **[cellular `diag*` toolkit](https://github.com/lukejenkins/cellular#the-diag-toolkit)** — start there for how the capture/decode pieces fit together.
-
 A 100% reverse engineered library for parsing the diagnostic (DIAG) logs of mobile devices — specifically the Qualcomm `LOG_F` records that modern cell modems emit when you put them into diagnostic mode.
 
 If you've ever pointed QCAT, QXDM, qcsuper, or SCAT at a modem and wondered what all those `0x1526`-style log codes actually *mean*, that's the itch this scratches. diaggrok takes the raw bytes of a DIAG log record and hands you back named, typed fields.

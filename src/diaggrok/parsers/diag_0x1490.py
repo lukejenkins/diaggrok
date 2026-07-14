@@ -111,7 +111,7 @@ class Diag0x1490:
 # no-fix → acquiring → fix, exercising the state bytes.
 
 @register(
-    LOG_GNSS_STATE_1490,
+    LOG_GNSS_STATE_1490, domain="gnss",
     name="0x1490",
     description="GNSS state/event report (0x1490) — 14B fixed, all bytes named",
     version=4,

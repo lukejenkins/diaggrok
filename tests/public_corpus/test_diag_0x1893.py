@@ -64,7 +64,7 @@ def _synthetic_1893_873b() -> bytes:
     """Build the 873-byte (61B header + 14x58B slots) 0x1893 payload.
 
     Header offsets and slot offsets transcribed from diag_0x1893.py's
-    Diag0x1893 / GnssMeasSlot1893 dataclasses and _parse_gnss_1893_slot:
+    Diag0x1893 / CxmArbSlot1893 dataclasses and _parse_1893_slot:
       header [0]=version, [1]=version_b, [2]=seq_lo, [3:7]=counter,
               [7]=flag_7, [11]=flag_11, [14]=marker_14, [17]=flag_17
       slot [+0:+5]=u40 LE timestamp_u40, [+8]=marker_a, [+11]=marker_b,

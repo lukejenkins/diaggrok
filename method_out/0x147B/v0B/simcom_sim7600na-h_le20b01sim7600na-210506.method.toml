@@ -1,0 +1,28 @@
+version = 11
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM7600NA-H"
+modem_firmware = "LE20B01SIM7600NA_210506"
+
+[[field_map]]
+parser_field = "gps_week"
+quantity = "gps_week_number"
+sources = [
+    { kind = "at", value = "AT+CGPSINFO" },
+    { kind = "nmea", value = "$GPRMC" },
+]
+
+[[field_map]]
+parser_field = "gps_ms"
+quantity = "gps_time_of_week_ms"
+sources = [
+    { kind = "at", value = "AT+CGPSINFO" },
+    { kind = "nmea", value = "$GPGGA" },
+]
+
+[[field_map]]
+parser_field = "f_count"
+quantity = "modem_frame_counter"
+sources = [
+    { kind = "trigger", value = "GNSS engine running (AT+CGPS=1,1)" },
+]

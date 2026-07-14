@@ -1,0 +1,42 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Foxconn"
+modem_model = "T99W640"
+modem_firmware = "FDE2.F0.0.0.1.2.TO.001"
+
+[[field_map]]
+parser_field = "svs[].sv_id"
+quantity = "glonass_sv_slot"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GLGSV/$GNGSV satellite-PRN field (GLONASS 65-96); map per the confirmed sv_id convention"
+
+[[field_map]]
+parser_field = "svs[].cno_db"
+quantity = "gnss_carrier_to_noise_dbhz"
+sources = [
+    { kind = "nmea", value = "$GLGSV/$GNGSV SNR field (4th of each PRN 4-tuple, dB-Hz)" },
+]
+
+[[field_map]]
+parser_field = "svs[].az_deg"
+quantity = "gnss_sv_azimuth_deg"
+sources = [
+    { kind = "nmea", value = "$GLGSV/$GNGSV azimuth field (3rd of each PRN 4-tuple, deg)" },
+]
+
+[[field_map]]
+parser_field = "svs[].el_deg"
+quantity = "gnss_sv_elevation_deg"
+sources = [
+    { kind = "nmea", value = "$GLGSV/$GNGSV elevation field (2nd of each PRN 4-tuple, deg)" },
+]
+
+[[field_map]]
+parser_field = "svs[].freq_index"
+quantity = "glonass_fdma_channel"
+
+[[field_map.sources]]
+kind = "other"
+value = "GLONASS slot->FDMA-channel almanac table (no NMEA/AT field exposes the channel directly)"

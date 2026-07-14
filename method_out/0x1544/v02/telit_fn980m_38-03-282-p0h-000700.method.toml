@@ -1,0 +1,42 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "FN980m"
+modem_firmware = "38.03.282-P0H.000700"
+
+[[field_map]]
+parser_field = "sv_slots.sv_id"
+quantity = "gnss_sv_prn_id"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GxGSV per-SV PRN / $GxGSA active PRN list (FN980m NMEA port)" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.elevation_deg"
+quantity = "gnss_sv_elevation_deg"
+sources = [
+    { kind = "nmea", value = "$GxGSV elevation field per satellite (FN980m NMEA port)" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.azimuth_deg"
+quantity = "gnss_sv_azimuth_deg"
+sources = [
+    { kind = "nmea", value = "$GxGSV azimuth field per satellite (FN980m NMEA port)" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.cn0_db_hz"
+quantity = "gnss_sv_cn0_db_hz"
+sources = [
+    { kind = "nmea", value = "$GxGSV SNR/CNo field per satellite (FN980m NMEA port)" },
+]
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_embedded_nmea_sentence"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "the FN980m NMEA-port sentence matching nmea_sentence_type" },
+]

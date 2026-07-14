@@ -1,0 +1,44 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "sv_slots.sv_id"
+quantity = "gnss_sv_id"
+status = "verified"
+sources = [
+    { kind = "nmea", value = "GSV satellite-ID field" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.iode"
+quantity = "gnss_sv_iode_candidate"
+status = "partial"
+
+[[field_map.sources]]
+kind = "other"
+value = "RINEX 3 .nav IODE field of the GPS broadcast-ephemeris record for the matching PRN"
+
+[[field_map.sources]]
+kind = "other"
+value = "0x99/QSR4 GNSS-engine IODE print (future oracle — needs a GUID-matched qdb render)"
+
+[[field_map]]
+parser_field = "num_sv_fix"
+quantity = "gnss_sv_used_in_fix"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "GGA num-satellites-used field" },
+]
+
+[[field_map]]
+parser_field = "num_sv_tracked"
+quantity = "gnss_sv_tracked_total"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+]

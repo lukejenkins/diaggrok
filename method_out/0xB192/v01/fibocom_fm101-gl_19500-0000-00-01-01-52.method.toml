@@ -1,0 +1,49 @@
+version = 1
+cond = "idle"
+modem_make = "Fibocom"
+modem_model = "FM101-GL"
+modem_firmware = "19500.0000.00.01.01.52"
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_neighbor_earfcn"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-neighbor EARFCN)" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_neighbor_physical_cell_id"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell PCI)" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo (neighbor RSRP)" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell RSRQ)" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell RSRQ)" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_cell_count"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (neighbor list length)" },
+]

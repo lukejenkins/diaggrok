@@ -1,0 +1,37 @@
+version = 3
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM8202G-M2"
+modem_firmware = "LE13B04SIM8202M44A-M2"
+
+[[field_map]]
+parser_field = "session_tag"
+quantity = "gnss_me_b1c_boot_session_tag_candidate"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+CGPS?"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "GNSS engine restart (AT+CGPS=0 then AT+CGPS=1) — session_tag should change across the cycle"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "cross-code: capture 0x1855 in the same session — its session_tag must equal this one"
+
+[[field_map]]
+parser_field = "size_variant"
+quantity = "gnss_b1c_session_init_report_type_candidate"
+sources = [
+    { kind = "at", value = "AT+CGPS?" },
+    { kind = "at", value = "AT+CGPSINFO" },
+]
+
+[[field_map]]
+parser_field = "reserved_4"
+quantity = "gnss_b1c_reserved_word_invariant"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "any 0x1856 record on SIM8202G-M2 — reserved_4 should remain 0x00000000"

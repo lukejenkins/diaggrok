@@ -1,0 +1,33 @@
+version = 1
+cond = "idle"
+modem_make = "SIMCom"
+modem_model = "SIM7600NA-H"
+modem_firmware = "LE20B01SIM7600NA_210506"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_neighbor_physical_cell_id"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_neighbor_earfcn"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_cell_count"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]

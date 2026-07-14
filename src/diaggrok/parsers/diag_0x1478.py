@@ -121,7 +121,7 @@ _VERSION_TO_SIZE = {0x02: 156, 0x03: 174, 0x04: 221}
 # no-fix sentinel observed in the offline corpus peek — this recipe is only
 # meaningful under cond:sky-fix.
 
-@register(LOG_GNSS_CLOCK_REPORT,
+@register(LOG_GNSS_CLOCK_REPORT, domain="gnss",
     name="0x1478",
     description="Multi-constellation GNSS clock state; 13-byte header decoded across 3 versions (v=0x02/156B, v=0x03/174B, v=0x04/221B); body preserved as raw for ongoing RE (#N)",
     version=6,

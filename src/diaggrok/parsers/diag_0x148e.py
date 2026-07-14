@@ -120,7 +120,7 @@ class Diag0x148E:
 
 
 @register(
-    LOG_GNSS_STATUS_148E,
+    LOG_GNSS_STATUS_148E, domain="gnss",
     name="0x148E",
     issues=(),
     description="Small GNSS status report (0x148E) — 18B fixed; corpus-validated byte map",

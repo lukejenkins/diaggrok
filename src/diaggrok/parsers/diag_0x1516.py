@@ -48,7 +48,7 @@ class Diag0x1516:
 
 
 @register(
-    0x1516,
+    0x1516, domain="gnss",
     name="0x1516",
     description="Rare GNSS init/event report (0x1516) — variable, header-only",
     version=1,

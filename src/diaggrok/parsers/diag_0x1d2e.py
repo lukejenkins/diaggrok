@@ -168,7 +168,7 @@ class Diag0x1D2E:
 
 
 @register(
-    0x1D2E,
+    0x1D2E, domain="gnss",
     name="0x1D2E",
     description="LOG_1D2E (0x1D2E) — GNSS/config cell-array record, 49-B header + N×37-B cells (#N)",
     version=2,

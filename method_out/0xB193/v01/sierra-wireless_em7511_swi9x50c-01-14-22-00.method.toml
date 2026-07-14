@@ -1,0 +1,38 @@
+version = 1
+cond = "connected"
+modem_make = "Sierra"
+modem_model = "EM7511"
+modem_firmware = "SWI9X50C_01.14.22.00"
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "other", value = "F3 mc_msgr.c (0x79 plaintext)" },
+]
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "other", value = "DIAG 0xB116 config_word" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "other", value = "F3 mc_msgr.c (0x79 plaintext)" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "at", value = "AT!GSTATUS?" },
+]

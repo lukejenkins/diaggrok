@@ -1,0 +1,13 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.1X0"
+
+[[field_map]]
+parser_field = "meas_counts"
+quantity = "gnss_tracked_sv_count_candidate"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GxGSV in-view count / $GxGSA active-SV count" },
+]

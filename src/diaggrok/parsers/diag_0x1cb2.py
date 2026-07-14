@@ -193,7 +193,7 @@ def _verify_nmea_checksum(sentence: str) -> bool:
 # having no AT reference.
 
 @register(
-    0x1CB2,
+    0x1CB2, domain="gnss",
     name="0x1CB2",
     description=(
         "Batched NMEA-over-DIAG (multiple sentences per record). "

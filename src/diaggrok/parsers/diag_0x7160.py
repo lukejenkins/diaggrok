@@ -151,7 +151,7 @@ class Diag0x7160:
 # this firmly in the GNSS-engine-start critical section.
 
 @register(
-    _LOG_CODE,
+    _LOG_CODE, domain="gnss",
     name="0x7160",
     description=(
         "GNSS-engine-start cluster sibling — header-only stub (#N). "

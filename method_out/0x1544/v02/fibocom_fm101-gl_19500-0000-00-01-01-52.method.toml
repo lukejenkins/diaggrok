@@ -1,0 +1,44 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Fibocom"
+modem_model = "FM101-GL"
+modem_firmware = "19500.0000.00.01.01.52"
+
+[[field_map]]
+parser_field = "sv_slots.sv_id"
+quantity = "gnss_sv_prn_id"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "FM101-GL GNSS NMEA-port $GxGSV per-SV PRN / $GxGSA active PRN list (fields 3..14)"
+
+[[field_map]]
+parser_field = "sv_slots.elevation_deg"
+quantity = "gnss_sv_elevation_deg"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "FM101-GL GNSS NMEA-port $GxGSV elevation field (degrees) per SV group"
+
+[[field_map]]
+parser_field = "sv_slots.azimuth_deg"
+quantity = "gnss_sv_azimuth_deg"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "FM101-GL GNSS NMEA-port $GxGSV azimuth field (degrees true) per SV group"
+
+[[field_map]]
+parser_field = "sv_slots.cn0_db_hz"
+quantity = "gnss_sv_cn0_db_hz"
+sources = [
+    { kind = "nmea", value = "FM101-GL GNSS NMEA-port $GxGSV SNR/CN0 field (dB-Hz) per SV group" },
+]
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_embedded_nmea_sentence"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "FM101-GL GNSS NMEA-port talker matching nmea_sentence_type (GxVTG/GxGSA/GxGGA)"

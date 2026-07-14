@@ -1,0 +1,56 @@
+version = 1
+cond = "connected"
+modem_make = "Fibocom"
+modem_model = "FM101-GL"
+modem_firmware = "19500.0000.00.01.01.52_6006.0000.006.000.035_A63"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+GTCCINFO?" },
+    { kind = "other", value = "DIAG 0xB0C0 / 0x18AB pci" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+
+[[field_map.sources]]
+kind = "f3"
+value = "F3 mc_msgr.c:722 'RF Device 2: LTE PRX Band 168, Chan 66536, Freq 2120000 Hz'"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+GTCCINFO?"
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+status = "refuted"
+
+[[field_map.sources]]
+kind = "f3"
+value = "F3 fibo_network_pal.c:2671 'raw lte rsrp is -95' (+ :2673 'lte rsrp bake is 46')"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+CESQ"
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "lte_serving_rsrq_db"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+CESQ" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_serving_meas_cell_count"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+GTCCINFO?" },
+]

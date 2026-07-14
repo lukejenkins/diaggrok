@@ -125,7 +125,7 @@ EXPECTED_VERSION_1C90 = 0x06
 # sentences/fix the body carries co-temporally. Offline author.
 
 @register(
-    0x1C90,
+    0x1C90, domain="gnss",
     name="0x1C90",
     description="0x1C90 — GNSS Location-Engine diagnostic snapshot (legacy GnssLocEng1C90, 6693B fixed, SDX62 RM520N-GL, byte0=0x06). v5 extracts the embedded checksum-valid NMEA (nmea_sentences/nmea_talkers, all constellations); also embeds +QGPSLOC/+QTEMP AT responses + thermal sysfs names; payload[1] is a per-record counter, NOT a format key.",
     version=5,

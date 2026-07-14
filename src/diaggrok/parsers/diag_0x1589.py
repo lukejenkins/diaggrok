@@ -132,7 +132,7 @@ class Diag0x1589:
 # (→ the canonical name)? Until that is settled, every field is a hypothesis.
 
 @register(
-    0x1589,
+    0x1589, domain="gnss",
     name="0x1589",
     description="0x1589 — structural-header stub (legacy GnssStatus1589, EG18-NA SDX20 V2 remaining corpus)",
     version=2,

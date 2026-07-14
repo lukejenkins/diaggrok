@@ -1,0 +1,29 @@
+version = 1
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM8202G-M2"
+modem_firmware = "LE13B04SIM8202M44A-M2"
+
+[[field_map]]
+parser_field = "size_family"
+quantity = "gnss_measurement_status_mode_candidate"
+sources = [
+    { kind = "at", value = "AT+CGNSSINFO" },
+    { kind = "at", value = "AT+CGPS?" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+    { kind = "nmea", value = "$GxGGA field 6 (fix quality 0/1/2) at the same timestamp" },
+]
+
+[[field_map]]
+parser_field = "counter_like"
+quantity = "gnss_measurement_epoch_counter_candidate"
+sources = [
+    { kind = "at", value = "AT+CGNSSINFO" },
+]
+
+[[field_map]]
+parser_field = "variant_tag"
+quantity = "gnss_measurement_report_variant_candidate"
+sources = [
+    { kind = "at", value = "AT+CGNSSINFO" },
+]

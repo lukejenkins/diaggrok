@@ -1,0 +1,34 @@
+version = 2
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM8202G-M2"
+modem_firmware = "LE13B04SIM8202M44A-M2"
+
+[[field_map]]
+parser_field = "status_byte_2"
+quantity = "gnss_fix_state_machine"
+sources = [
+    { kind = "at", value = "AT+CGPSINFO" },
+    { kind = "at", value = "AT+CGPS?" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]
+
+[[field_map]]
+parser_field = "counter"
+quantity = "gnss_status_tick_frame_counter"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+CGPS?"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "1 Hz wall-clock reference — counter delta should be +1 per ~1 s of engine-on time"
+
+[[field_map]]
+parser_field = "rate_ms"
+quantity = "gnss_status_tick_period_ms"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "inter-record timestamp spacing on SIM8202G-M2 — should be ~1000 ms, matching rate_ms"

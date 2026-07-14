@@ -1,0 +1,44 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "talkers"
+quantity = "gnss_nmea_talker_id_set"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "nmea", value = "talker prefix of each $-- sentence" },
+]
+
+[[field_map]]
+parser_field = "parsed"
+quantity = "gnss_nmea_sentence_content"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GGA\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"RMC\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "the $-- sentence body for each talker" },
+]
+
+[[field_map]]
+parser_field = "sentence_count"
+quantity = "gnss_nmea_epoch_sentence_count"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "count of $-- sentences per 1 Hz window" },
+]
+
+[[field_map]]
+parser_field = "timestamp_ms"
+quantity = "gnss_engine_epoch_clock_ms"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "no AT analogue; correlate to sibling GNSS DIAG code timestamps (0x1837 PVT / 0x1634 per-SV) on the same engine clock"

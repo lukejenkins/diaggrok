@@ -1,0 +1,36 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "rate_ms"
+quantity = "gnss_status_tick_period_ms"
+status = "verified"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "inter-record timestamp spacing on RM520N-GL — ~1000 ms, matches rate_ms (confirmed)"
+
+[[field_map]]
+parser_field = "counter"
+quantity = "gnss_status_tick_frame_counter"
+status = "partial"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "GNSS engine running (AT+QGPS=1) — counter advances only while the engine is on"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_LOC GetGnssEngineState"
+
+[[field_map]]
+parser_field = "status_byte_2"
+quantity = "gnss_fix_state_machine"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]

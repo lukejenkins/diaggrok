@@ -1,0 +1,23 @@
+version = 1
+cond = "any-drive"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.110"
+
+[[field_map]]
+parser_field = "v1_cells.meas_high_byte"
+quantity = "lte_neighbor_interfreq_measurement_candidate"
+sources = [
+    { kind = "at", value = "AT#MONI" },
+    { kind = "at", value = "AT#RFSTS" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "num_carriers"
+quantity = "lte_neighbor_interfreq_carrier_count_candidate"
+sources = [
+    { kind = "at", value = "AT#MONI" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (inter-freq neighbor list length)" },
+]

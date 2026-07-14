@@ -435,7 +435,7 @@ def _extract_nmea_fragments(residue: bytes) -> list[str]:
 # only modem in the corpus that emits 0x1C8F).
 
 @register(
-    0x1C8F,
+    0x1C8F, domain="gnss",
     name="0x1C8F",
     description=(
         "GNSS Client-API location report (LOG_GNSS_CLIENT_API_LOCATION_"

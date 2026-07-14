@@ -1,0 +1,22 @@
+version = 4
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM7600NA-H"
+modem_firmware = "LE20B01SIM7600NA_210506"
+
+[[field_map]]
+parser_field = "constellations"
+quantity = "gnss_enabled_constellations"
+sources = [
+    { kind = "nmea", value = "$GPGSV" },
+    { kind = "nmea", value = "$GLGSV" },
+    { kind = "nmea", value = "$GAGSV" },
+    { kind = "nmea", value = "$BDGSV" },
+]
+
+[[field_map]]
+parser_field = "ms_counter"
+quantity = "gnss_engine_ms_tick"
+sources = [
+    { kind = "trigger", value = "GNSS engine running (AT+CGPS=1,1)" },
+]

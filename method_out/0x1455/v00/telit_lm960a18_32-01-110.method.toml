@@ -1,0 +1,14 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.110"
+
+[[field_map]]
+parser_field = "sequence"
+quantity = "gnss_successful_fix_count"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GPGGA field 6 (fix quality >0) — successful-fix event proxy" },
+    { kind = "other", value = "QMI_LOC fix-report event count (not in poller set yet)" },
+]

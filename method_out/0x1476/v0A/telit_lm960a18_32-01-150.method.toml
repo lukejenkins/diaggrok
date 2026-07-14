@@ -1,0 +1,67 @@
+version = 10
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.150"
+
+[[field_map]]
+parser_field = "lat_deg"
+quantity = "gnss_latitude_deg"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "other", value = "<redacted-see-evidence>" },
+    { kind = "nmea", value = "$GxGGA field 2/3 / $GxRMC field 3/4" },
+]
+
+[[field_map]]
+parser_field = "lon_deg"
+quantity = "gnss_longitude_deg"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "other", value = "<redacted-see-evidence>" },
+    { kind = "nmea", value = "$GxGGA field 4/5 / $GxRMC field 5/6" },
+]
+
+[[field_map]]
+parser_field = "alt_m"
+quantity = "gnss_altitude_m"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GxGGA field 9 (MSL) + field 11 (geoid separation)" },
+]
+
+[[field_map]]
+parser_field = "speed_mps"
+quantity = "gnss_ground_speed_mps"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GxRMC field 7 (knots) / $GxVTG" },
+]
+
+[[field_map]]
+parser_field = "heading_deg"
+quantity = "gnss_course_over_ground_deg"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GxRMC field 8 / $GxVTG field 1" },
+]
+
+[[field_map]]
+parser_field = "hdop"
+quantity = "gnss_hdop"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GxGSA field 17 (HDOP)" },
+]
+
+[[field_map]]
+parser_field = "svs.gps.used"
+quantity = "gnss_gps_svs_used_in_fix"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "$GPGSA used-SV list / $GxGGA field 7" },
+]

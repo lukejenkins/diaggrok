@@ -196,7 +196,7 @@ class Diag0x184E:
 
 
 @register(
-    LOG_GNSS_ME_BDS_B2B,
+    LOG_GNSS_ME_BDS_B2B, domain="gnss",
     name="0x184E",
     description="BeiDou B2b signal measurements — skeleton + 5-variant dispatch, per-SV RE pending (#N)",
     version=3,

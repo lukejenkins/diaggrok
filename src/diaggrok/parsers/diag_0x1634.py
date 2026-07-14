@@ -4,6 +4,27 @@ Split from gnss_nav_db.py per #N tier-3.
 
 Promoted from lte_misc.py stub (2026-04-21).
 
+F3 GROUND TRUTH (2026-07-14, #N — first F3 correlation on this code):
+  0x1634 is the **GNSS FFT-acquisition/search measurement report** — NOT a
+  tracking-loop report. Established by co-temporal correlation against the
+  firmware's own `gpsfft_spansrchcore.c` F3 prints on RM520N-GL SDX62
+  (RM520NGLAAR03A04M4G, session 20260628T0334Z, 2406 records, 2406/2406
+  matched):
+    - `constellation [5]` == the search engine's `Gnss` enum. Diagonal
+      match 2406/2406: (0,0)GPS (1,1)GLO (2,2)BDS (3,3)GAL (4,4)QZSS.
+      This F3-resolves the long-open UNKNOWN_4 → QZSS (enum position 4).
+    - `meas_a [7:11]` == the search `Cf` (carrier-frequency / Doppler
+      search-bin, Hz) — **bit-exact i32 equality 2406/2406** with F3 arg.
+    - `meas_b [11:15]` == the same Doppler in a second unit: meas_a/meas_b
+      is a constant ≈ -62.44 (51150/-819, 153450/-2458, 255750/-4096, ...),
+      confirming the 2026-04-21 "two unit conversions of one physical
+      quantity" hypothesis — the quantity is F3-grounded as Doppler/Cf.
+  Citation sites: gpsfft_spansrchcore.c:1414 `Num Peaks %u Gnss %u ScanM %u
+  Cf %d`, :2681 `Gnss %d ScanM %d Cf %d`; QZSS ordering corroborated by
+  gnss_xtra_common.c:818/:821 (GPS/GLO/BDS/GAL then QZSS).
+  Caveat: single-modem (SDX62 / v=2) so far; a v=1 (SDX20/MDM9x07) capture
+  with decodable F3 would corroborate the identity on the older layout.
+
 Corpus: 39,996 records / 31B fixed / 12 chipset+firmware pairs:
   v=1: MDM9x07, MDM9650, SDX20, SDX20 V2 chipsets (7720 records)
   v=2: SDX55, SDX65 chipsets (fn980m + rm500q) (32276 records)
@@ -21,23 +42,25 @@ Full-byte decode (every one of 31 bytes named — no body_raw):
                              consistent with QCA GNSS constellation IDs).
                              NOTE (2026-05-30 #N, 878,250-record walk —
                              22x corpus growth since promotion): a 5th value
-                             **0x04 (42,198 records, 4.8%)** is now present
-                             and currently maps to UNKNOWN_4. In QCA
-                             0-indexed GNSS enums following GPS/GLO/BDS/GAL,
-                             value 4 is most likely QZSS or NavIC — NOT yet
-                             confirmed (needs SV-ID-range / signal_type
-                             cross-check), so left UNKNOWN_4 per the
-                             declare-what-you-confirmed rule. constellation
+                             **0x04 (42,198 records, 4.8%)** is present.
+                             RESOLVED 2026-07-14 (#N, F3): value 4 == QZSS.
+                             The constellation byte is F3-grounded as the
+                             GNSS search-engine `Gnss` enum (see F3 block at
+                             top), which matched 4↔4 on 2406/2406 records;
+                             QZSS is enum position 4 per Qualcomm GnssType.
+                             constellation
                              is intentionally NOT a closed-enum invariant,
                              so value 4 parses cleanly (no parse-rate loss).
   [6]    u8  flags_6         ∈ {0..7}
-  [7:11] i32 LE meas_a       signed; range ~±4M; sign byte at [10] matches
-                             i32 sign bit on 5000/5000 spot-check records.
-  [11:15] i32 LE meas_b      signed; effective range ~±32K; high two
-                             bytes are sign extension.  Observed ±ratio
-                             pairs with meas_a (e.g. (+51150, -819) and
-                             (-51150, +819)) — likely two unit conversions
-                             of the same physical quantity.
+  [7:11] i32 LE meas_a       F3-grounded (#N, 2026-07-14): == the search
+                             engine's `Cf` (carrier-frequency / Doppler
+                             search-bin, Hz). Bit-exact 2406/2406 vs
+                             gpsfft_spansrchcore.c `Cf` arg. Range ~±4M.
+  [11:15] i32 LE meas_b      the same Doppler quantity in a second unit:
+                             meas_a/meas_b ≈ -62.44 constant (e.g.
+                             (+51150, -819), (+153450, -2458)). F3-confirms
+                             the "two unit conversions of one physical
+                             quantity" reading — quantity is Doppler/Cf.
   [15]   u8  signal_type     ∈ {1, 2, 3}  (L1/L2/L5-style band tag)
   [16]   u8  flag_16         ∈ {0, 1, 2}
   [17]   u8  sub_idx         ∈ {2, 3, 4, 9} in v1; =4 in v2
@@ -129,7 +152,13 @@ class Diag0x1634:
 
     @property
     def constellation_name(self) -> str:
-        return {0: 'GPS', 1: 'GLONASS', 2: 'BDS', 3: 'GAL'}.get(
+        # constellation [5] == the GNSS FFT-search engine's `Gnss` enum,
+        # F3-grounded 2406/2406 co-temporal on RM520N-GL SDX62
+        # (gpsfft_spansrchcore.c:1414/:2681 `Gnss %u`, session 20260628T0334Z).
+        # Value 4 resolved from UNKNOWN_4 → QZSS: it is enum position 4 in the
+        # standard Qualcomm GnssType ordering, matching the GPS/GLO/BDS/GAL/QZSS
+        # order the firmware itself prints in gnss_xtra_common.c:818/:821.
+        return {0: 'GPS', 1: 'GLONASS', 2: 'BDS', 3: 'GAL', 4: 'QZSS'}.get(
             self.constellation, f'UNKNOWN_{self.constellation}'
         )
 
@@ -161,10 +190,10 @@ class Diag0x1634:
 
 
 @register(
-    0x1634,
+    0x1634, domain="gnss",
     name="0x1634",
     description="GNSS per-SV range measurement (0x1634) — 31B fixed, fully decoded",
-    version=4,
+    version=5,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",

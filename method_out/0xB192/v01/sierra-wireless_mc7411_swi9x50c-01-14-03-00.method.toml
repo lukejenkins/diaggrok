@@ -1,0 +1,58 @@
+version = 1
+cond = "idle"
+modem_make = "Sierra"
+modem_model = "MC7411"
+modem_firmware = "SWI9X50C_01.14.03.00"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_neighbor_physical_cell_id"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell PCI)" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_neighbor_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (neighbour PCI/EARFCN)" },
+    { kind = "f3", value = "rflte_mc_rx.c — 'MC has tuned Rx chains for band:%d channel:%d'" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+status = "refuted"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo (neighbor RSRP)" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_cell_count"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+]

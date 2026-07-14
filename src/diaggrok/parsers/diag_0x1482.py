@@ -370,7 +370,7 @@ class Diag0x1482:
 # anchor and nothing more.
 
 @register(
-    0x1482,
+    0x1482, domain="gnss",
     name="0x1482",
     description="GNSS measurement data (0x1482) — 107B/115B size-variant (#N)",
     version=10,

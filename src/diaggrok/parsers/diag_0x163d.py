@@ -16,11 +16,19 @@ identical.  Structural fields (version, sub_version, +2..9 counters,
 chain_id at +19, payload_size) decode on both forms.  The 61B v=0x04
 form additionally decodes (<redacted-ref>-05-30, 57,721-record walk):
 
-- ``agc_pair_a``/``agc_pair_b`` (+29..30 / +31..32 u16-LE) — a near-equal
-  two-chain AGC measurement (median |a-b| = 0 across 11/12 modems)
-- ``rf_metric_a``/``rf_metric_b`` (+41..44 / +45..48 BE-f32) — bounded
+- ``agc_pair_a``/``agc_pair_b`` (+29..30 / +31..32 u16-LE) - F3-GROUNDED
+  (2026-07-12) as **w_BpAmpI / w_BpAmpQ**, the I and Q components of one
+  bandpass-amplitude measurement. Exposed under the semantic aliases
+  ``bp_amp_i`` / ``bp_amp_q`` in ``to_dict``. They are near-equal (median
+  |a-b| = 0 across 11/12 modems) not because there are two RF chains but
+  because |I| ~ |Q| for a noise-like GNSS signal. Firmware ground truth:
+  ``sm_api.c:3241`` (``sm_ReportMEMetrics w_BpAmpI=%d, w_BpAmpQ=%d``) and
+  ``loc_pd.c:7361`` (per-signal ME metrics), cross-confirmed on TWO
+  independent SDX55 builds: Quectel RM500Q ``404921d3`` (260/260) and
+  SIMCom SIM8202G ``4cb5c06d`` (1492/1492), both conf 1.00.
+- ``rf_metric_a``/``rf_metric_b`` (+41..44 / +45..48 BE-f32) - bounded
   dB-plausible metrics clustering at {8, 20, 32, 63} (unit SNR/CN0/AGC-
-  gain still TBD)
+  gain still TBD; not grounded by the integer-valued ME-metrics F3 sites)
 
 These are ``None`` on the 60B v=0x03 form (no corpus coverage at those
 offsets).  The trailing per-band block (+50..+60) remains opaque pending
@@ -74,8 +82,8 @@ LOG_GNSS_ME_RF_BP_AGC = 0x163D
 # diag_163d_pair_float_verify.py). All gated to the 61B form — the 60B v=0x03
 # form (older EG25-G fw, 2,087 records) has no corpus coverage at these
 # offsets, so they stay None there.
-_AGC_PAIR_A_OFF = 29   # u16-LE, near-equal to _b (two-chain AGC measurement)
-_AGC_PAIR_B_OFF = 31   # u16-LE
+_AGC_PAIR_A_OFF = 29   # u16-LE = w_BpAmpI (bandpass amplitude, I) per firmware F3
+_AGC_PAIR_B_OFF = 31   # u16-LE = w_BpAmpQ (bandpass amplitude, Q) per firmware F3
 _RF_METRIC_A_OFF = 41  # BE-f32, bounded ~8..64 (dB-plausible; unit TBD)
 _RF_METRIC_B_OFF = 45  # BE-f32, bounded ~20..64 (dB-plausible; unit TBD)
 _V4_BODY_MIN_LEN = 49  # need bytes through +48 for rf_metric_b
@@ -109,8 +117,8 @@ class Diag0x163D:
     raw: bytes                  # full payload retained for downstream RE
     # --- 61B v=0x04 form only (None on the 60B v=0x03 form, which has no
     #     corpus coverage at these offsets) ---
-    agc_pair_a: int | None      # +29..30 u16-LE — near-equal two-chain AGC measurement
-    agc_pair_b: int | None      # +31..32 u16-LE — paired with agc_pair_a (med|Δ|≈0)
+    agc_pair_a: int | None      # +29..30 u16-LE = w_BpAmpI (bandpass amp I) per F3; alias bp_amp_i
+    agc_pair_b: int | None      # +31..32 u16-LE = w_BpAmpQ (bandpass amp Q) per F3; alias bp_amp_q
     rf_metric_a: float | None   # +41..44 BE-f32 — bounded ~8..64 (dB-plausible; unit TBD)
     rf_metric_b: float | None   # +45..48 BE-f32 — bounded ~20..64 (dB-plausible; unit TBD)
 
@@ -125,18 +133,24 @@ class Diag0x163D:
             'chain_id': self.chain_id,
             'agc_pair_a': self.agc_pair_a,
             'agc_pair_b': self.agc_pair_b,
+            # F3-grounded semantic aliases (2026-07-12): agc_pair_a/b are the
+            # I/Q components of the bandpass amplitude (w_BpAmpI / w_BpAmpQ).
+            'bp_amp_i': self.agc_pair_a,
+            'bp_amp_q': self.agc_pair_b,
             'rf_metric_a': self.rf_metric_a,
             'rf_metric_b': self.rf_metric_b,
             'payload_size': self.payload_size,
-            'parser_status': 'skeleton+agc-pair+rf-metrics',
+            'parser_status': 'skeleton+bp-amp-iq+rf-metrics',
             'parser_note': (
                 f'{self.payload_size}B v={self.version:#04x}; chain_id is '
                 'RF-state-dependent (varies within a single capture) — '
                 'do not treat as a stable per-modem identifier. 61B form: '
-                'agc_pair_a/b (+29/+31 u16-LE) are a near-equal two-chain '
-                'measurement; rf_metric_a/b (+41/+45 BE-f32) are bounded '
-                'dB-plausible metrics (cluster {8,20,32,63}; physical unit '
-                'SNR/CN0/AGC-gain TBD). See #N.'
+                'agc_pair_a/b (+29/+31 u16-LE) are F3-grounded as w_BpAmpI / '
+                'w_BpAmpQ (bandpass amplitude I/Q; aliases bp_amp_i/bp_amp_q) '
+                '(near-equal because |I|~|Q|, NOT two RF chains); '
+                'rf_metric_a/b (+41/+45 BE-f32) are bounded dB-plausible '
+                'metrics (cluster {8,20,32,63}; physical unit SNR/CN0/AGC-'
+                'gain TBD). See #N.'
             ),
         }
 
@@ -152,18 +166,37 @@ class Diag0x163D:
 # 30.201. cond="sky-fix": AGC/rf_metric track the live GNSS RF environment.
 
 @register(
-    LOG_GNSS_ME_RF_BP_AGC,
+    LOG_GNSS_ME_RF_BP_AGC, domain="gnss",
     name="0x163D",
     description=(
         "GNSS_ME_RF_BP_AGC (0x163D) — periodic AGC measurement; "
         "two coexisting forms (61B v=0x04 majority, 60B v=0x03 minority on "
         "older EG25-G fw); chain_id at +19 is RF-state-dependent, not stable (#N)"
     ),
-    version=6,
+    version=7,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
+        "v7 (2026-07-12, <redacted-ref> F3 ground-truth pass, #N): agc_pair_a "
+        "(+29..30 u16-LE) and agc_pair_b (+31..32 u16-LE) are F3-GROUNDED as "
+        "w_BpAmpI / w_BpAmpQ, the I and Q components of one bandpass-"
+        "amplitude measurement (exposed as bp_amp_i / bp_amp_q aliases in "
+        "to_dict). This CORRECTS the v6 'near-equal two-chain AGC' reading: "
+        "the pair is near-equal because |I| ~ |Q| for a noise-like GNSS "
+        "signal, not because there are two RF chains. Ground truth is the "
+        "firmware's own F3: sm_api.c:3241 (sm_ReportMEMetrics w_BpAmpI=%d, "
+        "w_BpAmpQ=%d) and loc_pd.c:7361 (per-signal ME metrics), matched "
+        "co-temporally against the binary 0x163D records by "
+        "tools/diag_f3_correlate.py. Cross-confirmed on TWO independent "
+        "SDX55 builds at conf 1.00: Quectel RM500Q build 404921d3 (260/260 "
+        "records, 22 distinct values) and SIMCom SIM8202G build 4cb5c06d "
+        "(1492/1492, 57 distinct) clears the single-firmware trap. No byte "
+        "offsets changed; this is a semantic relabel + alias addition. The "
+        "rf_metric_a/b BE-f32 fields at +41/+45 are NOT grounded by these "
+        "integer-valued ME-metrics F3 sites and keep their v6 'unit TBD' "
+        "status. Issue stays OPEN (primary tracker; jammer/notch siblings "
+        "and 60B v=0x03 form still un-grounded).\n"
         "v6 (2026-05-30, <redacted-ref> session — #N body field decode): walked "
         "57,721 0x163D 61B records (tools/diag_163d_body_re.py + "
         "diag_163d_pair_float_verify.py) across 12 modem groups. Promotes "

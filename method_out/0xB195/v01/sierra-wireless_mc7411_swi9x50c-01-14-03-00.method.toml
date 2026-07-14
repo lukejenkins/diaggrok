@@ -1,0 +1,49 @@
+version = 1
+cond = "connected"
+modem_make = "Sierra"
+modem_model = "MC7411"
+modem_firmware = "SWI9X50C_01.14.03.00"
+
+[[field_map]]
+parser_field = "entries[].pci"
+quantity = "lte_neighbor_pci"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "entries[].earfcn"
+quantity = "lte_neighbor_earfcn_dl"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "other", value = "F3 rflte_mc_rx.c RF-tune 'channel:' (0x79 plaintext)" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "other", value = "F3 lte_LL1_meas_ncell.c NB_MEAS print" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_cell_count"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]

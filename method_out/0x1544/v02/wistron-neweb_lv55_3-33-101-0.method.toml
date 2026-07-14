@@ -1,0 +1,29 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Wistron"
+modem_model = "LV55"
+modem_firmware = "3.33.101.0"
+
+[[field_map]]
+parser_field = "sequence_counter"
+quantity = "gnss_epoch_sequence_counter"
+sources = [
+    { kind = "trigger", value = "GNSS epoch tick — increment correlation, no direct readback" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]
+
+[[field_map]]
+parser_field = "constellation_mask"
+quantity = "gnss_active_constellation_config"
+sources = [
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+    { kind = "nmea", value = "$GxGSV talker set (GP/GL/GA/GB/GQ) — constellations in view" },
+]
+
+[[field_map]]
+parser_field = "num_constellations"
+quantity = "gnss_tracked_entity_count_candidate"
+sources = [
+    { kind = "nmea", value = "total SVs across $GxGSV sentences (in-view count)" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]

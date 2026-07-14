@@ -1,0 +1,71 @@
+version = 21
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR01A08M4G"
+
+[[field_map]]
+parser_field = "pos_source"
+quantity = "gnss_position_source_state"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QGPSLOC=2"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "GNSS cold start (AT+QGPS=1 from cold) then sustained sky exposure"
+
+[[field_map]]
+parser_field = "lat_deg"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"RMC\"" },
+    { kind = "nmea", value = "$GxGGA field 2/3 / $GxRMC field 3/4" },
+]
+
+[[field_map]]
+parser_field = "lon_deg"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"RMC\"" },
+    { kind = "nmea", value = "$GxGGA field 4/5 / $GxRMC field 5/6" },
+]
+
+[[field_map]]
+parser_field = "alt_m"
+quantity = "gnss_altitude_m"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GGA\"" },
+    { kind = "nmea", value = "$GxGGA field 9 (MSL) + field 11 (geoid separation)" },
+]
+
+[[field_map]]
+parser_field = "speed_mps"
+quantity = "gnss_ground_speed_mps"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"VTG\"" },
+    { kind = "nmea", value = "$GxRMC field 7 (knots) / $GxVTG" },
+]
+
+[[field_map]]
+parser_field = "hdop"
+quantity = "gnss_hdop"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "nmea", value = "$GxGSA field 17 (HDOP)" },
+]
+
+[[field_map]]
+parser_field = "svs.gps.used"
+quantity = "gnss_gps_svs_used_in_fix"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GGA\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "nmea", value = "$GPGSA used-SV list / $GxGGA field 7" },
+]

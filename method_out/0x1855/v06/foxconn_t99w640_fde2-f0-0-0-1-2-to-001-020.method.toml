@@ -1,0 +1,35 @@
+version = 6
+cond = "sky-fix"
+modem_make = "Foxconn"
+modem_model = "T99W640"
+modem_firmware = "FDE2.F0.0.0.1.2.TO.001"
+
+[[field_map]]
+parser_field = "session_tag"
+quantity = "gnss_me_wideband_boot_session_tag_candidate"
+status = "verified"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+FGPS_INFO"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "GNSS engine restart (AT+FGPS_STOP then AT+FGPS_START) — session_tag should change across the cycle"
+
+[[field_map]]
+parser_field = "size_variant"
+quantity = "gnss_l1c_session_init_report_type_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+FGPS_INFO" },
+    { kind = "at", value = "AT+FGPS_LOCDATA" },
+]
+
+[[field_map]]
+parser_field = "config_word"
+quantity = "gnss_l1c_subsystem_config_word_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+FGPS_INFO" },
+]

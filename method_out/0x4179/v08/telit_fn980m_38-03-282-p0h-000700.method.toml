@@ -1,0 +1,20 @@
+version = 8
+cond = "connected"
+modem_make = "Telit"
+modem_model = "FN980m"
+modem_firmware = "38.03.282-P0H.000700"
+
+[[field_map]]
+parser_field = "measurement_raw"
+quantity = "lte_intrafreq_neighbor_rsrp_or_rsrq_raw_candidate"
+sources = [
+    { kind = "at", value = "AT#MONI=0" },
+    { kind = "at", value = "AT#CSURV" },
+]
+
+[[field_map]]
+parser_field = "measured_cell_count"
+quantity = "lte_intrafreq_neighbor_count"
+sources = [
+    { kind = "at", value = "AT#MONI=0" },
+]

@@ -26,13 +26,18 @@ from diaggrok.registry import register
 # 0x14FD — two known size variants (218B / 391B), header-only
 # ---------------------------------------------------------------------------
 # Cross-corpus structural decomposition (RTCM-revisit <redacted-ref> 2026-04-27,
-# 30,869 records across 137 captures — see #N):
+# 30,869 records / 137 captures; refreshed by the <redacted-ref> NEW-DATA re-check
+# 2026-07-12, 62,494 records / 288 captures - see #N):
 #
-#   218B variant: byte0=0x08, byte3=0x00 (both constant). Seen on
-#     Quectel EG18-NA / EP06-A / EG12-GT / EG25-G, Sierra MC7455, Telit LM960
-#     (SDX20 / MDM9x07 / MDM9x30 era).
-#   391B variant: byte0=0x0a, byte2=0x36, byte3=0x01 (all constant). Seen on
-#     Telit FN980 (SDX55) and Inseego M2000 (SDX55 era).
+#   218B variant: byte0=0x08, byte3=0x00 (both constant). Seen on the older
+#     SDX20 / MDM9x07 / MDM9x30 era parts: Quectel EG18-NA / EP06-A / EG12-GT
+#     / EG25-G / EG95-NA, Sierra MC7455 / EM7455, SIMCom SIM7600NA, Telit LM960.
+#   391B variant: byte0=0x0a, byte2=0x36, byte3=0x01 (all constant). Emitted on
+#     the 5G-NR SDX silicon (SDX55/SDX62). The 2026-07-12 re-check grew this
+#     from 2 chipsets (Telit FN980, Inseego M2000) to ~8: +Quectel RM500Q,
+#     +Quectel RM520N-GL, +Sierra EM9291, +SIMCom SIM8202G-M2, +Foxconn
+#     T99W175, +Wistron LV55. (size|byte0) stays a perfect 1:1 across all
+#     62,494 records: 218|0x08 (33,711) and 391|0x0a (28,783).
 #
 # Byte 1 is NOT a counter despite prior naming — it takes 4 distinct values
 # across the corpus (0x05 88.7%, 0x02 11.0%, 0x01 / 0x03 trace) and shows
@@ -76,7 +81,7 @@ class Diag0x14FD:
 # is `state` (byte 1). hw_run_performed=False — hypothesis only.
 
 @register(
-    0x14FD,
+    0x14FD, domain="gnss",
     name="0x14FD",
     description="GNSS data report (0x14FD) — 218B / 391B variants, header-only",
     version=1,

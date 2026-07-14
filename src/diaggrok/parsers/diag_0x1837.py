@@ -175,7 +175,7 @@ class Diag0x1837:
 
 
 @register(
-    0x1837,
+    0x1837, domain="gnss",
     name="0x1837",
     description=(
         "Per-fix GNSS PVT record emitted at ~1 Hz alongside NMEA-over-DIAG "

@@ -110,7 +110,7 @@ class Diag0x117E:
         }
 
 
-@register(0x117E,
+@register(0x117E, domain="gnss",
     name="0x117E",
     description=(
         "0x117E -- GPS multi-peaks verbose searcher (per vendor_official "

@@ -1,0 +1,37 @@
+version = 4
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A04M4G_01.203.01.203"
+
+[[field_map]]
+parser_field = "subrec1_clock_bias_s"
+quantity = "gnss_receiver_clock_bias_s"
+status = "partial"
+sources = [
+    { kind = "f3", value = "ClockPut_GPS ... TBias <value> (mc_clock.c:5320)" },
+    { kind = "at", value = "AT+QGPSLOC=2" },
+]
+
+[[field_map]]
+parser_field = "subrec2_clock_bias_s"
+quantity = "gnss_receiver_clock_bias_s_slot_b"
+status = "partial"
+sources = [
+    { kind = "f3", value = "ClockPut_GPS ... TBias <value> (mc_clock.c:5320)" },
+]
+
+[[field_map]]
+parser_field = "flags_1"
+quantity = "cgps_slow_clock_flags"
+sources = [
+    { kind = "trigger", value = "structural: flags_1 == 0x01 on the 241B SDX62 variant" },
+]
+
+[[field_map]]
+parser_field = "size_class"
+quantity = "cgps_slow_clock_size_class"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "structural: size_class == 0x04 and payload_size == 241 (RM520N-GL SDX62)"

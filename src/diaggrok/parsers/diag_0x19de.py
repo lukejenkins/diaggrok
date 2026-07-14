@@ -441,7 +441,7 @@ def _parse_slot(data: bytes, off: int, slot_size: int) -> GnssFixReportSlot:
 # of active tracking channels vs the GSV/GSA tracked-SV count.
 
 @register(
-    0x19DE,
+    0x19DE, domain="gnss",
     name="0x19DE",
     description=(
         "ME per-channel tracking state array (16B header + N×GPS[104B] + "

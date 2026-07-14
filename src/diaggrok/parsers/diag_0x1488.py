@@ -1,4 +1,4 @@
-"""0x1488 — split from gnss_nav_db.py per #N tier-3.
+"""0x1488 - split from gnss_nav_db.py per #N tier-3.
 
 See module body for the per-code RE history and field map.
 
@@ -6,12 +6,14 @@ See module body for the per-code RE history and field map.
 
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_CGPS_SLOW_CLOCK_CALIB_REPORT_C
-        source: qualcomm_diag_log_codes_h (authority: vendor_official)
+        source: qualcomm_firmware_f3_log_emission_oracles (authority: vendor_official)
     aliases:
         LOG_CGPS_SLOW_CLOCK_CALIBRATION_REPORT
             source: qxdm_3_12_714_2017_diag_log_codes
+    disproven_names (WRONG - explicitly refuted, do NOT use):
         LOG_GAN_RLP_SUSPEND
-            source: qxdm_3_12_714_2017_diag_log_codes
+            source: qxdm_3_12_714_2017_diag_log_codes (refuted by: qualcomm_firmware_f3_log_emission_oracles)
+            reason: Community QXDM-2017 name for an unrelated subsystem (GAN/UMA GSM-over-IP RLP suspend). Firmware mc_slow_clk.c proves 0x1488 is a CGPS slow-clock calibration report - wrong subsystem, not merely older.
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).
@@ -27,27 +29,40 @@ from diaggrok.registry import register
 
 
 # ---------------------------------------------------------------------------
-# 0x1488 — GNSS config/measurement (51B AND 241B variants) (#N)
+# 0x1488 - GNSS config/measurement (51B AND 241B variants) (#N)
 # ---------------------------------------------------------------------------
-# Corpus (5goold version-byte audit, 2026-05-22 — 19,563 records / 78
-# captures, supersedes the 2026-04-21 4426-record summary):
+# Corpus (5goold NEW-DATA re-check, 2026-07-12 - 51,751 records / 235
+# captures, supersedes the 2026-05-22 19,563-record audit):
 #
-#   sz=51   (4,441 records, 22.7%): MDM9x07/MDM9x30/MDM9x50/SDX20 family
-#                                   (eg18na, em7511, ep06a, lm960, mc7455,
-#                                   mc7411, sim7600na, sim8202g-m2, eg95na)
-#   sz=241 (15,122 records, 77.3%): SDX55 + SDX62 (FN980, M2000, RM520N-GL,
-#                                   em9190)
+#   sz=51   (18,315 records, 35.4%): MDM9x07/MDM9x30/MDM9x50 + SDX20 family
+#                                    (eg18na, eg95na, em7455, em7511, em7565,
+#                                    ep06a, lm960, mc7411, mc7455, mc7700,
+#                                    sim7600na, EG12-GT)
+#   sz=241 (33,435 records, 64.6%): SDX55/SDX62 (FN980, M2000, RM500Q,
+#                                    RM520N-GL, em9190, em9291, sim8202g-m2,
+#                                    casasystems cfw3212)
 #
-# (size, byte0) is a corpus-wide perfect 1:1 — sz=51↔byte0=0x00,
+# CORRECTION vs the 2026-05-22 block: sim8202g-m2 was mislisted under sz=51;
+# it is SDX55 and emits sz=241 (3,826 records this walk). The variant split
+# generalizes cleanly: sz=241 on the 5G-NR SDX silicon (SDX55/SDX62), sz=51
+# on the older SDX20 + MDM9xxx parts. 241B cross-chipset validation grew
+# from 2 chipsets (FN980, RM520N-GL) to 7.
+#
+# ANOMALY (this walk): a single 217B record with byte0=0xdf in a Wistron
+# LV55 IPv6-PDP-attach edge-case capture (1 of 51,751). Almost certainly a
+# truncation/desync artifact, not a variant. The size dispatch already
+# rejects it (size not in {51, 241} -> None), so no handling is needed.
+#
+# (size, byte0) is a corpus-wide perfect 1:1 - sz=51↔byte0=0x00,
 # sz=241↔byte0=0x04. The variants are structurally distinct (different
-# [0]/[1]/[2] header values) — they are two different message types
+# [0]/[1]/[2] header values) - they are two different message types
 # multiplexed through code 0x1488, dispatched by SIZE in this parser
 # and cross-validated against byte[0] (size_class):
-#   [0]=0  (51B) — compact per-fix measurement record
-#   [0]=4  (241B) — extended diagnostic / ephemeris-style record
+#   [0]=0  (51B) - compact per-fix measurement record
+#   [0]=4  (241B) - extended diagnostic / ephemeris-style record
 #
 # The 51B variant has a clean f32-LE measurement layout at offsets
-# [19, 23, 27, 31, 39, 47] — six named floating-point fields each with
+# [19, 23, 27, 31, 39, 47] - six named floating-point fields each with
 # physically plausible ranges (clock bias ±0.5, variance ~1e-4, HDOP
 # ~0.1-3, VDOP-like ±2-9, bias ±0.35, positive-only 0-0.4).  These
 # were identified by the characteristic "high byte at +3 ∈ {0x3e,
@@ -75,41 +90,46 @@ from diaggrok.registry import register
 #   [43:47] u32 LE  raw_2
 #   [47:51] f32 LE  f_misc        (0..0.4, often 0)
 #
-# ## 241B variant layout (partial — 3-subrecord structure discovered)
+# ## 241B variant layout (partial - 3-subrecord structure discovered)
 # The 241B variant shares the 3-byte header but has a distinct body
 # layout.  2026-04-21n variance analysis on a 63-record fn980 corpus
 # surfaced a clean three-subrecord structure:
 #
 #   [0:15]     15B preamble (shared-header echoed: "04 01 01 08" + 11 zeros)
-#   [15:53]    38B pre-body variable region — 5-byte blocks separated by
+#   [15:53]    38B pre-body variable region - 5-byte blocks separated by
 #              "c2 be 00 00" constants at [19:23], [27:31], [44:48]
 #              (f32-like high-byte marker 0xbe = negative small number,
 #              exponent field ≈ 2^-4 to 2^-5)
-#   [53:111]   58B sub-record 1 — "slot A" measurement record (01 01 XX 09 header)
-#   [111:169]  58B sub-record 2 — "slot B" parallel measurement (same schema,
+#   [53:111]   58B sub-record 1 - "slot A" measurement record (01 01 XX 09 header)
+#   [111:169]  58B sub-record 2 - "slot B" parallel measurement (same schema,
 #              one-higher counter)
-#   [169:227]  58B sub-record 3 — status/summary slot (distinct header
+#   [169:227]  58B sub-record 3 - status/summary slot (distinct header
 #              `01 00 01 XX` with XX ∈ {0x0d..0x11})
-#   [227:241]  14B trailer — all-zero on every observed record
+#   [227:241]  14B trailer - all-zero on every observed record
 #
 # Inter-record variance in sub-record 1 (revised by RTCM-revisit session
-# 3fe5 2026-05-02 on 1288 sz=241 records / 2 chipsets / 5 captures —
+# 3fe5 2026-05-02 on 1288 sz=241 records / 2 chipsets / 5 captures -
 # FN980 SDX55 + RM520N-GL SDX62, #N):
 # - 4B header `01 01 XX 09` where XX ∈ {0x6d..0x70} across the 2026-04
-#   corpus. Byte [2] is NOT a firmware-version or chipset tag — both
+#   corpus. Byte [2] is NOT a firmware-version or chipset tag - both
 #   FN980 SDX55 (0x6d/0x6e/0x6f) and RM520N-GL SDX62 (0x6f/0x70/0x70)
 #   cover overlapping values that vary per capture. Appears to be a
 #   shared chipset-internal counter tracked in lockstep across modems
 #   (~weekly cadence hypothesis pending confirmation).
-# - rel [8:12]  f32 LE — narrow ~0.001 per-record spread is the real
-#   invariant; absolute value varies per capture (FN980 2026-04-11:
-#   0.496..0.498; FN980 2026-04-23: 0.130; RM520N-GL 04-21: −0.038;
-#   04-27: 0.408; 04-28: −0.321). The original "near 0.5 measurement"
-#   claim was an artifact of a single capture's range.
-# - rel [16:20] f32 LE — secondary measurement, same unit as [8:12]
+# - rel [8:12]  f32 LE = GNSS RECEIVER CLOCK BIAS (seconds). IDENTIFIED
+#   2026-07-12 (<redacted-ref>, #N) by F3 grounding: it tracks the co-temporal
+#   mc_clock.c:5320 `ClockPut_GPS ... TBias` print to within ~2e-5 s across
+#   3 captures / 2 chipsets (RM500Q SDX55 TBias -0.4406 and +0.2210;
+#   RM520N-GL SDX62 TBias -0.2877) - the field's per-capture absolute value
+#   equals that capture's TBias. This supersedes the earlier "near 0.5
+#   measurement" / "per-capture-varying, semantics unknown" hypothesis and
+#   fits the code name LOG_CGPS_SLOW_CLOCK_CALIB_REPORT. Exposed as the
+#   decoded field `subrec1_clock_bias_s` (and `subrec2_clock_bias_s` for the
+#   parallel slot B at abs [119:123]).
+# - rel [16:20] f32 LE - secondary measurement, same unit as [8:12]
 # - rel [24:28] u32 LE counter, sub-record 2 always value+1 higher
 #   than sub-record 1 (sequence IDs)
-# - rel [29:33] f32 LE taking ~5 discrete values — quantized angle/category
+# - rel [29:33] f32 LE taking ~5 discrete values - quantized angle/category
 # - rel [44:58] 14B all-zero on **both** sub-record 1 AND sub-record 2
 #   (REFUTED: prior 2026-04-23i RE claimed only subrec_1 had the all-zero
 #   tail. RTCM revisit on the same 2026-04-11 FN980 capture plus 927
@@ -122,21 +142,21 @@ from diaggrok.registry import register
 #   distribution-truncated). Different prefix from sub-record 1/2's `01 01`.
 # - rel [8:12] = 0 on every record (no measurement at the position where
 #   sub-record 1/2 carry their primary f32)
-# - rel [7:15] 8B zero block + rel [25:28] 3B zero + rel [35:47] 13B zero —
+# - rel [7:15] 8B zero block + rel [25:28] 3B zero + rel [35:47] 13B zero -
 #   consistent with a status/summary role with sparse data regions
 #
 # Sub-record 1 payload structure (cross-chipset confirmed FN980+RM520N-GL):
 #   [0:4]    header (const `01 01 XX 09`)
-#   [4:8]    u32 LE — likely a signal or channel ID (cycles within a record)
-#   [8:12]   f32 LE — primary measurement ≈ 0.5
-#   [12:16]  f32 LE — signed, often −2.0 (discrete values)
-#   [16:20]  f32 LE — secondary measurement ≈ 0.5
-#   [20:24]  mixed 4B — probably a packed bitfield / versioned sub-record
-#   [24:28]  u32 LE — sequence counter
+#   [4:8]    u32 LE - likely a signal or channel ID (cycles within a record)
+#   [8:12]   f32 LE = GNSS receiver clock bias (s) - F3-grounded, see above
+#   [12:16]  f32 LE - signed, often -2.0 (discrete values)
+#   [16:20]  f32 LE - secondary measurement ≈ 0.5
+#   [20:24]  mixed 4B - probably a packed bitfield / versioned sub-record
+#   [24:28]  u32 LE - sequence counter
 #   [28:32]  mixed 4B
 #   [32:36]  mixed 4B
 #   [36:40]  mixed 4B (contains byte [36]=4 const discriminator + flag byte)
-#   [40:44]  u32 LE — flags (often `00 00 00 01`)
+#   [40:44]  u32 LE - flags (often `00 00 00 01`)
 #   [44:58]  14B trailing zero pad
 #
 # Non-fn980 captures are still needed to validate cross-chipset (EM9190,
@@ -145,7 +165,7 @@ from diaggrok.registry import register
 
 @dataclass
 class Diag0x1488:
-    """GNSS config/measurement (0x1488) — 51B or 241B variant.
+    """GNSS config/measurement (0x1488) - 51B or 241B variant.
 
     See module docstring above for variant dispatch, f32 layouts, and
     corpus evidence.  Every byte of the 51B variant is named; the 241B
@@ -172,13 +192,24 @@ class Diag0x1488:
     f_misc: float | None
     # 241B-only body region (None when size_class != 4)
     body_region_241: bytes | None
-    # 241B-only sub-record structure (2026-04-21n — 63-record fn980 RE).
+    # 241B-only sub-record structure (2026-04-21n - 63-record fn980 RE).
     # Preamble + 3 × 58B sub-records + 14B trailer = 241 bytes.
     sz241_preamble_53: bytes | None       # [0:53]
-    sz241_subrecord_1: bytes | None       # [53:111]  58B — slot A
-    sz241_subrecord_2: bytes | None       # [111:169] 58B — slot B (same schema as slot A)
-    sz241_subrecord_3: bytes | None       # [169:227] 58B — status/summary slot (distinct schema)
+    sz241_subrecord_1: bytes | None       # [53:111]  58B - slot A
+    sz241_subrecord_2: bytes | None       # [111:169] 58B - slot B (same schema as slot A)
+    sz241_subrecord_3: bytes | None       # [169:227] 58B - status/summary slot (distinct schema)
     sz241_trailer_14: bytes | None        # [227:241] all-zero on every fn980 record
+    # 241B decoded field (F3-grounded, <redacted-ref> 2026-07-12, #N): each of the
+    # two parallel sub-records carries the GNSS receiver clock bias in seconds
+    # as f32 LE at sub-record rel offset [8:12] (abs [61:65] / [119:123]).
+    # Verified against co-temporal mc_clock.c:5320 `ClockPut_GPS ... TBias`
+    # F3 across 3 captures / 2 chipsets (RM500Q SDX55 TBias -0.4406 and
+    # +0.2210; RM520N-GL SDX62 TBias -0.2877) - the field tracks the varying
+    # per-capture TBias to within ~2e-5 s. Fits the code's name (CGPS Slow
+    # Clock Calib Report). None on the 51B variant (whose f_measure_0 does NOT
+    # track TBias - refuted on em7455 MDM9x30, only 5/155 coincidental hits).
+    subrec1_clock_bias_s: float | None    # [61:65]  f32 LE - GNSS clock bias (s)
+    subrec2_clock_bias_s: float | None    # [119:123] f32 LE - GNSS clock bias (s), slot B
 
     # Back-compat aliases
     @property
@@ -229,14 +260,16 @@ class Diag0x1488:
                 'sz241_subrecord_2_bytes': len(self.sz241_subrecord_2 or b''),
                 'sz241_subrecord_3_bytes': len(self.sz241_subrecord_3 or b''),
                 'sz241_trailer_14_all_zero': self.sz241_trailer_14 == b'\x00' * 14 if self.sz241_trailer_14 is not None else None,
+                'subrec1_clock_bias_s': self.subrec1_clock_bias_s,
+                'subrec2_clock_bias_s': self.subrec2_clock_bias_s,
             })
         return base
 
 
 @register(
-    0x1488,
+    0x1488, domain="gnss",
     name="0x1488",
-    description="GNSS config/measurement (0x1488) — 51B and 241B variants with 241B sub-record structure",
+    description="GNSS config/measurement (0x1488) - 51B and 241B variants with 241B sub-record structure",
     version=3,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
@@ -248,7 +281,7 @@ class Diag0x1488:
         "51B variant: 6 f32 measurement fields fully named (clock-bias-like, "
         "variance-like, HDOP/VDOP-like, bias-like). "
         "241B variant (v3, 2026-04-21n): 3-subrecord structure discovered on "
-        "63-record fn980 corpus — 53B preamble + 3 × 58B sub-records + 14B "
+        "63-record fn980 corpus - 53B preamble + 3 × 58B sub-records + 14B "
         "all-zero trailer.  Sub-records 1 and 2 share bit-exact schema "
         "bytes; sub-record 3 is a structurally distinct status/summary slot."
     ),
@@ -266,7 +299,7 @@ class Diag0x1488:
     field_invariants={
         "size_class": {"enum": [0x00, 0x04]},
         # `version` is an alias for `size_class` (the byte[0] format
-        # discriminator) — declared here so #N's parsers-missing-version-
+        # discriminator) - declared here so #N's parsers-missing-version-
         # invariant sweep counts 0x1488 as drained. Same {0, 4} enum.
         "version": {"enum": [0x00, 0x04]},
         "payload_size": {"enum": [51, 241]},
@@ -283,7 +316,7 @@ def parse_0x1488(log_time: int, data: bytes) -> Diag0x1488 | None:
     size_class = data[0]
     # (size, byte0) is a corpus-wide 1:1 across 19,563 records / 78 captures
     # (sz=51↔byte0=0x00, sz=241↔byte0=0x04). Cross-check the size↔byte0
-    # pairing here — a 51B payload with size_class=4 is a structural
+    # pairing here - a 51B payload with size_class=4 is a structural
     # impossibility per the corpus and is rejected.
     if size == 51 and size_class != 0:
         return None
@@ -314,6 +347,8 @@ def parse_0x1488(log_time: int, data: bytes) -> Diag0x1488 | None:
         sz241_subrecord_2=None,
         sz241_subrecord_3=None,
         sz241_trailer_14=None,
+        subrec1_clock_bias_s=None,
+        subrec2_clock_bias_s=None,
     )
     if size == 51:
         base_kwargs.update(
@@ -339,6 +374,10 @@ def parse_0x1488(log_time: int, data: bytes) -> Diag0x1488 | None:
             sz241_subrecord_2=bytes(data[111:169]),
             sz241_subrecord_3=bytes(data[169:227]),
             sz241_trailer_14=bytes(data[227:241]),
+            # F3-grounded (#N): GNSS clock bias (s) at sub-record rel [8:12]
+            # in each parallel slot. See dataclass field comment for evidence.
+            subrec1_clock_bias_s=unpack_from('<f', data, 61)[0],
+            subrec2_clock_bias_s=unpack_from('<f', data, 119)[0],
         )
     return Diag0x1488(**base_kwargs)
 

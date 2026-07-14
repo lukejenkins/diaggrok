@@ -1,0 +1,38 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "EG25-G"
+modem_firmware = "EG25GGBR07A08M2G_30.201.30.201"
+
+[[field_map]]
+parser_field = "state_byte"
+quantity = "gnss_engine_state_phase"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_LOC GetEngineState"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_LOC GetGnssEngineState"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "AT+QGPS=1 (engine on) / AT+QGPSEND (engine off) to force a boot transition"
+
+[[field_map]]
+parser_field = "status"
+quantity = "gnss_fix_state_toggle"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "at", value = "AT+CGPSINFO" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]
+
+[[field_map]]
+parser_field = "event_flag"
+quantity = "gnss_pd_event_transition"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "qmi", value = "QMI_LOC GetEngineState" },
+]

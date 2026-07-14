@@ -1,0 +1,52 @@
+version = 13
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "wls_records.prn"
+quantity = "gnss_sv_prn_id"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "nmea", value = "$GPGSV per-SV PRN / $GPGSA active PRN list" },
+]
+
+[[field_map]]
+parser_field = "n_sv_records"
+quantity = "gnss_sv_used_count"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "nmea", value = "$GPGSA active-SV count" },
+]
+
+[[field_map]]
+parser_field = "wls_records.wls_f6"
+quantity = "gnss_sv_cn0_db_hz_candidate"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GPGSV SNR/CNo field per satellite" },
+]
+
+[[field_map]]
+parser_field = "wls_records.wls_f5"
+quantity = "gnss_sv_elevation_or_residual_candidate"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GPGSV elevation field per satellite" },
+]
+
+[[field_map]]
+parser_field = "wls_records.wls_f9"
+quantity = "gnss_sv_wls_weight_candidate"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QGPSGNMEA=\"GSV\""
+
+[[field_map.sources]]
+kind = "trigger"
+value = "per-SV weight has no direct AT/QMI source — validate via positive correlation with C/N0+elevation"

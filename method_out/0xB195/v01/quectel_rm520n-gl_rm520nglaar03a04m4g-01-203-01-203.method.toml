@@ -1,0 +1,48 @@
+version = 1
+cond = "connected"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A04M4G_01.203.01.203"
+
+[[field_map]]
+parser_field = "entries[].pci"
+quantity = "lte_neighbor_pci"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "entries[].earfcn"
+quantity = "lte_neighbor_earfcn_dl"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrp"
+quantity = "lte_neighbor_rsrp_dbm"
+status = "refuted"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]
+
+[[field_map]]
+parser_field = "entries[].rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+]

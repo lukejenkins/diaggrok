@@ -1,0 +1,68 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Casa"
+modem_model = "CFW-3212"
+modem_firmware = "RG520NNADAR03A03M4G"
+
+[[field_map]]
+parser_field = "svs[].sv_id"
+quantity = "gps_sv_prn"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GPGSV satellite-PRN field (1st of each 4-tuple)" },
+]
+
+[[field_map]]
+parser_field = "svs[].cno_db"
+quantity = "gnss_carrier_to_noise_dbhz"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GPGSV SNR field (4th of each PRN 4-tuple)" },
+]
+
+[[field_map]]
+parser_field = "svs[].az_deg"
+quantity = "gnss_sv_azimuth_deg"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GPGSV azimuth field (3rd of each PRN 4-tuple)" },
+]
+
+[[field_map]]
+parser_field = "svs[].el_deg"
+quantity = "gnss_sv_elevation_deg"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "$GPGSV elevation field (2nd of each PRN 4-tuple)" },
+]
+
+[[field_map]]
+parser_field = "gps_week"
+quantity = "gps_week_number"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"RMC\"" },
+    { kind = "nmea", value = "$GxRMC field 9 (date) → GPS-week conversion" },
+]
+
+[[field_map]]
+parser_field = "gps_milliseconds"
+quantity = "gps_time_of_week_ms"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GGA\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"RMC\"" },
+    { kind = "nmea", value = "$GxGGA field 1 (UTC) — GPS→UTC reconciliation" },
+]
+
+[[field_map]]
+parser_field = "clock_freq_bias"
+quantity = "gnss_receiver_clock_freq_bias"
+
+[[field_map.sources]]
+kind = "other"
+value = "No poller command exposes GNSS receiver clock bias/uncertainty (clock-model block is DIAG-internal)"

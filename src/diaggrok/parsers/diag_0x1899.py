@@ -147,7 +147,7 @@ class Diag0x1899:
 # (SIMCom SDX55, v=0x02) is the recommended target.
 
 @register(
-    0x1899,
+    0x1899, domain="gnss",
     name="0x1899",
     description="GNSS status/heartbeat tick — 108B, every byte accounted for (#N)",
     version=7,

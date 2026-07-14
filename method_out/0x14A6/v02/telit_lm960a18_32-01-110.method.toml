@@ -1,0 +1,35 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.110"
+
+[[field_map]]
+parser_field = "sv_slots.sv_id"
+quantity = "gnss_sv_id"
+sources = [
+    { kind = "nmea", value = "GSV satellite-ID field" },
+]
+
+[[field_map]]
+parser_field = "sv_slots.iode"
+quantity = "gnss_sv_iode_candidate"
+
+[[field_map.sources]]
+kind = "other"
+value = "RINEX 3 .nav IODE field of the GPS broadcast-ephemeris record for the matching PRN"
+
+[[field_map]]
+parser_field = "num_sv_fix"
+quantity = "gnss_sv_used_in_fix"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "nmea", value = "GGA num-satellites-used field" },
+]
+
+[[field_map]]
+parser_field = "num_sv_tracked"
+quantity = "gnss_sv_tracked_total"
+sources = [
+    { kind = "nmea", value = "$G_GSV total satellites-in-view across all groups" },
+]

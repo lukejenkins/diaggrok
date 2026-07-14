@@ -82,7 +82,22 @@ LEAK_RES: list[re.Pattern] = [
 # (``RRC session``, ``session establishment cause``) never trips.
 SESSION_REF_RES: list[re.Pattern] = [
     re.compile(r"/5go\w*"),
+    # Canonical 4+-hex session IDs, incl. all-letter-hex (``session beef``). The
+    # trailing ``\b`` is what spares legit prose: ``session cadence`` matches the
+    # hex run ``cade`` but the following ``nce`` (word chars) denies the ``\b``,
+    # so no match.
     re.compile(r"\bsession\s+[0-9a-f]{4,}\b"),
+    # (#N gap 1) Compound run-tags — ``session b113xsrc`` — where a non-hex
+    # suffix (``xsrc``) denies the ``\b`` on the rule above and the tag slips by.
+    # Match the hex core + alphanumeric suffix, but ONLY when the tag contains a
+    # digit (the ``(?=[0-9a-z]*\d)`` lookahead). That gate is what keeps
+    # ``session cadence`` (all-letter, no digit) from tripping, while all-letter-
+    # hex IDs like ``session beef`` stay covered by the boundary rule above.
+    re.compile(r"\bsession\s+(?=[0-9a-z]*\d)[0-9a-f]{4,}[0-9a-z]*\b"),
+    # (#N gap 2) ``session``-prefixed capture timestamps — a bare
+    # ``YYYYMMDDTHHMMSSZ`` with no trailing ``-``, so LEAK_RES's capture-stamp
+    # rule (``\d{8}T\d{6}Z-[\w.-]+``, which requires the ``-``) also misses it.
+    re.compile(r"\bsession\s+\d{8}T\d{6}Z\b"),
 ]
 
 

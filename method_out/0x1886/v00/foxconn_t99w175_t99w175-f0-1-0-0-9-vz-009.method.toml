@@ -1,0 +1,29 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Foxconn"
+modem_model = "T99W175"
+modem_firmware = "T99W175.F0.1.0.0.9.VZ.009"
+
+[[field_map]]
+parser_field = "parser_format"
+quantity = "sdx55_galileo_slot_layout_discovery"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "GAGSV (Galileo) rows from the modem gsi.gps NMEA — the set of tracked Galileo SVs the record's slots should correspond to"
+
+[[field_map]]
+parser_field = "svs.prn"
+quantity = "galileo_sv_prn"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "GAGSV satellite-id column — Galileo PRNs in view (modem gsi.gps NMEA and/or LG290P)"
+
+[[field_map]]
+parser_field = "svs.float_d_possibly_cno_db"
+quantity = "galileo_sv_cno_dbhz_candidate"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "GAGSV C/N0 column (dB-Hz) — modem gsi.gps NMEA and/or LG290P reference"

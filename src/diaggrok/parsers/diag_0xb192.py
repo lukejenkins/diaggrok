@@ -55,7 +55,23 @@ words correlate with true RSRP *within* a single capture (r up to 0.85, time-
 aligned) but carry NO capture-stable energy->dBm scale (the required slope is
 ~15, not the physical 1.0; the AGC-flattened energy varies <2x while true RSRP
 swings 54 dB; the intercept drifts ~13 dB between captures). So entries.rsrp /
-rsrq_* are None — see the #N discussion below and LteMl1NeighborCellEntry.
+rsrq_* are None - see the #N discussion below and LteMl1NeighborCellEntry.
+
+DEFINITIVE CLOSE (#N, 2026-07-13) - see docs/2173-b192-rsrp-uncalibratable.md.
+The question "is the per-neighbour value convertible to true dBm?" is answered
+NO, conclusively, on the widest per-cell-truth data available: 179 LV55/SDX55
+0xB192 records / 211 cell-entries joined to co-temporal $QCRSRP F3 truth
+(dsatcmdp.c, same DIAG clock), spanning 16.6 dB of true RSRP (-118.8..-102.2).
+  * The old -meas_index/10 decode is 64-86 dB off (decodes -30..-42 dBm for
+    cells that are really -105..-118) AND rank-INVERTS them (the strongest cell
+    gets the most-negative decode). meas_index (+24) is not RSRP.
+  * The RSRP-tracking energy at +8/+12 is AGC-flattened: 10*log10(energy2)
+    spans only 1.19 dB while true RSRP spans 16.6 dB, i.e. ~14x compression. The
+    best in-capture fit is true_dBm = 11.6*10log10(energy2) - 883 (slope ~12 not
+    1.0; intercept = the per-capture AGC operating point). Usable *within* a
+    capture (r~0.75 global, ~0.22 within-cell) but NOT via a fixed law a
+    wardriving parser could apply. A committed real vector +
+    Test2173UncalibratableWithF3Truth lock it. rsrp/rsrq stay None permanently.
 
 RSRP field semantics (#N — why entries.rsrp is REFUTED/PARTIAL everywhere):
     The per-cell rsrp `dBm = -raw/10.0` decode is WRONG, and not by a fixable
@@ -345,10 +361,10 @@ class Diag0xB192:
         }
 
 
-@register(LOG_LTE_ML1_NEIGHBOR_CELL_MEAS,
+@register(LOG_LTE_ML1_NEIGHBOR_CELL_MEAS, domain="lte-signal",
     name="0xB192",
     description="Idle-mode neighbor cell meas 0xB192 — decode-complete: version-dispatched sp27 {2,4,56}, full 52B cell record (PCI/EARFCN + per-Rx energy words) + request sp26 + outer counter; rsrp/rsrq None (energy-not-dBm, #N)",
-    version=23,
+    version=24,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",

@@ -353,7 +353,7 @@ class Diag0x188B:
 # a stable stationary 3D fix so cache == fix.
 
 @register(
-    0x188B,
+    0x188B, domain="gnss",
     name="0x188B",
     description="GNSS reference-position cache — 257B MDM9x07/SDX20 + 287B SDX55 (#N)",
     version=9,

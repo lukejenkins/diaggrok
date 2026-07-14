@@ -1,0 +1,23 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "block_count"
+quantity = "gnss_qzss_sbas_measured_signal_count_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QGPSCFG=\"gnssconfig\"" },
+    { kind = "nmea", value = "$GQGSV / $GPGSV QZSS+SBAS satellites-in-view" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]
+
+[[field_map]]
+parser_field = "blocks"
+quantity = "gnss_uncomputed_angle_sentinel_check"
+sources = [
+    { kind = "trigger", value = "structural invariant check (f32 == -pi/2)" },
+]

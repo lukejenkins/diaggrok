@@ -148,7 +148,7 @@ class Diag0x1587:
 # precedence observation > community, this grounds against the GNSS engine.
 
 @register(
-    LOG_GNSS_TRACKING_1587,
+    LOG_GNSS_TRACKING_1587, domain="gnss",
     name="0x1587",
     description="GNSS tracking detail report (0x1587); header-only; 5 known versions {0x0C..0x10} with per-version sentinel byte at offset 19; body unparsed (#N)",
     version=4,

@@ -1,0 +1,33 @@
+version = 1
+cond = "sky-fix"
+modem_make = "Foxconn"
+modem_model = "T99W175"
+modem_firmware = "T99W175.F0.1.0.0.9.VZ.009"
+
+[[field_map]]
+parser_field = "entries[].prn"
+quantity = "gps_sv_prn"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "LG290P RTCM3 MSM7 1077 (GPS) satellite id, signalId 23 = L5Q — reference receiver"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GPGSV PRN field (modem gsi.gps NMEA) — confirms tracked-SV set (SNR is L1-biased; identity only)"
+
+[[field_map]]
+parser_field = "entries[].cn0_db_hz"
+quantity = "gnss_l5_carrier_to_noise_dbhz"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "LG290P RTCM3 MSM7 1077 signalId 23 (L5Q) GNSSSignalCNR field (dB-Hz) — reference"
+
+[[field_map]]
+parser_field = "entries[].doppler_hz"
+quantity = "gnss_l5_doppler_hz_candidate"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "LG290P RTCM3 MSM7 1077 signalId 23 (L5Q) fine PhaseRange-rate / DF404 Doppler — reference"

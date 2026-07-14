@@ -1,0 +1,45 @@
+version = 7
+cond = "sky-fix"
+modem_make = "Sierra"
+modem_model = "MC7455"
+modem_firmware = "SWI9X30C_02.24.05.06"
+
+[[field_map]]
+parser_field = "lat_deg"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 2/3 / $GxRMC field 3/4" },
+]
+
+[[field_map]]
+parser_field = "lon_deg"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 4/5 / $GxRMC field 5/6" },
+]
+
+[[field_map]]
+parser_field = "alt_m"
+quantity = "gnss_altitude_m"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 9 (MSL) + field 11 (geoid separation)" },
+]
+
+[[field_map]]
+parser_field = "hdop"
+quantity = "gnss_hdop"
+sources = [
+    { kind = "nmea", value = "$GxGSA field 17 (HDOP)" },
+    { kind = "other", value = "AT!GPSLOC? HEPE/uncertainty (not a direct HDOP)" },
+]
+
+[[field_map]]
+parser_field = "svs.gps.used"
+quantity = "gnss_gps_svs_used_in_fix"
+sources = [
+    { kind = "at", value = "AT!GPSSATINFO?" },
+    { kind = "nmea", value = "$GPGSA used-SV list / $GxGGA field 7" },
+]

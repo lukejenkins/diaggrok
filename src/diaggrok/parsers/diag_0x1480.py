@@ -9,10 +9,12 @@ third-party decoder source.
 
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_GNSS_GLONASS_MEASUREMENT_REPORT_C
-        source: qualcomm_diag_log_codes_h (authority: vendor_official)
-    aliases:
+        source: qualcomm_firmware_f3_log_emission_oracles (authority: vendor_official)
+    aliases: (none recorded)
+    disproven_names (WRONG - explicitly refuted, do NOT use):
         LOG_GAN_HANDOUT_COMMAND
-            source: qxdm_3_12_714_2017_diag_log_codes
+            source: qxdm_3_12_714_2017_diag_log_codes (refuted by: qualcomm_firmware_f3_log_emission_oracles)
+            reason: Community QXDM-2017 name for an unrelated subsystem (Generic Access Network handout command - a GSM/UMA control message). Firmware mc_gnssmeasreport.c proves 0x1480 is a GLONASS GNSS measurement report - wrong, not merely older.
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).
@@ -189,7 +191,7 @@ class Diag0x1480:
 # Parser
 # ---------------------------------------------------------------------------
 
-@register(LOG_GNSS_GLONASS_MEASUREMENT_REPORT,
+@register(LOG_GNSS_GLONASS_MEASUREMENT_REPORT, domain="gnss",
     name="0x1480",
     description="Per-SV carrier noise, azimuth, elevation with GLONASS frequency slot index; validated on MDM9207, SDX20 V2, SDX55, SDX20 (LM960)",
     version=6,

@@ -308,7 +308,7 @@ _NAVDB147D_V08_HEADER_ANCHORS: dict[int, int] = {4: 0x00, 6: 0x10, 7: 0x00}
 # Authored offline (<redacted-ref>) — hypothesis only, no hardware run yet.
 
 @register(
-    0x147D,
+    0x147D, domain="gnss",
     name="0x147D",
     description="GNSS nav DB 147D — companion to 0x147C, size-variant (#N)",
     version=10,

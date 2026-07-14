@@ -1,0 +1,29 @@
+version = 1
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.1X0"
+
+[[field_map]]
+parser_field = "version"
+quantity = "log_code_identity_and_emission_0x1494"
+status = "partial"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "widened-GNSS-F3-mask capture; harvest gnss_diag_buf.c gnss_dm_log_commit 'log_code 0x1494' from decoded F3"
+
+[[field_map]]
+parser_field = "counter"
+quantity = "gnss_constellation_report_counter_candidate"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "monotonic-increment check across consecutive 0x1494 records during a held fix"
+
+[[field_map]]
+parser_field = "payload_size"
+quantity = "gnss_1134b_body_variant_discriminant"
+sources = [
+    { kind = "trigger", value = "structural: payload_size == 1134 (LM960 SDX20 compact body)" },
+]

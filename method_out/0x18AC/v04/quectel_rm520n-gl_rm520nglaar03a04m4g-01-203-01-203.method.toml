@@ -1,0 +1,31 @@
+version = 4
+cond = "any-drive"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A04M4G_01.203.01.203"
+
+[[field_map]]
+parser_field = "v4_cells.meas_high_byte"
+quantity = "lte_neighbor_interfreq_measurement_candidate"
+status = "partial"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QENG=\"neighbourcell\""
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QSINR"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 lte_LL1_srch_statemachine.c:6529 NB_SRCH ncell (qdb GUID 6552b4be)"
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_interfreq_cell_count_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (inter-freq neighbor list length)" },
+]

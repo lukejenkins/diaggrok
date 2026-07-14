@@ -1,0 +1,74 @@
+version = 13
+cond = "sky-fix"
+modem_make = "Compal"
+modem_model = "RXM-G1"
+modem_firmware = "RXMG1.20.00.244_0C03"
+
+[[field_map]]
+parser_field = "lat_deg"
+quantity = "gnss_latitude_deg"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$PQWP2 latitude field on the RXM-G1 if2 AT port (AT+BNMEA=1)"
+
+[[field_map.sources]]
+kind = "f3"
+value = "tle_base.cpp 'TPC: ... LLA:<lat>,...' (co-captured QSR4 F3, qdb 77c0963a)"
+
+[[field_map]]
+parser_field = "lon_deg"
+quantity = "gnss_longitude_deg"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$PQWP2 longitude field on the RXM-G1 AT port"
+
+[[field_map.sources]]
+kind = "f3"
+value = "tle_base.cpp 'TPC: ... LLA:<lat>,<lon>,...' (co-captured QSR4 F3, qdb 77c0963a)"
+
+[[field_map]]
+parser_field = "alt_m"
+quantity = "gnss_altitude_m"
+
+[[field_map.sources]]
+kind = "f3"
+value = "tle_base.cpp 'TPC: ... LLA:...,<alt>' (co-captured QSR4 F3, qdb 77c0963a)"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$PQWP2 altitude field on the RXM-G1 AT port (confirm MSL vs HAE datum)"
+
+[[field_map]]
+parser_field = "speed_mps"
+quantity = "gnss_ground_speed_mps"
+sources = [
+    { kind = "nmea", value = "$PQWP2 ground-speed field on the RXM-G1 AT port (confirm unit)" },
+]
+
+[[field_map]]
+parser_field = "heading_deg"
+quantity = "gnss_course_over_ground_deg"
+sources = [
+    { kind = "nmea", value = "$PQWP2 course/heading field on the AT port" },
+]
+
+[[field_map]]
+parser_field = "hdop"
+quantity = "gnss_hdop"
+sources = [
+    { kind = "nmea", value = "$PQWP2 HDOP field on the RXM-G1 AT port" },
+]
+
+[[field_map]]
+parser_field = "svs.gps.used"
+quantity = "gnss_gps_svs_used_in_fix"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$PQWP2 / $PQWM1 SV-used count on the AT port"
+
+[[field_map.sources]]
+kind = "f3"
+value = "sm_api.c per-SV measurement prints (co-captured QSR4 F3, qdb 77c0963a)"

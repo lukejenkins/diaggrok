@@ -297,6 +297,19 @@ class Diag0x147C:
     # [61:71] are a verified cross-vendor MIRROR (ext_mirror_ok, 3/3 fixtures),
     # so ext_f32_61 duplicates ext_f32_51. Physical semantics (C/N0 vs LNA gain
     # vs clock-bias) pending NMEA / AT-state cross-ref. None off-version/off-size.
+    #
+    # F3 grounding (2026-07-13, #N <redacted-ref>): the per-firmware nature is now
+    # confirmed on a 3RD chipset -- a build-matched-qdb correlation of the 260
+    # v=0x0A records in the RM500Q-AE (SDX55) -f3 capture reads these offsets as
+    # ~0.0 / 0.021 / 0.0, distinct again from EM9190 (~15.4) and FN980
+    # (~3.15e12). So exposing them RAW/unasserted is corpus-validated across 3
+    # firmwares; the "~15.4 physical unit" is specifically an EM9190 question.
+    # Co-temporal F3 (RM500Q qdb, delta<=3000) grounds the v=0x0A subsystem as
+    # GNSS search-strategy (mc_gnsssearchstrategy.c / mc_gnssconfig.c /
+    # mc_srchstrategy.c) + TCXO/clock manager (tcxomgr_data.c "XO Trim
+    # Factory/Field/Curr", tcxomgr_rot_client_handling.c "Temp/Rot/VCO"),
+    # corroborating the tick_a/tick_b GNSS-engine-clock reading and the
+    # hardware/clock-class hypothesis for the EM9190 ext_f32.
     ext_f32_30: float | None = None  # f32 LE [30:34]
     ext_f32_51: float | None = None  # f32 LE [51:55]
     ext_f32_61: float | None = None  # f32 LE [61:65] — mirror of ext_f32_51
@@ -419,7 +432,7 @@ def _parse_v0a_body(
 # physical-quantity AT source and are intentionally left out of the field_map.
 
 @register(
-    0x147C,
+    0x147C, domain="gnss",
     name="0x147C",
     description=(
         "GNSS PE WLS Position Report — v=0x0D (SDX62) body decoded to "

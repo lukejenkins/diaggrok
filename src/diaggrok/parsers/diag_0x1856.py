@@ -312,7 +312,7 @@ def _classify_size(n: int) -> str:
 # target; AT+CGPS toggles the engine restart that changes session_tag.
 
 @register(
-    LOG_GNSS_ME_BDS_B1C,
+    LOG_GNSS_ME_BDS_B1C, domain="gnss",
     name="0x1856",
     description="BeiDou B1C signal measurements — skeleton parser, per-SV RE pending (#N)",
     version=5,

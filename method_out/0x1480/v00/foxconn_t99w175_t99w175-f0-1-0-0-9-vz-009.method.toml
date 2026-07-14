@@ -1,0 +1,42 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Foxconn"
+modem_model = "T99W175"
+modem_firmware = "T99W175.F0.1.0.0.9.VZ.009"
+
+[[field_map]]
+parser_field = "svs[].sv_id"
+quantity = "glonass_sv_slot"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GLGSV/$GNGSV satellite-number field (1st of each 4-tuple, 65-96) — modem gsi.gps NMEA and/or LG290P reference"
+
+[[field_map]]
+parser_field = "svs[].cno_db"
+quantity = "gnss_carrier_to_noise_dbhz"
+sources = [
+    { kind = "nmea", value = "$GLGSV SNR field (4th of each 4-tuple, dB-Hz)" },
+]
+
+[[field_map]]
+parser_field = "svs[].az_deg"
+quantity = "gnss_sv_azimuth_deg"
+sources = [
+    { kind = "nmea", value = "$GLGSV azimuth field (3rd of each 4-tuple, deg)" },
+]
+
+[[field_map]]
+parser_field = "svs[].el_deg"
+quantity = "gnss_sv_elevation_deg"
+sources = [
+    { kind = "nmea", value = "$GLGSV elevation field (2nd of each 4-tuple, deg)" },
+]
+
+[[field_map]]
+parser_field = "svs[].freq_index"
+quantity = "glonass_fdma_channel"
+
+[[field_map.sources]]
+kind = "other"
+value = "GLONASS slot->FDMA-channel almanac table (no NMEA/AT field exposes the channel directly)"

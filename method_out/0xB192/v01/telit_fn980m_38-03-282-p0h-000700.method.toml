@@ -1,0 +1,63 @@
+version = 1
+cond = "idle"
+modem_make = "Telit"
+modem_model = "FN980m"
+modem_firmware = "38.03.282-P0H.000700"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_neighbor_physical_cell_id"
+sources = [
+    { kind = "at", value = "AT#MONI=0" },
+    { kind = "at", value = "AT#CSURV" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (LTE neighbor list -> per-cell PCI)" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_neighbor_earfcn"
+sources = [
+    { kind = "at", value = "AT#MONI=0" },
+    { kind = "at", value = "AT#CSURV" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-neighbor EARFCN)" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_neighbor_ll1_se_energy"
+
+[[field_map.sources]]
+kind = "f3"
+value = "lte_LL1_meas_ncell.c:414/420 — 'NB_MEAS: <SNE|SE> is picked, rx=%d, tx=%d, max_SNE=%d, max_SE=%d'"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#MONI=0"
+
+[[field_map]]
+parser_field = "entries.rsrq_rx0"
+quantity = "lte_neighbor_rsrq_db_rx0"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#MONI=0"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetCellLocationInfo (per-cell RSRQ; per-Rx split not guaranteed)"
+
+[[field_map]]
+parser_field = "entries.rsrq_rx1"
+quantity = "lte_neighbor_rsrq_db_rx1"
+sources = [
+    { kind = "at", value = "AT#MONI=0" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (per-cell RSRQ)" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_cell_count"
+sources = [
+    { kind = "at", value = "AT#MONI=0" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (length of the neighbor list)" },
+]

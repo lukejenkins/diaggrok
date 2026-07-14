@@ -1,0 +1,47 @@
+version = 1
+cond = "idle"
+modem_make = "Sierra"
+modem_model = "EM7455"
+modem_firmware = "SWI9X30C_02.24.03.00"
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "lte_serving_physical_cell_id"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "entries.earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "lte_serving_rsrp_dbm"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "at", value = "AT!LTEINFO?" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "lte_serving_rsrq_db"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_serving_meas_cell_count"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+]

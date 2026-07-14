@@ -1,0 +1,31 @@
+version = 4
+cond = "any-drive"
+modem_make = "Telit"
+modem_model = "FN980m"
+modem_firmware = "38.03.282-P0H.000700"
+
+[[field_map]]
+parser_field = "v4_cells.meas_high_byte"
+quantity = "lte_neighbor_interfreq_measurement_candidate"
+status = "partial"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#CSURV"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#MONI=0"
+
+[[field_map.sources]]
+kind = "f3"
+value = "lte_LL1_meas_ncell.c:414/420 — 'NB_MEAS: <SNE|SE> is picked, rx=%d, tx=%d, max_SNE=%d, max_SE=%d'"
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "lte_neighbor_interfreq_cell_count_candidate"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT#CSURV" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (inter-freq neighbor list length)" },
+]

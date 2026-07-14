@@ -1,0 +1,35 @@
+version = 0
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "FN980m"
+modem_firmware = "38.03.282-P0H.000700"
+
+[[field_map]]
+parser_field = "sv_count"
+quantity = "galileo_svs_in_view"
+sources = [
+    { kind = "nmea", value = "GAGSV: total Galileo SVs in view" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+]
+
+[[field_map]]
+parser_field = "svs.prn"
+quantity = "galileo_sv_prn"
+sources = [
+    { kind = "nmea", value = "GAGSV: satellite id (Galileo PRN)" },
+]
+
+[[field_map]]
+parser_field = "svs.float_d_possibly_cno_db"
+quantity = "galileo_sv_cno_dbhz_candidate"
+sources = [
+    { kind = "nmea", value = "GAGSV: C/N0 (SNR) column per Galileo SV" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+]
+
+[[field_map]]
+parser_field = "svs.float_c_possibly_doppler_mps"
+quantity = "galileo_sv_doppler_mps_candidate"
+sources = [
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]

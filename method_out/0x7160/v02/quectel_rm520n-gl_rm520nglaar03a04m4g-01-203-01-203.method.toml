@@ -1,0 +1,28 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A04M4G_01.203.01.203"
+
+[[field_map]]
+parser_field = "entry_count"
+quantity = "gnss_engine_start_entry_count"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "AT+QGPS=1 then AT+QGPSLOC=2 (start GNSS session, request fix) under open sky — fires the engine-start cluster; AT+QGPSEND then AT+QGPS=1 to confirm per-start (not periodic) re-fire"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QGPSGNMEA=\"GGA\""
+
+[[field_map.sources]]
+kind = "other"
+value = "trigger correlation — v2 record presence at GNSS engine start"
+
+[[field_map]]
+parser_field = "sub_flag"
+quantity = "gnss_engine_start_subflag"
+sources = [
+    { kind = "other", value = "structural invariant — no AT reference" },
+]

@@ -398,7 +398,7 @@ class Diag0x1843:
 # internals unparsed) so it is documented in notes, not as a FieldGround.
 
 @register(
-    LOG_GNSS_ME_GAL_E6,
+    LOG_GNSS_ME_GAL_E6, domain="gnss",
     name="0x1843",
     description="Galileo E6 signal measurements — skeleton + 141-slot enum, slot internals pending (#N)",
     version=3,

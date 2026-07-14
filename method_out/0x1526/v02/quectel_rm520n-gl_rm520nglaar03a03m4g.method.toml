@@ -1,0 +1,67 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "cn0_dbhz"
+quantity = "gnss_sv_carrier_to_noise_density_dbhz"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "f3", value = "onGnssSvCb const:svid/cn0" },
+    { kind = "nmea", value = "$GPGSV/$GLGSV/$GAGSV" },
+]
+
+[[field_map]]
+parser_field = "sv_id"
+quantity = "gnss_satellite_id"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "f3", value = "onGnssSvCb const:svid/cn0" },
+]
+
+[[field_map]]
+parser_field = "rcvr_time_ms"
+quantity = "gnss_receiver_freerunning_time_ms"
+status = "verified"
+sources = [
+    { kind = "trigger", value = "DIAG log_time delta across records (monotone ~1ms/ms)" },
+    { kind = "f3", value = "onGnssSvCb c= epoch counter (+1 per 1 Hz epoch)" },
+]
+
+[[field_map]]
+parser_field = "cn0_adj_dbhz"
+quantity = "gnss_sv_adjusted_cn0_dbhz"
+status = "partial"
+sources = [
+    { kind = "f3", value = "onGnssSvCb cn0 vs cn0_dbhz/cn0_adj_dbhz spread" },
+    { kind = "trigger", value = "check round((cn0_dbhz-cn0_adj_dbhz)*10) is integer" },
+]
+
+[[field_map]]
+parser_field = "meas_age_accum"
+quantity = "gnss_measurement_age_accumulator"
+status = "partial"
+sources = [
+    { kind = "f3", value = "AFC loop / mc_gnsssearchstrategy stream state" },
+    { kind = "trigger", value = "meas_age_accum resets on the record after a valid cn0_dbhz" },
+]
+
+[[field_map]]
+parser_field = "meas_task_id"
+quantity = "gnss_measurement_task_id"
+status = "partial"
+sources = [
+    { kind = "f3", value = "StrategyHandler / AFC loop 'G <n>' task+constellation" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+]
+
+[[field_map]]
+parser_field = "meas_uncertainty"
+quantity = "gnss_measurement_uncertainty"
+sources = [
+    { kind = "trigger", value = "corr(meas_uncertainty, cn0_dbhz) within a constellation < 0" },
+]

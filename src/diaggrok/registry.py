@@ -655,6 +655,52 @@ def _validate_timebase_roles(timebase_roles: tuple[str, ...]) -> None:
             )
 
 
+# Closed vocabulary for the @register() ``domain`` kwarg (#N, v2 of #N).
+# A domain is the topical bucket the public carve groups codes by (the
+# ``--domain`` selector on tools/diaggrok_extract.py). Unlike wigle_roles /
+# ascii_kinds (capability axes, a code can carry several), a code has AT MOST
+# ONE domain — data/diag/public/domains.yaml maps each code to exactly one.
+# Extensible: add a `name: human description` entry to grow the vocabulary;
+# DOMAIN_VOCAB (the validation set) and tools/gen_public_domains.py's `desc`
+# fields both derive from this one dict. Seeded from the hand-curated v1
+# domains.yaml descriptions (#N).
+DOMAIN_DESCRIPTIONS: dict[str, str] = {
+    "gnss": ("GNSS position/measurement (GPS/GLONASS/BeiDou/Galileo engine, "
+             "NMEA-over-DIAG, per-SV measurements)"),
+    "lte-signal": ("LTE serving/neighbor signal levels (PCI, EARFCN, RSRP, "
+                   "RSRQ measurements)"),
+    "lte-ml1": ("LTE ML1 Layer-1 state (connected-mode scheduler, RX-diversity "
+                "antenna selection, intra/inter-freq measurement, sleep-manager "
+                "snapshots) - distinct from lte-signal serving/neighbor levels"),
+    "coex": ("Modem RF coexistence manager (MCS_CXM WWAN/WLAN/BT/GNSS "
+             "arbitration priority + activity tables, cxm_send_log dumps)"),
+    "nas": ("EMM/ESM NAS signaling (LTE EMM/ESM, NR5G 5GMM/5GSM, UMTS MM/GMM "
+            "OTA + state)"),
+    "rrc": ("LTE/NR RRC OTA + state (ASN.1 PER OTA messages, RRC events, CA "
+            "band combos)"),
+}
+
+DOMAIN_VOCAB = frozenset(DOMAIN_DESCRIPTIONS)
+
+
+def _validate_domain(domain: str | None) -> None:
+    """Validate the @register() ``domain`` kwarg against DOMAIN_VOCAB.
+
+    None (unset) is the "undomained" path — accepted; such a code is still
+    reachable via diaggrok-extract's ``--codes`` escape hatch. Otherwise the
+    value must be a single token in the closed DOMAIN_VOCAB. Raises ValueError
+    with the allowed set on any unknown domain, surfacing a bad tag as a
+    parser-import failure (same ergonomics as _validate_timebase_roles).
+    """
+    if domain is None:
+        return
+    if domain not in DOMAIN_VOCAB:
+        raise ValueError(
+            f"domain={domain!r} is not in the closed vocabulary. "
+            f"Allowed: {sorted(DOMAIN_VOCAB)}."
+        )
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -730,6 +776,12 @@ class ParserEntry:
     # from wigle_roles / ascii_kinds — marks logs useful for time-based
     # alignment of different log files. See libs/diaggrok/docs/log-capabilities.md.
     timebase_roles: tuple[str, ...] = field(default_factory=tuple)
+    # Public-carve domain (#N, v2 of #N). At most ONE topical bucket per
+    # code; None = "undomained". When set, must be in DOMAIN_VOCAB (validated by
+    # _validate_domain() in register()). This is the register-time source of
+    # truth that tools/gen_public_domains.py generates data/diag/public/
+    # domains.yaml from — see that generator's --check drift gate.
+    domain: str | None = None
     # In-code ground-truth capture recipes (#N follow-up). A code may carry
     # MANY recipes — typically one per modem — for each log version. Empty
     # tuple = "no recipe yet". Structural invariants are enforced at
@@ -1017,6 +1069,7 @@ def register(
     wigle_roles: Sequence[str] | None = None,
     ascii_kinds: Sequence[str] | None = None,
     timebase_roles: Sequence[str] | None = None,
+    domain: str | None = None,
     replace: bool = False,
     log_version: int | None = None,
     parser_version: int = 1,
@@ -1162,6 +1215,9 @@ def register(
         else tuple(dict.fromkeys(timebase_roles))
     )
     _validate_timebase_roles(timebase_roles_tuple)
+    # Normalize domain: treat an empty string as unset (None), then validate.
+    domain_norm: str | None = domain or None
+    _validate_domain(domain_norm)
 
     def decorator(func: ParserFunc) -> ParserFunc:
         _check_field_invariants_schema(func, invariants_dict)
@@ -1189,6 +1245,7 @@ def register(
             wigle_roles=wigle_roles_tuple,
             timebase_roles=timebase_roles_tuple,
             ascii_kinds=ascii_kinds_tuple,
+            domain=domain_norm,
             log_version=log_version,
             parser_version=parser_version,
             version_field=version_field,

@@ -1,0 +1,47 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "constellation"
+quantity = "gnss_constellation_id"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "GSV talker ID ($GPGSV/$GLGSV/$GBGSV/$GAGSV)" },
+]
+
+[[field_map]]
+parser_field = "cno_dbhz"
+quantity = "gnss_sv_cn0_dbhz"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "GSV SV-quad C/N0 field" },
+]
+
+[[field_map]]
+parser_field = "signal_type"
+quantity = "gnss_sv_signal_band"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "nmea", value = "GSV signalId field (firmware-dependent)" },
+]
+
+[[field_map]]
+parser_field = "meas_a"
+quantity = "gnss_sv_range_word_candidate"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "no AT command returns a raw pseudorange; use an RTCM MSM7 reference receiver (e.g. LG290P) as the external ground truth, out of AT-poller scope"
+
+[[field_map]]
+parser_field = "meas_b"
+quantity = "gnss_sv_range_word_alt_unit_candidate"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "derive the meas_a↔meas_b scale from the corpus ±ratio pairs; no AT ground truth for raw range"

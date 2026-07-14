@@ -609,7 +609,7 @@ class Diag0x1384:
 # subsystem — title and name agree.
 
 @register(
-    0x1384,
+    0x1384, domain="gnss",
     name="0x1384",
     description="NMEA sentences from GNSS engine via DIAG — includes Galileo/BeiDou/SBAS types missing from AT NMEA port (#N)",
     version=8,

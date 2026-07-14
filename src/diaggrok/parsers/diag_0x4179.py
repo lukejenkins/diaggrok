@@ -464,7 +464,7 @@ def _decode_preamble(pre: bytes) -> dict[str, Any]:
 # announcement (#N), so capture both together.
 
 @register(
-    0x4179,
+    0x4179, domain="lte-signal",
     name="0x4179",
     description=(
         "0x4179 -- LTE intra-freq neighbor cell measurement (6-cell sorted "

@@ -1,0 +1,57 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "ref_lat_deg"
+quantity = "gnss_latitude_deg"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GPGGA/$GNGGA latitude (ddmm.mmmm + N/S) or $GxRMC latitude" },
+    { kind = "qmi", value = "QMI_LOC GetEngineState" },
+]
+
+[[field_map]]
+parser_field = "ref_lon_deg"
+quantity = "gnss_longitude_deg"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GPGGA/$GNGGA longitude (dddmm.mmmm + E/W) or $GxRMC longitude" },
+    { kind = "qmi", value = "QMI_LOC GetEngineState" },
+]
+
+[[field_map]]
+parser_field = "altitude_fix_m"
+quantity = "gnss_altitude_m_candidate"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GPGGA altitude field (#N, metres, MSL) plus geoid separation (#N)" },
+]
+
+[[field_map]]
+parser_field = "altitude_ref_m"
+quantity = "gnss_reference_altitude_m_candidate"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+]
+
+[[field_map]]
+parser_field = "dop_h_like"
+quantity = "gnss_hdop_candidate"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "nmea", value = "$GPGSA/$GNGSA HDOP field" },
+]
+
+[[field_map]]
+parser_field = "dop_v_like"
+quantity = "gnss_vdop_candidate"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSA\"" },
+    { kind = "nmea", value = "$GPGSA/$GNGSA VDOP field" },
+]

@@ -1,0 +1,30 @@
+version = 6
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A03M4G"
+
+[[field_map]]
+parser_field = "nmea_sentences"
+quantity = "gnss_nmea_output"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GGA\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"RMC\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+    { kind = "at", value = "AT+QGPSLOC=2" },
+    { kind = "nmea", value = "$GxGGA / $GxRMC body sentences" },
+]
+
+[[field_map]]
+parser_field = "nmea_talkers"
+quantity = "gnss_constellation_set"
+sources = [
+    { kind = "at", value = "AT+QGPSCFG=\"gnssconfig\"" },
+]
+
+[[field_map]]
+parser_field = "seq_counter"
+quantity = "gnss_locend_block_counter"
+sources = [
+    { kind = "trigger", value = "AT+QGPSEND then AT+QGPS=1 engine cycle" },
+]

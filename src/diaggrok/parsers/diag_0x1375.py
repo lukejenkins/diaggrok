@@ -688,7 +688,7 @@ class Diag0x1375:
         return d
 
 
-@register(0x1375,
+@register(0x1375, domain="gnss",
     name="0x1375",
     description="CGPS IPC data record (LOG_CGPS_IPC_DATA_C) — 28B header + per-msg_id payload; v6 per-msg_id taxonomy (msg_kind) + array decode; v7 0x0078 stream-1 per-SV GNSS measurement decode (range-rate/carrier-phase/ToW, RINEX-validated); cross-gen MDM9x00..SDX65",
     version=13, author="Luke Jenkins", author_url="https://github.com/lukejenkins",

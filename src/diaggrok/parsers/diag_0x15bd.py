@@ -399,7 +399,7 @@ def _decode_v3_sub_records(body: bytes) -> list[V3SubRecord]:
 # edge-case captures).
 
 @register(
-    0x15BD,
+    0x15BD, domain="gnss",
     primary_issue=None,
     name="0x15BD",
     description=(

@@ -1,0 +1,21 @@
+version = 1
+cond = "sky-fix"
+modem_make = "Sierra"
+modem_model = "MC7411"
+modem_firmware = "SWI9X50C_01.14.22.00"
+
+[[field_map]]
+parser_field = "entry_count"
+quantity = "gnss_engine_start_entry_count"
+sources = [
+    { kind = "at", value = "AT!GPSSTATUS?" },
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "other", value = "trigger correlation — record presence at GNSS engine start" },
+]
+
+[[field_map]]
+parser_field = "sub_flag"
+quantity = "gnss_engine_start_subflag"
+sources = [
+    { kind = "other", value = "structural invariant — no AT reference" },
+]

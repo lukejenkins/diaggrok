@@ -1,0 +1,37 @@
+version = 3
+cond = "sky-fix"
+modem_make = "Sierra"
+modem_model = "EM9190"
+modem_firmware = "SWIX55C_03.17.04.00"
+
+[[field_map]]
+parser_field = "latitude_deg"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 2/3 / $GxRMC field 3/4 (Sierra NMEA-over-USB stream)" },
+]
+
+[[field_map]]
+parser_field = "longitude_deg"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 4/5 / $GxRMC field 5/6 (Sierra NMEA-over-USB stream)" },
+]
+
+[[field_map]]
+parser_field = "altitude_m"
+quantity = "gnss_altitude_m"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "nmea", value = "$GxGGA field 9 (MSL alt) + field 11 (geoid separation)" },
+]
+
+[[field_map]]
+parser_field = "position_uncertainty_m"
+quantity = "gnss_horizontal_position_uncertainty_m"
+sources = [
+    { kind = "at", value = "AT!GPSLOC?" },
+    { kind = "other", value = "QMI_LOC position-report event HEPE (not in poller set yet)" },
+]

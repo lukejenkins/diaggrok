@@ -120,7 +120,7 @@ _VERSION_TO_SIZE = {0x08: 445, 0x09: 503, 0x0b: 535, 0x12: 1011, 0x17: 2464}
 # VALID fix here (gps_week=2417, gps_ms=146601397), so the GPS-time anchor is
 # directly testable under cond:sky-fix.
 
-@register(LOG_GNSS_CD_DB_REPORT,
+@register(LOG_GNSS_CD_DB_REPORT, domain="gnss",
     name="0x147B",
     description="GNSS clock/cell database report; 11-byte header with version+f_count+gps_week+gps_ms decoded; body preserved as raw for ongoing RE (#N)",
     version=5,
