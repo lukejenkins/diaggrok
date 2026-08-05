@@ -10,9 +10,9 @@ Split from `gnss_demod.py` per #N tier-2 batch 12.
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_EVENT_IPSEC_CHILD_SA_REKEY_DONE
         source: qxdm_3_12_714_2017_diag_log_codes (authority: community)
-    aliases:
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
+    aliases: (none recorded)
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).
@@ -88,15 +88,35 @@ class Diag0x1587:
                      across ALL 199,121 records, full corpus (declared as an invariant).
                      0xff is the uninitialized-sentinel value.
         +7..+12      mid_raw — 6 high-entropy bytes (256 uniq each, ~99%
-                     nonzero): per-SV counters / measurement deltas. Opaque.
+                     nonzero). Earlier guess "per-SV counters / measurement
+                     deltas" is NOT supported (see F3 note below): in the
+                     v0x0D MC7411 capture these move as additional per-record
+                     counter-triples (mirror the +1/+2/+3 triple), tracking
+                     the record counter, not per-SV data. Opaque as to scale.
         +13 byte_13  identical distribution to +3 (mirror pair).
         +14 flag_14  identical distribution to +4 (mirror pair).
         +15..+18     zero-padding: 0x00 across 100% of all records / versions.
         +19 sentinel per-version tail-marker (existing).
 
     The +3≡+13 / +4≡+14 mirror suggests the header carries a repeated
-    field pair at a +10 stride. mid_raw and the body remain semantically
-    opaque (DIAG×AT-correlation-gated); every header byte is now named.
+    field pair at a +10 stride. Every header byte is now named.
+
+    ## Body is NOT per-SV measurements — F3-refuted (2026-07-19 <redacted-ref>, #N)
+
+    The 2026-07-02 hypothesis (per-SV C/No / tracking prints map onto the
+    undecoded body entries) is **refuted** for v0x0D. In the MC7411
+    `04b8d441` GNSS-active capture (184 records, 92×50B + 92×85B, qdb-decoded
+    F3 present at resolution_rate=1.0), the ENTIRE body (+14 onward) is
+    **byte-constant across all 92 records of each size**, while the co-recorded
+    F3 carries live per-SV C/No (`mc_peak.c` GnssType/SV/C-No, 267 prints,
+    values swinging 203-320 across 30 SVs). A body that never moves while the
+    per-SV measurements swing cannot BE those measurements — the v0x0D body is
+    a static config/status snapshot, and the only live data in the record is
+    the header counter-triples (byte1 is a +8-stride epoch counter, NOT the
+    per-SV slot index earlier hypothesized). So `body_raw` stays opaque, but
+    F3 per-SV correlation is a dead end for it; the next lever is a capture
+    where the body actually varies (a larger size-class / different version)
+    or DIAG×AT correlation, not GNSS F3.
     """
     log_time: int
     version: int           # byte 0 — one of {0x0C, 0x0D, 0x0E, 0x0F, 0x10}

@@ -190,13 +190,13 @@ semantically decoded — that per-``msg_id`` field naming is the open tail.
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_CGPS_IPC_DATA_C
         source: qualcomm_diag_log_codes_h (authority: vendor_official)
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
     aliases:
         LOG_HDR_DOS_MO_DOS_STATUS
             source: qxdm_3_12_714_2017_diag_log_codes
         LOG_INTERNAL_CGPS_IPC_DATA
             source: qxdm_3_12_714_2017_diag_log_codes
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).
@@ -533,11 +533,12 @@ _X1375_HW_RUNS: dict[str, dict[str, Any]] = {
         "firmware": "RM520NGLAAR03A03M4G",
         "status": {"msg_id": "verified", "payload_len": "verified"},
         "evidence": (
-            " ── HW-VALIDATED 2026-06-11 (<redacted-ref>, host t480, Quectel "
+            " ── HW-VALIDATED 2026-06-11 (<redacted-ref>, host <redacted-host>, Quectel "
             "RM520N-GL @ RM520NGLAAR03A03M4G_A0.303, SDX62 "
             "Snapdragon X62 — the 3rd chipset family for this code after MDM9230 "
             "and SDX72; 4-port USB composition 2c7c:0801 if00-if03, live 3D fix "
-            "41.215,-111.936 HDOP 0.9, 7-9 SVs GPS+GLONASS+Galileo+Beidou). Owned "
+            "at the lab bench position, HDOP 0.9, 7-9 SVs "
+            "GPS+GLONASS+Galileo+Beidou). Owned "
             "engine-ON capture gnss.dlf (narrow mask 0x1375+0x147C+0x14A6+0x14D8+"
             "0x1480 via capture_dlf_from_diag --spc auto — NOT diaggulp; 118 s, "
             "if00). 0x1375 = 26,519 recs: marker==0x0101 26519/26519 (100.00%) + "
@@ -593,7 +594,8 @@ _X1375_HW_RUNS: dict[str, dict[str, Any]] = {
             " ── HW-VALIDATED 2026-06-19 (<redacted-ref>, host <redacted-host>, Quectel "
             "RM500Q-AE @ <redacted-firmware>, SDX55 "
             "Snapdragon X55 — the 4th chipset family for this code after SDX72 / "
-            "MDM9230 / SDX62; live 3D fix 41.215,-111.936 HDOP 0.7, 20 SVs). Owned "
+            "MDM9230 / SDX62; live 3D fix at the lab bench position, HDOP 0.7, "
+            "20 SVs). Owned "
             "engine-ON dual-mask DIAG+F3 capture cap.hdlc (diaggulp --ext-msg-f3, "
             "244.7s, if00, CRC 1993558/1993558 OK). 0x1375 = 64,742 recs = 264.6/s: "
             "marker==0x0101 64742/64742 (100.00%) + payload_len==len−28 64742/64742 "

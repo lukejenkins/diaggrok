@@ -1,0 +1,57 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Fibocom"
+modem_model = "FM101-GL"
+modem_firmware = "19500.0000.00.01.01.52"
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_nmea_sentence_raw"
+sources = [
+    { kind = "nmea", value = "FM101-GL GNSS NMEA-port sentence (same type + utc_time)" },
+]
+
+[[field_map]]
+parser_field = "parsed.latitude"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT+FGPS_LOCDATA" },
+    { kind = "nmea", value = "FM101-GL GNSS NMEA-port GGA/RMC latitude (same utc_time)" },
+]
+
+[[field_map]]
+parser_field = "parsed.longitude"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT+FGPS_LOCDATA" },
+    { kind = "nmea", value = "FM101-GL GNSS NMEA-port GGA/RMC longitude (same utc_time)" },
+]
+
+[[field_map]]
+parser_field = "parsed.altitude_m"
+quantity = "gnss_altitude_m"
+sources = [
+    { kind = "at", value = "AT+FGPS_LOCDATA" },
+]
+
+[[field_map]]
+parser_field = "parsed.num_satellites"
+quantity = "gnss_num_satellites_used"
+sources = [
+    { kind = "at", value = "AT+FGPS_INFO" },
+]
+
+[[field_map]]
+parser_field = "parsed.fix_quality"
+quantity = "gnss_fix_quality_indicator"
+sources = [
+    { kind = "at", value = "AT+FGPS_INFO" },
+    { kind = "at", value = "AT+FGPS_LOCDATA" },
+]
+
+[[field_map]]
+parser_field = "client_id"
+quantity = "gnss_firmware_client_magic"
+sources = [
+    { kind = "trigger", value = "modem-identity: FM101-GL constant (record observed u32)" },
+]

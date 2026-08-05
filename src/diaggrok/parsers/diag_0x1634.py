@@ -86,9 +86,9 @@ Two invariants enforced via named reserved fields (39996/39996 obs):
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_LTE_REG_OUTGOING_MSG
         source: qxdm_3_12_714_2017_diag_log_codes (authority: community)
-    aliases:
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
+    aliases: (none recorded)
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).

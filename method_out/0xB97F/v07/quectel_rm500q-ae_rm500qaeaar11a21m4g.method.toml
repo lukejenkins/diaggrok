@@ -1,0 +1,53 @@
+version = 7
+cond = "nr5g"
+modem_make = "Quectel"
+modem_model = "RM500Q-AE"
+modem_firmware = "RM500QAEAAR11A21M4G"
+
+[[field_map]]
+parser_field = "serving_pci"
+quantity = "nr5g_serving_pci"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "nr_arfcn"
+quantity = "nr5g_dl_arfcn"
+sources = [
+    { kind = "at", value = "AT+QNWINFO" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+]
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "nr5g_cell_pci"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "nr5g_cell_rsrp_dbm"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "at", value = "AT+QRSRP" },
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "mbim", value = "MBIM_CID_SIGNAL_STATE" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp_raw"
+quantity = "nr5g_cell_rsrp_raw_x128"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "nr5g_measured_cell_count"
+sources = [
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+]

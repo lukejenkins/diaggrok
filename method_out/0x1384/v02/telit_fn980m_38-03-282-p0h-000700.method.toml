@@ -1,0 +1,60 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Telit"
+modem_model = "FN980m"
+modem_firmware = "38.03.282-P0H.000700"
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_nmea_sentence_raw"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GPGGA / $GNGGA (position fix) — same UTC epoch as the wrapped sentence"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GPRMC / $GNRMC (recommended-minimum) — lat/lon/UTC cross-check"
+
+[[field_map]]
+parser_field = "parsed.latitude"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "parsed.longitude"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "parsed.altitude_m"
+quantity = "gnss_altitude_m"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "parsed.num_satellites"
+quantity = "gnss_num_satellites_used"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+]
+
+[[field_map]]
+parser_field = "parsed.fix_quality"
+quantity = "gnss_fix_quality_indicator"
+sources = [
+    { kind = "at", value = "AT$GPSACP" },
+    { kind = "at", value = "AT$GPSP?" },
+]
+
+[[field_map]]
+parser_field = "client_id"
+quantity = "gnss_firmware_client_magic"
+sources = [
+    { kind = "trigger", value = "modem-identity: Telit ⇒ 0x00000DA3" },
+]

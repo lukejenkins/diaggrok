@@ -1,0 +1,54 @@
+version = 20
+cond = "idle"
+modem_make = "Telit"
+modem_model = "LM960A18"
+modem_firmware = "32.01.110"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "verified"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 lte_rrc_sib.c 'MAC_DL_DATA (SIB1 ...) received for phy_cell_id = %d & freq = %d'"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#RFSTS"
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "refuted"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 lte_rrc_sib.c 'phy_cell_id = %d & freq = %d'"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 lte_ml1_common_rssi_ind.c serving oracle (2026-06-20, ATT slot)"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT#RFSTS"
+
+[[field_map]]
+parser_field = "sib1_tac"
+quantity = "lte_tracking_area_code"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT#MONI" },
+    { kind = "at", value = "AT#RFSTS" },
+    { kind = "other", value = "F3 lte_rrc_sib.c (SIB1 BCCH-DL-SCH read)" },
+]
+
+[[field_map]]
+parser_field = "sib1_cell_id"
+quantity = "lte_serving_cell_identity"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT#MONI" },
+    { kind = "other", value = "F3 lte_rrc_sib.c (SIB1 BCCH-DL-SCH read, qdb GUID 209a8edf)" },
+]

@@ -54,16 +54,49 @@ class Diag0x1478:
                                         the 2026-04-11 captures)
         byte 9..12: u32  gps_ms         GPS time of week in ms, matches
                                         the clock in 0x1477/0x1480/0x147B
-                                        on the same epoch
+                                        on the same epoch — equals the
+                                        firmware's F3 "To ME/PE GPS ms"
+
+    ## Per-constellation clock block (body, F3-grounded 2026-07-14, #N)
+
+        byte 25..28: u32  glo_ms         GLONASS engine time-of-day ms —
+                                         firmware F3 "To ME/PE GLO ms"
+        byte 40..43: u32  bds_ms         BeiDou engine time-of-week ms —
+                                         firmware F3 "To ME/PE BDS ms"
+
+    Grounded against the firmware's own ``nf_navsolution.c`` F3 prints
+    ("NF: Clock Adj: FC=%u, To ME GPS/GLO/BDS ms=[%u]") in a GUID-matched
+    (f1007b36 / EG18NAPAR01A06M4G) EG18-NA cold-GNSS-start capture via
+    ``tools/diag_f3_correlate.py`` — the co-temporal 0x1478 record's
+    u32@9/@25/@40 exactly equal the F3-printed GPS/GLO/BDS ms. Two
+    physical invariants confirm the offsets independently, corpus-wide:
+
+      - ``gps_ms - bds_ms == 14000`` (the fixed 14 s BDT−GPST offset) on
+        100% of records — 617 (EG18-NA SDX20 V2 v=3) + 770 (RM500Q SDX55
+        v=4) = 1,387 fix records across two chipset generations.
+      - ``gps_ms - glo_ms`` carries the current GPS−UTC leap remainder
+        (…018 s) atop the GLONASS day/week framing offset, stable per
+        capture.
+
+    Galileo shares the GPS timescale (F3 "To ME GAL ms" == "To ME GPS ms"),
+    so there is no distinct GAL field — GAL ms == gps_ms.
 
     ## Size variants
     - 156 B on MDM9207 (version 2, EG25-G OCPU 30.201)
     - 174 B on SDX20 V2 (version 3, EG18-NA / LM960)
     - 221 B on SDX55 (version 4, FN980m / RM500Q)
 
-    The body (bytes 13..end) contains per-constellation clock state —
-    time bias, frequency bias, drift uncertainty, and similar fields —
-    not yet fully RE'd. Tracked in #N.
+    glo_ms@25 / bds_ms@40 are verified version-invariant on v=3 and v=4
+    (the header + leading per-constellation block is shared across sizes;
+    version size differences live in the trailing region). v=2/156B is
+    not fix-verified — no v=2 open-sky-fix capture exists in the corpus
+    (every v=2 peek shows the gps_week=0xFFFF/gps_ms=0 no-fix sentinel) —
+    so its glo_ms/bds_ms are decoded on the same-offset assumption but
+    remain unconfirmed under a real fix.
+
+    The remaining body bytes (per-constellation frequency bias, drift
+    uncertainty, and similar clock state) are still preserved as ``raw``
+    for ongoing RE. Tracked in #N.
 
     ## #N detection capability — flags field as passive validator
 
@@ -93,6 +126,8 @@ class Diag0x1478:
     f_count: int
     gps_week: int
     gps_ms: int
+    glo_ms: int
+    bds_ms: int
     raw: bytes
 
     def to_dict(self) -> dict[str, Any]:
@@ -104,6 +139,8 @@ class Diag0x1478:
             'f_count': self.f_count,
             'gps_week': self.gps_week,
             'gps_ms': self.gps_ms,
+            'glo_ms': self.glo_ms,
+            'bds_ms': self.bds_ms,
             'payload_size': len(self.raw),
         }
 
@@ -123,8 +160,9 @@ _VERSION_TO_SIZE = {0x02: 156, 0x03: 174, 0x04: 221}
 
 @register(LOG_GNSS_CLOCK_REPORT, domain="gnss",
     name="0x1478",
-    description="Multi-constellation GNSS clock state; 13-byte header decoded across 3 versions (v=0x02/156B, v=0x03/174B, v=0x04/221B); body preserved as raw for ongoing RE (#N)",
-    version=6,
+    description="Multi-constellation GNSS clock state; 13-byte header + F3-grounded per-constellation engine time (gps_ms@9, glo_ms@25, bds_ms@40) decoded across 3 versions (v=0x02/156B, v=0x03/174B, v=0x04/221B); remaining body preserved as raw for ongoing RE (#N)",
+    version=7,
+    # v6 (#N, 2026-06-27 cadence-sweep): tagged timebase_roles=("absolute-time","ts-anchor") — see the tag block below the field_invariants
     # v5 (#N, 2026-06-11): sibling recipe (#N) for RM520N-GL @ RM520NGLAAR03A03M4G (SDX62 v=0x04) — gps_week=2422/gps_ms VERIFIED as GPS timestamp vs QGPSLOC UTC (HW <redacted-ref> 5174)
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
@@ -154,7 +192,7 @@ _VERSION_TO_SIZE = {0x02: 156, 0x03: 174, 0x04: 221}
     # Per-code, cross-chipset evidence (memory-safe single-capture sequential
     # decode + linear-fit, the #N method):
     #   * absolute-time — the header's gps_week + gps_ms are a real GPS week /
-    #     time-of-week (HW-VERIFIED in _GROUND_TRUTH_0x1478 vs QGPSLOC). Decoded
+    #     time-of-week (HW-VERIFIED in the ground_truth/0x1478/ store vs QGPSLOC). Decoded
     #     GPS time matches the capture's own wall-clock within ~1 min on TWO
     #     chipset generations:
     #       RM500Q-AE SDX55 v=0x04 (2026-06-12_213517 wardrive) — 658 fix recs,
@@ -218,5 +256,11 @@ def parse_0x1478(log_time: int, data: bytes) -> Diag0x1478 | None:
         f_count=unpack_from('<I', data, 3)[0],
         gps_week=unpack_from('<H', data, 7)[0],
         gps_ms=unpack_from('<I', data, 9)[0],
+        # Per-constellation engine time (F3-grounded 2026-07-14, #N):
+        # firmware nf_navsolution.c "To ME/PE GLO ms" @25, "To ME/PE BDS
+        # ms" @40. Verified version-invariant on v=3 (174B) + v=4 (221B).
+        # On a no-fix record these carry the same sentinel as gps_ms.
+        glo_ms=unpack_from('<I', data, 25)[0],
+        bds_ms=unpack_from('<I', data, 40)[0],
         raw=data,
     )

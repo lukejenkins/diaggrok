@@ -1,0 +1,38 @@
+version = 20
+cond = "idle"
+modem_make = "Quectel"
+modem_model = "EG25-G"
+modem_firmware = "EG25GGBR07A08M2G_A0.301.A0.301"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+]
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+]
+
+[[field_map]]
+parser_field = "channel_type"
+quantity = "lte_rrc_logical_channel"
+status = "verified"
+
+[[field_map.sources]]
+kind = "other"
+value = "SIB1 content decode (lte_rrc_sib.decode_sib1_cell_access)"
+
+[[field_map.sources]]
+kind = "other"
+value = "qcsuper GSMTAP pcap channel oracle"
+
+[[field_map.sources]]
+kind = "other"
+value = "RRC PDU message-type content decode (UperReader, TS 36.331 Rel-8 c1 CHOICE)"

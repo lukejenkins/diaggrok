@@ -65,7 +65,14 @@ _LEGACY_ALIASES: frozenset[str] = frozenset({
 # LTE log codes
 LOG_LTE_CELL_SEARCH_RESULTS         = 0x4801
 LOG_LTE_ML1_MEASUREMENT             = 0x41BC
-LOG_LTE_ML1_MEAS_REPORT             = 0x18AE
+# 0x18AE is GNSS Global Time Services (GTS), NOT an LTE ML1 measurement report.
+# The "LTE ML1 Measurement Report" name was a pre-canonical guess; QXDM's
+# authoritative item-type string is LOG_GNSS_GLOBAL_TIME_SERVICES_EVENTS, and
+# F3 ground truth (gts.c / lte_ml1_pos_gts.c prints, co-temporal with the
+# records over the identical tick window) confirms it — see #N. The old
+# name is retained only as a deprecated alias so no import breaks.
+LOG_GNSS_GLOBAL_TIME_SERVICES_EVENTS = 0x18AE
+LOG_LTE_ML1_MEAS_REPORT             = LOG_GNSS_GLOBAL_TIME_SERVICES_EVENTS  # deprecated (#N, F3-refuted)
 LOG_LTE_ML1_NEIGHBOR_MEAS           = 0x187B
 LOG_LTE_ML1_SYSTEM_SCAN             = 0x1900
 LOG_LTE_MAC_DL_TB                   = 0x1950
@@ -103,7 +110,7 @@ LOG_LTE_NAS_EMM_PLAIN_OTA_OUT_MSG   = 0xB0ED
 
 # EM7511 edge-case discoveries (2026-04-20) — log codes surfaced during
 # airplane-mode and SIM power-cycle transitions on MDM9650/SDX20.
-LOG_GNSS_MISC_18F8                  = 0x18F8  # 20B fixed, GNSS/loc misc (#N)
+LOG_MISC_18F8                       = 0x18F8  # v0x01 20B + v0x02 dual-shape; subsystem NOT gnss (F3-refuted, #N)
 LOG_GNSS_STATE_197F                 = 0x197F  # 4B fixed, RF state flag (#N)
 LOG_GNSS_STATE_1980                 = 0x1980  # 4B fixed, RF state flag (#N)
 LOG_CODE_7150                       = 0x7150  # 19B fixed, range/misc (#N)
@@ -111,10 +118,10 @@ LOG_LTE_NAS_ESM_B0E0                = 0xB0E0  # variable, NAS/ESM OTA incoming t
 LOG_LTE_NAS_ESM_B0E1                = 0xB0E1  # 33B fixed, NAS/ESM sibling (#N)
 LOG_LTE_NAS_ESM_EPS_QOS_B0E5        = 0xB0E5  # 20B v=0x01 NAS/ESM EPS-QoS/bearer-ctx; recognition only (#N)
 LOG_LTE_NAS_ESM_B0F6                = 0xB0F6  # 3B fixed, NAS/ESM tiny event (#N)
-LOG_LTE_NAS_ML1_B190                = 0xB190  # 264B fixed, NAS/ML1 (#N)
-LOG_LTE_NAS_EVENT_B19A              = 0xB19A  # 24B fixed, NAS frequent event (#N)
-LOG_LTE_NAS_SEC_B1C6                = 0xB1C6  # 244B fixed, NAS security (#N)
-LOG_LTE_NAS_STATUS_B1DA             = 0xB1DA  # 32B fixed, NAS status (#N)
+LOG_LTE_ML1_B190                    = 0xB190  # 264B (v=0x01) / 260B (v=0x36), LTE ML1/L1 measurement report; "NAS" was a range-guess, refuted — qxdm 0xB18C-0xB1Bx block is uniformly LTE ML1, siblings #N/#N same scrub (#N)
+LOG_LTE_ML1_B19A                    = 0xB19A  # 24B fixed, LTE ML1/L1 report; F3-grounded ML1 not NAS (#N)
+LOG_LTE_ML1_B1C6                    = 0xB1C6  # 4B hdr + N entries, LTE ML1 GM CSF TX report; F3-grounded ML1 not NAS (#N)
+LOG_LTE_ML1_B1DA                    = 0xB1DA  # 32B fixed, LTE ML1 antenna-switch diversity; F3-grounded ML1 not NAS (#N)
 LOG_LTE_B1B0                        = 0xB1B0  # 2B fixed, byte0=0x01 version, byte1 ∈ {0x71,0x72} two-valued sub-state enum (#N, SIM8202G-M2 SDX55 single-chipset)
 
 # Inseego M2000B SDX55 ingest 2026-04-25 — single-shot LTE/RRC boundary code
@@ -160,7 +167,7 @@ LOG_UMTS_NAS_OTA_MESSAGE            = 0x713A  # #N UMTS NAS MM/GMM/SM OTA
 # simultaneous 5-modem wardrive surfaced by #N histogram, brought to
 # partial-decode / full-decode tiers via <redacted-ref> session.
 LOG_LTE_ML1_18EA                    = 0x18EA  # 64B LTE ML1 paired subframe (#N)
-LOG_NR5G_ML1_1C07                   = 0x1C07  # 2708B NR5G ML1 (#N, structural — 18×138B slot array)
+LOG_NR5G_ML1_1C07                   = 0x1C07  # LOG_NR5G_SUB6_TXAGC — NR5G Sub-6 Tx AGC/UL power ctrl (#N; F3-identified 2026-07-18, NOT ML1 beam/RSRP). Const name kept for import stability.
 LOG_GNSS_CLIENT_API_LOCATION_REPORT = 0x1C8F  # 2240B GNSS Client-API location report (#N, full v4 decode) — canonical QXDM name; NOT NR5G ML1 despite the 0x1C00 range
 LOG_NR5G_ML1_1C8F                   = 0x1C8F  # legacy alias (misnomer: this is a GNSS code, see above) — kept for back-compat
 LOG_GNSS_LOCENG_1C90                = 0x1C90  # 6693B GNSS LocEng config snapshot (#N, structural)
@@ -172,7 +179,7 @@ LOG_NR5G_ML1_1CE5                   = 0x1CE5  # 24B v=0x01 NR5G ML1 sleep-state 
 LOG_NR5G_ML1_1D1E                   = 0x1D1E  # 117B v=0x00 NR5G ML1, length-prefixed APN @78 (#N)
 LOG_NR5G_ML1_1D31                   = 0x1D31  # 31B v=0x01 NR5G ML1 boot/cycle state (#N)
 LOG_FRAME_TELEMETRY_1D3D            = 0x1D3D  # 18+79k v=0x02 per-frame telemetry array, 10 Hz (#N; range is NR5G ML1 but emitter unpinned)
-LOG_NR5G_ML1_1DD9                   = 0x1DD9  # 16+88*N v=0x00 NR5G ML1 count-prefixed entry array (EM9291 SDX62; #N)
+LOG_ML1_1DD9                        = 0x1DD9  # 16+88*N v=0x00 ML1 count-prefixed entry array (EM9291 SDX62; F3 co-temporal=GNSS ML1, NOT NR5G — name retracted 2026-07-14; #N)
 LOG_NR5G_ML1_1DDF                   = 0x1DDF  # 317B v=0x00 NR5G ML1 RAT-switch report (#N)
 LOG_LTE_NR5G_SIG_B364               = 0xB364  # var 4+N*16 freq-measurement container, marker=0x4000 (#N)
 LOG_LTE_NR5G_SIG_B06E               = 0xB06E  # 52B v=0x30 LTE/NR5G sig measurement; u16 seq @2, var payload [9:24] (#N)
@@ -237,12 +244,14 @@ LOG_LTE_NR5G_SIGNALLING_B844        = 0xB844  # variable container, byte0 {0x00,
 LOG_LTE_NR5G_SIGNALLING_B84B        = 0xB84B  # variable TLV container, byte0 {0x02,0x04,0x05}; no hdr length field; hdr+raw, SDX55+SDX62+SDX65 (#N)
 LOG_LTE_NR5G_SIGNALLING_B84D        = 0xB84D  # entry array, byte0 {0x00,0x03,0x04}; count@4 u32; len==hdr[v]+count*stride[v], SDX55+SDX62+SDX65 (#N)
 LOG_LTE_NR5G_SIGNALLING_B84E        = 0xB84E  # entry array, byte0 {0x00,0x01}; count@4 u32; len==8+count*11, SDX55+SDX62+SDX65 (#N)
+LOG_NR5G_PDCP_DL_DATA_PDU           = 0xB840  # NR5G PDCP DL Data PDU; 10B hdr(ver/minor/N/M/seq) + M*16B blocks + N*39B elements; size==10+16*M+39*N; byte0 {0x00 RM520N-GL,0x06 RXM-G1/M2000}, SDX6x (#N)
 LOG_DIAG_1DA2                       = 0x1DA2  # multi-kind report v=0x01; subsystem unresolved (NR5G-ML1-range vs community GNSS_CC); u32 kind@4 selects size {5->140,6->156,0->662} (#N)
 LOG_NR5G_ML1_1DDA                   = 0x1DDA  # NR5G ML1 high-rate 146B fixed v=0x04; counter+config+meas (#N)
 LOG_PDN_APN_CONTEXT_1CB6            = 0x1CB6  # PDN/APN data-context, 230B fixed v=0x00; embeds APN string (#N)
-LOG_B3XX_B368                       = 0xB368  # 0xB3xx 1768B fixed, 4-byte ver dword 0x3B; cell-id hdr + structured front (5 const 04 02 entries) + dynamic tail; not TLV (#N). Corpus: T99W640/SDX72-EXCLUSIVE (543 caps incl. RM520N-GL/SDX62 x125, RM500Q x50 — none emit it); the 0xB36x band is generationally split — SDX62 emits 0xB360/0xB364, SDX72 emits 0xB368, never overlapping. Sibling 0xB364=LOG_LTE_NR5G_SIG_B364 (decoded freq-meas) ⇒ 0xB368 ≈ the SDX72-gen LTE/NR5G sig/meas occupant of the same band
+LOG_B3XX_B368                       = 0xB368  # SDX72 NR5G/LTE serving-cell record, 1768B fixed, 4-byte ver dword 0x3B; hdr cell-identity {arfcn@4, pci@8, rat@12 (1=LTE/2=NR5G), band@16} GROUNDED 6/6 via arfcn↔band↔rat consistency + QMI serving-cell (NR-ARFCN 501390 n41) + SCAT ML1 (#N); structured front (5 const 04 02 entries) + dynamic tail; not TLV. Corpus: T99W640/SDX72-EXCLUSIVE (543 caps incl. RM520N-GL/SDX62 x125, RM500Q x50 — none emit it); the 0xB36x band is generationally split — SDX62 emits 0xB360/0xB364, SDX72 emits 0xB368, never overlapping. Sibling 0xB364=LOG_LTE_NR5G_SIG_B364 (decoded freq-meas) ⇒ 0xB368 ≈ the SDX72-gen LTE/NR5G sig/meas occupant of the same band
 LOG_NR5G_ML1_B835                   = 0xB835  # NR5G ML1 var record v=0x00; 20B hdr, slot_value@16 keyed by (subtype,freq/slot) (#N)
 LOG_NR5G_ML1_B834                   = 0xB834  # NR5G ML1 large var meas-dump v=0x00; 16B hdr, up to 8226B (#N)
+LOG_RF_ATUNER_B8A6                  = 0xB8A6  # RF antenna-tuner / RF-front-end (F3: rfcommon_atuner_*/rfdevice_asm/fem, NOT NR5G ML1); fixed 36B v=0x00; marker 0x02 + sig 01 01 62; state@18 + two (id,flag,u16 counter) tuner-param entries @28/@32, SDX55 rxm-g1/m2000/lv55 (#N)
 
 
 # ── Name resolution (single-sourced for every generated diag-log list) ──

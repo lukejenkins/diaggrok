@@ -1,0 +1,236 @@
+version = 27
+cond = "idle"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A04M4G_01.203.01.203"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "other", value = "DIAG 0xB116 config_word" },
+]
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "other", value = "DIAG 0xB193 earfcn" },
+]
+
+[[field_map]]
+parser_field = "sib1_mcc"
+quantity = "lte_sib1_broadcast_mcc"
+status = "verified"
+sources = [
+    { kind = "other", value = "SCAT GSMTAP oracle (LTE RRC SCell Info)" },
+    { kind = "other", value = "Wireshark lte-rrc dissector (GSMTAP, scat.pcap)" },
+]
+
+[[field_map]]
+parser_field = "sib1_mnc"
+quantity = "lte_sib1_broadcast_mnc"
+status = "verified"
+sources = [
+    { kind = "other", value = "SCAT GSMTAP oracle (LTE RRC SCell Info)" },
+    { kind = "other", value = "Wireshark lte-rrc dissector (GSMTAP, scat.pcap)" },
+]
+
+[[field_map]]
+parser_field = "sib1_tac"
+quantity = "lte_sib1_broadcast_tac"
+status = "verified"
+sources = [
+    { kind = "other", value = "SCAT GSMTAP oracle (LTE RRC SCell Info)" },
+    { kind = "other", value = "Wireshark lte-rrc dissector (GSMTAP, scat.pcap)" },
+]
+
+[[field_map]]
+parser_field = "sib1_cell_id"
+quantity = "lte_sib1_broadcast_cell_identity"
+status = "verified"
+sources = [
+    { kind = "other", value = "SCAT GSMTAP oracle (LTE RRC SCell Info)" },
+    { kind = "other", value = "Wireshark lte-rrc dissector (GSMTAP, scat.pcap)" },
+]
+
+[[field_map]]
+parser_field = "sib2_access.number_of_ra_preambles"
+quantity = "lte_sib2_number_of_ra_preambles"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+]
+
+[[field_map]]
+parser_field = "sib2_access.prach_root_sequence_index"
+quantity = "lte_sib2_prach_root_sequence_index"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+]
+
+[[field_map]]
+parser_field = "sib3_resel"
+quantity = "lte_sib3_cell_reselection_params"
+status = "verified"
+sources = [
+    { kind = "other", value = "SCAT GSMTAP oracle (lte-rrc SIB3)" },
+    { kind = "other", value = "Wireshark lte-rrc dissector (GSMTAP, scat.pcap)" },
+]
+
+[[field_map]]
+parser_field = "sib2_access.reference_signal_power_dbm"
+quantity = "lte_sib2_reference_signal_power_dbm"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+]
+
+[[field_map]]
+parser_field = "sib2_access.additional_spectrum_emission"
+quantity = "lte_sib2_additional_spectrum_emission"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+]
+
+[[field_map]]
+parser_field = "sib2_access.t300_ms"
+quantity = "lte_sib2_ue_timer_t300_ms"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+]
+
+[[field_map]]
+parser_field = "sib2_access.time_alignment_timer"
+quantity = "lte_sib2_time_alignment_timer"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+]
+
+[[field_map]]
+parser_field = "sib4_neighbors"
+quantity = "lte_sib4_intra_freq_neighbor_cells"
+status = "verified"
+sources = [
+    { kind = "other", value = "SCAT GSMTAP oracle (lte-rrc SIB4)" },
+    { kind = "other", value = "Wireshark lte-rrc dissector (GSMTAP, scat.pcap)" },
+]
+
+[[field_map]]
+parser_field = "sib5_inter_freq.carriers"
+quantity = "lte_sib5_inter_freq_carrier_earfcns"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+    { kind = "other", value = "0xB0C0 v27 header (pci, earfcn) serving identity" },
+]
+
+[[field_map]]
+parser_field = "sib5_inter_freq.carrier_info[].neighbors[].pci"
+quantity = "lte_sib5_inter_freq_neighbor_pcis"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+    { kind = "other", value = "0xB0C0 v27 header (pci, earfcn) serving identity" },
+]
+
+[[field_map]]
+parser_field = "sib5_inter_freq.carrier_info[].cell_resel_priority"
+quantity = "lte_sib5_inter_freq_resel_priority"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+]
+
+[[field_map]]
+parser_field = "sib5_inter_freq.carrier_info[].earfcn_v9e0"
+quantity = "lte_sib5_inter_freq_extended_earfcn"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark lte-rrc.bcch.dl.sch dissector" },
+    { kind = "other", value = "0xB0C0 v27 header (pci, earfcn) serving identity" },
+]
+
+[[field_map]]
+parser_field = "sib16_time"
+quantity = "lte_sib16_network_utc_time"
+
+[[field_map.sources]]
+kind = "other"
+value = "pycrate EUTRA-RRC SystemInformationBlockType16-r11 (offline to_uper oracle)"
+
+[[field_map]]
+parser_field = "sib7_neighbors.freq_groups[]"
+quantity = "lte_sib7_geran_neighbor_arfcns"
+
+[[field_map.sources]]
+kind = "other"
+value = "pycrate SystemInformationBlockType7 UPER encoder"
+
+[[field_map.sources]]
+kind = "other"
+value = "tshark lte-rrc.bcch.dl.sch dissector"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "camp idle on an LTE cell broadcasting GERAN inter-RAT reselection (2G-live operator/region)"
+
+[[field_map]]
+parser_field = "sib8_cdma_time.utc_iso"
+quantity = "cdma2000_system_time_utc"
+status = "verified"
+sources = [
+    { kind = "other", value = "DIAG 0x1477 GNSS measurement report (gps_week + gps_milliseconds)" },
+    { kind = "nmea", value = "$GxRMC field 1+9 (UTC time + date)" },
+]
+
+[[field_map]]
+parser_field = "sib_mask"
+quantity = "lte_rrc_sib_presence_bitmap"
+status = "verified"
+
+[[field_map.sources]]
+kind = "other"
+value = "SCAT GSMTAP oracle (lte-rrc SIB decode)"
+
+[[field_map.sources]]
+kind = "other"
+value = "Wireshark/tshark lte-rrc dissector (GSMTAP)"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "camp idle on any LTE cell (SIBs ride BCCH-DL-SCH); the header sib_mask is present on every SI record"
+
+[[field_map]]
+parser_field = "channel_type"
+quantity = "lte_rrc_logical_channel"
+status = "verified"
+
+[[field_map.sources]]
+kind = "other"
+value = "qcsuper GSMTAP byte-join (RRC PDU identity)"
+
+[[field_map.sources]]
+kind = "other"
+value = "Wireshark/tshark lte-rrc dissector (GSMTAP)"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "camp idle for BCCH-DL-SCH/PCCH, then drive through an LTE attach + connected data for DL/UL-DCCH + CCCH"
+
+[[field_map]]
+parser_field = "radio_bearer_id"
+quantity = "lte_rrc_radio_bearer_id"
+status = "partial"
+sources = [
+    { kind = "other", value = "0xB0C0 channel_name partition + nas_tunneled" },
+    { kind = "other", value = "Techplayon QXDM field reference (radio_bearer_id)" },
+]

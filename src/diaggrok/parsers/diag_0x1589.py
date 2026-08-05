@@ -28,8 +28,36 @@ LG290P oracle (`eg18na gnss_comparison_lg290p_2026-04-11`) — that
 capture's modem NMEA is GPS-only (498 $GPGSV, zero GL/GA/GB, 15 GPS SV
 in view), so triplet (03,02,05) is neither modem-side multi-constellation
 SV-in-view counts nor matches the single-constellation magnitude. Closure
-stays gated on a multi-GNSS-NMEA-armed correlation capture (F3 already
-verified-negative across the whole 0x1589 corpus).
+of the *triplet* stays gated on a multi-GNSS-NMEA-armed correlation capture.
+
+## 2026-07-17 <redacted-ref> (F3-directed) — SUBSYSTEM CONFIRMED = GNSS SAP-SDP; IPsec canonical name REFUTED
+
+The earlier "F3 verified-negative across the whole 0x1589 corpus" claim was
+STALE — newer captures bear 0x1589 *with* full-rate decodable F3 (SimCom
+2026-06-12 wardrives; EG18-NA `edge_cases_2026-07-07`). Extracting F3 from
+`01_cold_gnss_start` (pure GNSS engine start, no reboot, no NAS re-search) and
+inspecting the co-temporal window of the lone 0x1589 emission (ts64
+3284755660642) shows the record fires in lockstep (dt≈-866 ticks) with the
+GNSS **SAP-SDP** state machine — grounding the alias, refuting the canonical:
+
+  - `sdp_core.c:3616  event 9 for state 3` / `sdp_core.c:3310  valid event 9 …`
+  - `lbs_sdp_crd.c:467  CRD : Reset` · `lbs_sdp_ssd.c:717  SDP : SSD initialized`
+  - `sdp_core.c:6486  SDP: Vehicle sensors state machine event = 3 state = 1`
+  - `mc_peak.c:5627  SV … updating as tentative` · `loc_task.c:308  Loc enabled 1`
+  - ZERO IPsec/IKE/NAT F3 anywhere in the window.
+
+`sdp_core.c` / `lbs_sdp_*` is the **SAP-SDP** (Sensor-Assisted Positioning /
+Sensor Data Processor) subsystem — a direct match to the alias
+`LOG_GNSS_SAP_SDP_EVENTS`. Emission-context corroborates: on the same EG18-NA
+run, 0x1589 fires in the 3 GNSS scenarios (cold/warm GNSS start, boot+gnss) and
+is ABSENT from the 3 NAS scenarios (lte_airplane, sim_power, manual_plmn_scan).
+So the higher-precedence community canonical `LOG_EVENT_IPSEC_IKE_NAT_DETECTED`
+is **refuted by F3** and demoted; the operative subsystem is GNSS SAP-SDP.
+
+New interpretation lead (supersedes the refuted SV-count reading): the
+`sdp_core.c` prints are (event, state) pairs, so the `triplet` [13:16] and/or
+`chunk_3_10` may encode SDP event/state/substate rather than constellation SV
+counts — to be tested against the co-temporal `sdp_core.c` event/state values.
 
 Tracked under the size-unknown stub roll-up #N.
 
@@ -72,8 +100,11 @@ class Diag0x1589:
       [16]     reserved_16     corpus-wide 0x00
 
     ``variant`` is derived: "A" when vendor_tag==0x00 else "B". Triplet and
-    chunk_3_10 field semantics are undecoded (no decodable F3 in any
-    bearing capture — verified-negative; closure is NMEA-correlation-gated).
+    chunk_3_10 field semantics are undecoded. Subsystem is F3-confirmed GNSS
+    SAP-SDP (co-temporal `sdp_core.c` event/state prints — 2026-07-17); F3
+    does not directly label the [13:16] triplet, so its value closure is still
+    correlation-gated, now against the SDP event/state machine (candidate)
+    rather than the refuted per-constellation SV-count reading.
     """
     log_time: int
     version: int
@@ -120,26 +151,28 @@ class Diag0x1589:
 # actually test it. RM520N-GL emits the code (1 record, full-reboot edge case,
 # RM520NGLAAR03A03M4G); per the per-modem rule it gets its own Quectel-AT recipe.
 #
-# ⚠️ SUBSYSTEM NOT CONFIRMED. The DIAG_LOG_INDEX names disagree: canonical
-# (community, qxdm 3.12) is LOG_EVENT_IPSEC_IKE_NAT_DETECTED (an IPsec/IKE
-# event — NOT GNSS), while the alias (zukgit 2025) is LOG_GNSS_SAP_SDP_EVENTS
-# (GNSS SUPL/SDP). The parser/issue consensus treats it as GNSS (legacy
-# GnssStatus1589, GNSS-shaped triplet, emission in boot+gnss / warm-restart
-# captures), but a 17-byte fixed record at version 0x00 with corpus-wide markers
-# is equally consistent with an event record. The recipe's FIRST job is therefore
-# to ground the SUBSYSTEM itself by emission-context: does a v0 0x1589 fire when
-# the GNSS engine starts (→ GNSS) or only around an IPsec/IKE/NAT transition
-# (→ the canonical name)? Until that is settled, every field is a hypothesis.
+# ✅ SUBSYSTEM CONFIRMED = GNSS SAP-SDP (2026-07-17, F3-grounded). The
+# DIAG_LOG_INDEX names disagreed: canonical (community, qxdm 3.12) was
+# LOG_EVENT_IPSEC_IKE_NAT_DETECTED (IPsec/IKE — NOT GNSS), alias (zukgit 2025)
+# LOG_GNSS_SAP_SDP_EVENTS (GNSS Sensor-Assisted Positioning / SDP). F3 settled
+# it: co-temporal with a 0x1589 emission in the EG18-NA `01_cold_gnss_start`
+# capture, the firmware prints `sdp_core.c` "event N for state M" + `lbs_sdp_*`
+# SDP init/reset (SAP-SDP state machine), with SV-tracking / Loc-enable GNSS
+# context and ZERO IPsec/IKE/NAT. Emission-context agrees (fires in GNSS
+# scenarios, absent in lte_airplane/sim_power/manual_plmn_scan). So the IPsec
+# canonical name is REFUTED/demoted; the alias LOG_GNSS_SAP_SDP_EVENTS holds.
+# The recipe's former step-0 "ground the subsystem" is now RESOLVED (GNSS
+# SAP-SDP); remaining hypotheses are the per-field values (triplet/chunk).
 
 @register(
     0x1589, domain="gnss",
     name="0x1589",
-    description="0x1589 — structural-header stub (legacy GnssStatus1589, EG18-NA SDX20 V2 remaining corpus)",
-    version=2,
+    description="0x1589 — GNSS SAP-SDP event record (F3-confirmed), structural-header decode (17 B, EG18-NA SDX20 V2 remaining corpus)",
+    version=3,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
-    source_detail="EG18-NA SDX20 V2 remaining `_simple_parser` corpus; promoted from stub per #N tier-3 batch 30. v2 (2026-06-26, #N): added an RM520N-GL (SDX62) GroundTruth recipe — subsystem unconfirmed (GNSS alias vs IPsec-IKE canonical name), triplet SV-count hypothesis was refuted on a GPS-only oracle, so the recipe grounds subsystem-by-emission-context first and tests the triplet only against a MULTI-GNSS fix (hw_run_performed=False, fields hypothesis).",
+    source_detail="EG18-NA SDX20 V2 remaining `_simple_parser` corpus; promoted from stub per #N tier-3 batch 30. v2 (2026-06-26, #N): added an RM520N-GL (SDX62) GroundTruth recipe. v3 (2026-07-17, #N, <redacted-ref> F3-directed): SUBSYSTEM CONFIRMED = GNSS SAP-SDP by co-temporal F3 (sdp_core.c 'event N for state M' + lbs_sdp_* SDP init, zero IPsec/IKE/NAT) in EG18-NA 01_cold_gnss_start; the higher-precedence canonical name LOG_EVENT_IPSEC_IKE_NAT_DETECTED is refuted/demoted, the alias LOG_GNSS_SAP_SDP_EVENTS holds. The stale 'F3 verified-negative' claim is scrubbed (newer captures carry decodable F3). Triplet [13:16] value semantics remain a hypothesis (F3 does not label the bytes directly).",
     source_url="",
     issues=(),
     primary_issue=None,

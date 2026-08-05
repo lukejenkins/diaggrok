@@ -160,6 +160,7 @@ class Diag0x1480:
     clock_time_unc: float
     clock_freq_bias: float
     clock_freq_unc: float
+    sv_count: int                # uint8; raw on-wire per-SV slot count (byte[28])
     svs: list[GloSv] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -175,6 +176,13 @@ class Diag0x1480:
             'clock_time_unc': self.clock_time_unc,
             'clock_freq_bias': self.clock_freq_bias,
             'clock_freq_unc': self.clock_freq_unc,
+            # Raw slot count the modem reported this epoch. NOTE this is the
+            # on-wire count, which may EXCEED len(svs): the parser drops all-zero
+            # filler slots (sv_id==0 && observation_state==0), so the filtered
+            # `svs` list alone cannot recover how many slots were on the wire.
+            # Exposed by the #N kaitai re-audit — formerly read only as a loop
+            # bound and dropped before reaching the dataclass.
+            'sv_count': self.sv_count,
             'svs': [sv.to_dict() for sv in self.svs],
         }
 
@@ -194,18 +202,19 @@ class Diag0x1480:
 @register(LOG_GNSS_GLONASS_MEASUREMENT_REPORT, domain="gnss",
     name="0x1480",
     description="Per-SV carrier noise, azimuth, elevation with GLONASS frequency slot index; validated on MDM9207, SDX20 V2, SDX55, SDX20 (LM960)",
-    version=6,
+    version=7,
     # v5 <redacted-ref> 2026-06-25 LM960A18 SDX20 HW+F3 run — re-keyed sibling, glonass_days/milliseconds/time_bias VERIFIED vs F3 Glo_MeasBlk (1st SDX20 obs); per-SV partial (GLONASS unusable, GloSvMask=0)
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
-    source_detail="Clean-room (#N): GLONASS measurement struct re-confirmed from our own GNSS DIAG capture corpus — cross-chipset validation against EG18-NA SDX20 V2 and FN980m SDX55 2026-04-10 LG290P-referenced captures, not from third-party decoder source. v3 (2026-06-11, #N): first per-modem HW validation (#N) — Quectel RM520N-GL @ RM520NGLAAR03A03M4G (SDX62, <redacted-ref>, host t480, live 3D fix): svs[].sv_id VERIFIED (decoded set contains all 8 GSV GLONASS PRNs) with the CHIPSET FINDING that SDX62 emits sv_id ALREADY in NMEA numbering 65-96 (no +64, unlike the SDX20-class); cno_db/az_deg/el_deg PARTIAL (plausible dB-Hz scale, no per-PRN join this session)",
+    source_detail="Clean-room (#N): GLONASS measurement struct re-confirmed from our own GNSS DIAG capture corpus — cross-chipset validation against EG18-NA SDX20 V2 and FN980m SDX55 2026-04-10 LG290P-referenced captures, not from third-party decoder source. v3 (2026-06-11, #N): first per-modem HW validation (#N) — Quectel RM520N-GL @ RM520NGLAAR03A03M4G (SDX62, <redacted-ref>, host <redacted-host>, live 3D fix): svs[].sv_id VERIFIED (decoded set contains all 8 GSV GLONASS PRNs) with the CHIPSET FINDING that SDX62 emits sv_id ALREADY in NMEA numbering 65-96 (no +64, unlike the SDX20-class); cno_db/az_deg/el_deg PARTIAL (plausible dB-Hz scale, no per-PRN join this session)",
     # Header: version, f_count, glonass_cycle_number, glonass_days,
     # milliseconds, time_bias, clock_time_unc, clock_freq_bias,
-    # clock_freq_unc. Body: svs[] (GloSv dataclass — all 27 SV fields
-    # decoded). 10 top-level named fields exposed.
-    fields_identified=10,
-    fields_parsed=10,
+    # clock_freq_unc, sv_count (raw on-wire slot count, exposed #N kaitai
+    # re-audit — all 10 header fields now surfaced). Body: svs[] (GloSv
+    # dataclass — all 27 SV fields decoded). 11 top-level named fields exposed.
+    fields_identified=11,
+    fields_parsed=11,
     issues=(),
     primary_issue=None,
     supported_versions=[0x00],
@@ -342,5 +351,6 @@ def parse_0x1480(log_time: int, data: bytes) -> Diag0x1480 | None:
         clock_time_unc=hdr['clock_time_unc'],
         clock_freq_bias=hdr['clock_freq_bias'],
         clock_freq_unc=hdr['clock_freq_unc'],
+        sv_count=sv_count,
         svs=svs,
     )

@@ -30,14 +30,24 @@ v3 request + v4 response, 100 bytes total):
         [4:6]    u16  num_cells
         [6:8]    u16  reserved
 
-        Per-cell record (52 bytes each — same layout as 0xB192):
-            [0:2]    u16  PCI
-            [4:8]    u32  timing field 1
-            [8:12]   u32  timing field 2 (TX/RX delta)
-            [12:16]  u32  timing field 1 mirror (Rx pair)
-            [24:26]  u16  RSRP raw (RSRP_dBm = -raw / 10.0)
-            [36:38]  u16  RSRQ Rx0 raw (dB = (raw-60)/2.0)
-            [38:40]  u16  RSRQ Rx1 raw (dB = (raw-60)/2.0)
+        Per-cell record (52 bytes each — byte-identical to 0xB192, fully
+        RE'd in #N; this parser brought to parity in #N):
+            [0:4]    u32  PCI (low 9 bits)
+            [4:8]    u32  energy0  (per-Rx integrated energy ~4-5e6)
+            [8:12]   u32  energy1  (per-Rx integrated energy; RSRP-tracking, #N)
+            [12:16]  u32  energy2  (integrated energy; RSRP-tracking, #N)
+            [16:20]  u32  energy_wide0 (wide-scale accumulator ~1.5e8)
+            [20:24]  u32  energy_wide1 (wide-scale accumulator ~1.9e8)
+            [24:26]  u16  meas_index (0..~1166 counter — the byte the pre-#N
+                          parser mis-decoded as "RSRP" via -raw/10; #N v6 REFUTED)
+            [28:32]  u32  energy_filt (filtered energy ~1.2e6)
+            [36:38]  u16  aux0 (unresolved; was mis-read as "RSRQ Rx0")
+            [38:40]  u16  aux1 (unresolved; was mis-read as "RSRQ Rx1")
+            [40:44]  u32  timing (request-echoed; +40 == +44 always)
+
+        No calibrated dBm exists in this packet (#N): the energy words are
+        AGC-flattened, so rsrp/rsrq_rx0/rsrq_rx1 are None. pci/earfcn are the
+        genuinely-verified fields.
 
 Reverse-engineered from EG25-G OCPU 30.201 DLF capture
 (<redacted-pii>,
@@ -99,12 +109,42 @@ _CARRIER_HEADER_SIZE = 8
 
 @dataclass
 class LteMl1ConnectedNeighborEntry:
-    """A single connected-mode neighbor cell measurement."""
+    """A single connected-mode neighbour cell measurement (response sp id=31).
+
+    Byte-identical per-cell layout to 0xB192's idle-mode ``LteMl1NeighborCellEntry``
+    (the docstring at lines 46-48 has always said so; before #N this parser only
+    read 4 of the 13 words and mislabelled two of them). Brought to 0xB192 parity
+    (#N, 2026-07-19): all per-cell energy/timing words are exposed as raw
+    integers, and the signal fields are ``None``.
+
+    Signal semantics (#N, re-confirmed on 0xB192's byte-identical cell): the
+    per-cell quantities are **AGC-flattened integrated-energy accumulators, NOT
+    calibrated dBm**, so ``rsrp`` / ``rsrq_rx0`` / ``rsrq_rx1`` are ``None`` — no
+    capture-stable energy->dBm law exists (#N v6 REFUTED the old -raw/10 decode:
+    it read cell_offset +24, which #N proved is ``meas_index`` (a 0..~1166
+    counter), not RSRP, and emitted -32..-58 dBm where QENG truth was -104..-119).
+    The raw words ARE exposed so the measurement data is 100% extracted; a consumer
+    holding a per-band reference power can convert them. ``pci`` / ``earfcn`` are
+    the genuinely-verified fields (multi-value QENG/QMI containment, cross-modem).
+    """
     pci: int
     earfcn: int
-    rsrp: float       # dBm (combined Rx)
-    rsrq_rx0: float   # dB
-    rsrq_rx1: float   # dB
+    # API-compat signal fields — None: no calibrated dBm in the packet (#N/#N).
+    rsrp: float | None
+    rsrq_rx0: float | None
+    rsrq_rx1: float | None
+    # Raw per-cell measurement words (usable integers, byte-identical to 0xB192, #N):
+    energy0: int         # +4  u32 per-Rx integrated energy (~4-5e6)
+    energy1: int         # +8  u32 per-Rx integrated energy (~4-5e6; RSRP-tracking, #N)
+    energy2: int         # +12 u32 integrated energy (~4-5e6; RSRP-tracking, #N)
+    energy_wide0: int    # +16 u32 wide-scale energy accumulator (~1.5e8)
+    energy_wide1: int    # +20 u32 wide-scale energy accumulator (~1.9e8)
+    meas_index: int      # +24 u16 measurement index/counter (0..~1166; the byte
+                         #        the pre-#N parser mis-decoded as RSRP via -raw/10)
+    energy_filt: int     # +28 u32 filtered energy (~1.2e6)
+    aux0: int            # +36 u16 small field (semantics unresolved; was mis-read as rsrq_rx0)
+    aux1: int            # +38 u16 small field (semantics unresolved; was mis-read as rsrq_rx1)
+    timing: int          # +40 u32 request-echoed timing (+40 == +44 always)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -113,6 +153,16 @@ class LteMl1ConnectedNeighborEntry:
             'rsrp': self.rsrp,
             'rsrq_rx0': self.rsrq_rx0,
             'rsrq_rx1': self.rsrq_rx1,
+            'energy0': self.energy0,
+            'energy1': self.energy1,
+            'energy2': self.energy2,
+            'energy_wide0': self.energy_wide0,
+            'energy_wide1': self.energy_wide1,
+            'meas_index': self.meas_index,
+            'energy_filt': self.energy_filt,
+            'aux0': self.aux0,
+            'aux1': self.aux1,
+            'timing': self.timing,
         }
 
 
@@ -146,7 +196,7 @@ class Diag0xB195:
 
 @register(LOG_LTE_ML1_CONNECTED_NEIGHBOR_MEAS, domain="lte-signal",
     name="0xB195",
-    description="Connected-mode neighbor PCI, EARFCN, RSRP, RSRQ from 0xB195 sp31v4/v40 — all variants",
+    description="Connected-mode neighbor cell meas 0xB195 — brought to 0xB192 parity (#N): version-dispatched response sp31 {4,40}, full 52B cell record (PCI/EARFCN + per-Rx energy/timing words); rsrp/rsrq None (energy-not-dBm, #N/#N v6)",
     version=6,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
@@ -167,7 +217,10 @@ class Diag0xB195:
     primary_issue=None,
     # Header fields: outer version, earfcn, num_cells (3) + per-cell:
     # pci, earfcn, rsrp, rsrq_rx0, rsrq_rx1 (5) — total 8.
-    fields_identified=8, fields_parsed=8,
+    # Header: version, earfcn, num_cells (3) + per-cell pci + 11 raw energy/
+    # timing words (12) = 15 parsed; +3 identified-but-None signal fields
+    # (rsrp, rsrq_rx0, rsrq_rx1 — energy-not-dBm, #N) = 18 identified.
+    fields_identified=18, fields_parsed=15,
     field_invariants={
         "version": {"enum": [0x01]},
     },
@@ -179,11 +232,13 @@ def parse_0xb195(
 ) -> Diag0xB195 | None:
     """Parse 0xB195 -- LTE ML1 Connected-Mode Neighbor Cell Measurement.
 
-    Walks subpackets to find the response subpacket (id=31, ver=4),
-    extracts per-cell PCI, EARFCN, RSRP, and RSRQ Rx0/Rx1.
+    Walks subpackets to find the response subpacket (id=31), extracts per-cell
+    PCI, EARFCN, and the raw per-Rx energy/timing words (byte-identical to
+    0xB192). Both the v4 (MDM9207/EG25-G) and v40 (SDX20/SDX55) response
+    variants are handled — the cell layout is version-independent; only the
+    num_cells field location differs.
 
-    Returns ``None`` for malformed payloads or for the v40 LV55 variant
-    (which uses a different layout and is not yet RE'd).
+    Returns ``None`` for malformed payloads.
     """
     if len(data) < 8:
         return None
@@ -252,32 +307,30 @@ def _parse_response_subpacket(
         if cell_offset + _CELL_RECORD_SIZE > len(sp):
             break
 
-        pci = unpack_from('<H', sp, cell_offset)[0]
-        if pci > 503:
-            continue
+        co = cell_offset
+        # pci: low 9 bits of the u32 at cell +0 (byte-identical to 0xB192).
+        pci = unpack_from('<I', sp, co)[0] & 0x1FF
 
-        # RSRP: u16 at cell offset 24, scaled as -raw/10.0 dBm
-        rsrp_raw = unpack_from('<H', sp, cell_offset + 24)[0]
-        rsrp = -rsrp_raw / 10.0
-        if not (-140.0 <= rsrp <= -30.0):
-            continue
-
-        # RSRQ Rx0/Rx1: u16 at cell offsets 36/38, scaled as (raw-60)/2.0 dB
-        rsrq_rx0_raw = unpack_from('<H', sp, cell_offset + 36)[0]
-        rsrq_rx1_raw = unpack_from('<H', sp, cell_offset + 38)[0]
-        rsrq_rx0 = (rsrq_rx0_raw - 60) / 2.0
-        rsrq_rx1 = (rsrq_rx1_raw - 60) / 2.0
-        # RSRQ valid range -34..+2.5 dB per 3GPP TS 36.133 §9.1.7
-        if not (-34.0 <= rsrq_rx0 <= 2.5):
-            continue
-        if not (-34.0 <= rsrq_rx1 <= 2.5):
-            continue
-
+        # rsrp / rsrq_rx0 / rsrq_rx1 are None: #N proved the per-cell words are
+        # AGC-flattened linear-energy accumulators with no capture-stable energy->
+        # dBm law, and #N v6 REFUTED the old decode (it read +24 = meas_index, a
+        # counter, as RSRP → -32..-58 dBm vs QENG truth -104..-119). The raw
+        # energy/timing words are exposed below so the measurement data is 100%
+        # extracted; a consumer holding a per-band reference power can convert them.
+        # All offsets are byte-identical to 0xB192's response cell (#N/#N).
         entries.append(LteMl1ConnectedNeighborEntry(
             pci=pci, earfcn=earfcn,
-            rsrp=round(rsrp, 1),
-            rsrq_rx0=round(rsrq_rx0, 1),
-            rsrq_rx1=round(rsrq_rx1, 1),
+            rsrp=None, rsrq_rx0=None, rsrq_rx1=None,
+            energy0=unpack_from('<I', sp, co + 4)[0],
+            energy1=unpack_from('<I', sp, co + 8)[0],
+            energy2=unpack_from('<I', sp, co + 12)[0],
+            energy_wide0=unpack_from('<I', sp, co + 16)[0],
+            energy_wide1=unpack_from('<I', sp, co + 20)[0],
+            meas_index=unpack_from('<H', sp, co + 24)[0],
+            energy_filt=unpack_from('<I', sp, co + 28)[0],
+            aux0=unpack_from('<H', sp, co + 36)[0],
+            aux1=unpack_from('<H', sp, co + 38)[0],
+            timing=unpack_from('<I', sp, co + 40)[0],
         ))
 
     return Diag0xB195(

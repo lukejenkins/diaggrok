@@ -1,0 +1,42 @@
+version = 15
+cond = "idle"
+modem_make = "Fibocom"
+modem_model = "FM101-GL"
+modem_firmware = "19500.0000.00.01.01.52_6006.0000.006.000.035_A63"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+GTCCINFO?" },
+    { kind = "other", value = "DIAG 0xB193 / 0x18AB pci (co-captured)" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+    { kind = "other", value = "DIAG 0xB193 pci (co-captured serving-cell meas)" },
+]
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+
+[[field_map.sources]]
+kind = "f3"
+value = "F3 mc_msgr.c:722 'RF Device 2: LTE PRX Band 168, Chan 66536, Freq 2120000 Hz'"
+
+[[field_map.sources]]
+kind = "other"
+value = "DIAG 0xB193 earfcn (co-captured)"
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetServingSystem"
+
+[[field_map.sources]]
+kind = "mbim"
+value = "MBIM_CID_REGISTER_STATE"
+
+[[field_map.sources]]
+kind = "other"
+value = "DIAG 0xB193 earfcn (co-captured serving-cell meas)"

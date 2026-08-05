@@ -51,10 +51,58 @@ is exclusively RF-measurement / FTM: `rfmeas_mdsp.c`, `rfcommon_core.c`
 `rflm_lte_rx.c` — **zero** GNSS source files in-window. This aligns with the
 canonical name `RESERVED` (not a GNSS name) and the `codes.py` "RF state flag"
 label, and casts doubt on the issue-title "GNSS State Flag" guess for the
-modern form. The SDX-era large form is undecoded; struct RE is the productive
-next step (tracked on #N). Note: 4 B records with byte0=0x00 in
-survey/wardrive captures are the size-4 HDLC tail-fragment residue class
-(cf. #N 0x192A precedent), distinct from BOTH real forms.
+modern form. Note: 4 B records with byte0=0x00 in survey/wardrive captures are
+the size-4 HDLC tail-fragment residue class (cf. #N 0x192A precedent),
+distinct from BOTH real forms.
+
+### Header structure RE (#N, 2026-07-14) — the layout itself is versioned
+
+The header is **re-laid-out across chipset generations** — this is a versioned
+RF record, not one format. Per-version field maps (corpus-attested; LE u32):
+
+    v05 (SDX55) — RXM-G1/LV55/M2000/T99W175, gate byte1=0x0b, byte2:4=0x0000
+      [0]     0x05        version (chipset-gen)
+      [1]     0x0b        subtype
+      [2:4]   0x0000      reserved
+      [4:8]   0x0000000a  INVARIANT constant = 10  (record-type / subsystem id)
+      [8:12]  ~0x010d94c6 config/session tag — near-constant within a capture,
+                          steps rarely (+0x40); NOT the record timebase
+                          (log_time is separate). High half 0x010d invariant.
+      [12]    0x00
+      [13]    ∈{0x0e,0x0f,0x01}   per-record small state/subtype
+      [14]    ∈{0x01,0x02,0x03}   per-record small count
+      … then a nested body (see below); trailer ends ~`03 07 XX 00`.
+
+    v03 (SDX20) — LM960, gate byte1=0x0f, byte2:4=0x0000  — DIFFERENT layout
+      [0:4]   03 0f 00 00
+      [4:8]   per-record nonce/hash (high entropy, varies every record)
+      [8:12]  MONOTONIC counter — +15 per record (0x1c027→0x1c036→0x1c045…)
+      [12:16] 0x00000004  INVARIANT constant = 4  (v05's "10" analog, moved)
+      [16:20] ~0x00c994c0 signature (shares the middle `94` byte with v05's tag)
+
+    v06 (SDX65) — EM9291, gate byte1=0x0b, byte2:4=0x0000 (layout ~v05; thin sample)
+
+The small invariant constant (10 @ v05[4], 4 @ v03[12]) and the `…94…` signature
+exist in both gens but at **different offsets** — same fields, relocated. Both
+prove the record is genuinely structured (not mis-framing).
+
+### Body: nested, not a flat array — decode deferred (thin per-version samples)
+
+Fixed-stride array detection on the 3604 B v05 body scores < 0.45 for every
+(header-len, stride) pair → the body is **nested / TLV-ish** (plausibly
+per-antenna → per-carrier → per-RB, consistent with the `rfcommon_core.c`
+"RB thres(5/10/15/20/40)" + `rfmeas_mdsp.c` co-temporal F3), not `count×stride`.
+No single header field predicts total size.
+
+**Decode is deliberately NOT attempted here.** Per the size-invariance core
+memory and the 0x1855/0x1856 precedent, a structured body is only decoded when
+confidently understood; here the per-version header layouts diverge and v03/v06
+are each attested by a single firmware, so speculative body decode would risk
+silent structured-garbage. The `state_word` gate keeps rejecting the large form
+(safe: no mis-parse) until a per-version struct definition is pinned. The real
+blocker is the **struct definition**, not capture availability — the large form
+is already richly attested (697 records / 72 captures / 3 chipset gens), so the
+`needs-capture` label may be stale for this half of the code.
 
 Split from lte_misc.py per #N tier-3 batch 11.
 

@@ -26,7 +26,8 @@ sentence-length field but is otherwise identical, including a fixed
     Byte  0:        u8   version = 0x02
     Bytes 1..4:     u32 LE  client_id
     Bytes 5..6:     u16 LE  nmea_bitmap
-    Byte  7:        u8   fix_quality (flag, 0 or 1) — added in v2
+    Byte  7:        u8   fix_quality (NMEA fix-quality enum 0..N: 0=invalid,
+                          1=GPS, 2=DGPS, 4=RTK, 5=float-RTK; RXM-G1 emits 4) — added in v2
     Byte  8:        u8   reserved (zero) — added in v2
     Byte  9:        u8   nmea_length
     Bytes 10..209:  200 B  NMEA sentence (null-terminated ASCII + padding)
@@ -586,6 +587,7 @@ class Diag0x1384:
             'nmea_sentence': self.nmea_sentence,
             'nmea_bitmap': self.nmea_bitmap,
             'fix_quality': self.fix_quality,
+            'nmea_length': self.nmea_length,
         }
         if self.parsed is not None:
             d['parsed'] = self.parsed.to_dict()
@@ -612,7 +614,7 @@ class Diag0x1384:
     0x1384, domain="gnss",
     name="0x1384",
     description="NMEA sentences from GNSS engine via DIAG — includes Galileo/BeiDou/SBAS types missing from AT NMEA port (#N)",
-    version=8,
+    version=9,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -635,6 +637,31 @@ class Diag0x1384:
     # 14 chipset families (corpus walk 2026-05-07).
     wigle_direct=True,
     wigle_roles=("position", "gnss-quality", "timing-anchor:periodic"),
+    # Timebase capability (spec 2026-06-24, evidence #N cadence-sweep). Unlike
+    # the GNSS *measurement-report* time family (0x1477/0x1478/0x147B/0x1480/
+    # 0x1756/0x14DE, which carry a binary GPS/GLONASS/BDT week+TOW header), 0x1384
+    # carries the GNSS-derived UTC as an ASCII NMEA field — RMC (utc_time + date),
+    # GGA/GNS/GLL (utc_time) — decoded self-contained (no qdb; the code IS its own
+    # ground truth, provenance = SELF-CONTAINED). So it is BOTH:
+    #   * absolute-time — RMC gives a full real-world UTC datetime; the decoded UTC
+    #     matches each capture's own wall-clock start + a plausible GNSS TTFF
+    #     (RM500Q-AE SDX55 2026-06-12_213517 -> 21:35:39 vs dir 21:35:17, +22 s;
+    #     EM9190 SDX55 2026-04-22 -> 15:08:31; SIM8202G-M2 SDX55 -> 21:39:03),
+    #     monotonic across the capture.
+    #   * ts-anchor — pairing each record's DIAG ts64 (log_time) with its NMEA
+    #     UTC-seconds is a clean linear ts64->wall map, chipset-invariant slope
+    #     ~52428.8 ts64/ms (the known ts64 rate), across 3 independent SDX55
+    #     vendors: Quectel RM500Q-AE R2=1.00000000 slope 52428.63 resid 0.9 ms
+    #     (n=2782), Sierra EM9190 R2=1.00000000 slope 52428.89 resid 1.7 ms
+    #     (n=6277), SIMCom SIM8202G-M2 R2=0.99999998 slope 52428.60 resid 22.2 ms
+    #     (n=3226). The larger SIMCom residual is NMEA-vs-DIAG-stamp jitter (cf.
+    #     0x147B's ~70 ms), well within the clean-anchor bar.
+    # Scope: 0x1384 is the SDX55-class GNSS-NMEA-report code; older Telit SDX20/
+    # MDM9x07 parts emit their GNSS NMEA under 0x1389/other codes, so the cross-
+    # chipset evidence here is cross-VENDOR on SDX55 (3 firmwares) rather than
+    # cross-generation. UTC resolution is NMEA's 0.01 s / ~1 Hz, so the anchor is
+    # ~10 ms-grained (vs the measurement-report siblings' sub-ms) — still R2~=1.0.
+    timebase_roles=("absolute-time", "ts-anchor"),
     field_invariants={
         # Validated against 422,364 records / 143 captures / 14 chipset
         # families (corpus walk 2026-05-07, #N follow-up).

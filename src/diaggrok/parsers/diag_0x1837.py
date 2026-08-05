@@ -55,8 +55,8 @@ A second variant — version=2 / 53B — is emitted on Sierra MC7455
 Total v=2 width: 1+4+4+1+8+8+8+8+4+4+3 = 53 bytes.
 
 Cross-corpus verification (#N): 433 v=2 records across 3 MC7455
-captures all decode to lat ≈ 41.215 / lon ≈ -111.936 (Utah / Wasatch
-Front), subtype invariant at 2, version invariant at 2, seq_num strictly
+captures all decode to the lab bench position (a single stationary site,
+consistent across all three), subtype invariant at 2, version invariant at 2, seq_num strictly
 monotonic from 0.
 
 ## Field naming note
@@ -83,11 +83,9 @@ Cross-generation validation per integration tests:
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_EVENTS_DS_GSM_AMR_CMC_TURNAROUND_TIME
         source: qxdm_3_12_714_2017_diag_log_codes (authority: community)
-    aliases:
-        LOG_EVENTS_GSM_DS_AMR_CMC_TURNAROUND_TIME
-            source: qxdm_3_12_714_2017_diag_log_codes
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
+    aliases: (none recorded)
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).
@@ -124,7 +122,7 @@ PAYLOAD_SIZE_V2 = 53
 #    ("not fixed now") until then, which is itself a useful negative control.
 #  * altitude: the parser comment marks altitude_m as *likely WGS-84
 #    ellipsoidal*, but NMEA $GxGGA reports MSL (orthometric) altitude in field 9
-#    with the geoid separation broken out in field 11. On the Wasatch Front the
+#    with the geoid separation broken out in field 11. At the capture site the
 #    geoid undulation is ≈ -18 m, so an ellipsoidal-vs-MSL comparison must add
 #    the separation back before claiming agreement — left as status=hypothesis.
 #  * position_uncertainty_m: no command in the AT/QMI poller allow-list returns

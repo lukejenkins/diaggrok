@@ -1,0 +1,56 @@
+version = 9
+cond = "nr5g"
+modem_make = "SIMCom"
+modem_model = "SIM8202G-M2"
+modem_firmware = "LE13B04SIM8202M44A-M2"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "nr5g_serving_pci"
+sources = [
+    { kind = "at", value = "AT+CPSI?" },
+    { kind = "other", value = "0xB97F NR5G ML1 serving_pci (cross-code)" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "arfcn"
+quantity = "nr5g_arfcn"
+sources = [
+    { kind = "at", value = "AT+CPSI?" },
+    { kind = "other", value = "0xB97F NR5G ML1 nr_arfcn (cross-code)" },
+]
+
+[[field_map]]
+parser_field = "sib1_cell_id"
+quantity = "nr5g_cell_identity_nci"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "at", value = "AT+CPSI?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "sib1_tac"
+quantity = "nr5g_tac"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "at", value = "AT+CPSI?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mcc"
+quantity = "plmn_mcc"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "at", value = "AT+CPSI?" },
+]
+
+[[field_map]]
+parser_field = "sib1_mnc"
+quantity = "plmn_mnc"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "at", value = "AT+CPSI?" },
+]

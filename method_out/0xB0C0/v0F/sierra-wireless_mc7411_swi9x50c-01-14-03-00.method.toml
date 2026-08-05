@@ -1,0 +1,25 @@
+version = 15
+cond = "idle"
+modem_make = "Sierra"
+modem_model = "MC7411"
+modem_firmware = "SWI9X50C_01.14.03.00"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "verified"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (LTE serving PCI)" },
+    { kind = "other", value = "DIAG 0xB116 config_word / 0xB193 pci" },
+    { kind = "other", value = "F3 lte_ml1_common_rssi_ind.c:847" },
+]
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "other", value = "DIAG 0xB193 earfcn" },
+    { kind = "other", value = "F3 lte_ml1_common_rssi_ind.c:767 / rflte_mc_rx.c:9069" },
+    { kind = "at", value = "AT!GSTATUS?" },
+]

@@ -45,9 +45,9 @@ Split from `gnss_demod.py` per #N tier-2 batch 12.
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_GNSS_CC_PERFORMANCE_STATS_C
         source: qualcomm_diag_log_codes_h (authority: vendor_official)
-    aliases:
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
+    aliases: (none recorded)
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).

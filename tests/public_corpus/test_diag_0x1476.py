@@ -31,6 +31,11 @@ _NUM_GLO_SVS = 3          # u8 @ [287]
 _TOTAL_GLO_SVS = 4        # u8 @ [288]
 _NUM_BDS_SVS = 1          # u8 @ [289]
 _TOTAL_BDS_SVS = 2        # u8 @ [290]
+# GLONASS time triplet (#N) — fabricated non-zero, the GLONASS analog of
+# gps_week/gps_tow_ms. Previously unpack-and-discarded; now exposed + diffed.
+_GLO_FOUR_YEAR = 6        # u8  @ [29]
+_GLO_DAYS = 1234          # u16 @ [30:32]
+_GLO_TOW_MS = 43200000    # u32 @ [32:36]
 
 
 def _synthetic_1476() -> bytes:
@@ -83,9 +88,9 @@ def _synthetic_1476() -> bytes:
         0,          # fake_align
         _GPS_WEEK,
         _GPS_TOW_MS,
-        0,          # glo_four_year
-        0,          # glo_days
-        0,          # glo_tow_ms
+        _GLO_FOUR_YEAR,  # glo_four_year
+        _GLO_DAYS,       # glo_days
+        _GLO_TOW_MS,     # glo_tow_ms
         1,          # pos_count
         _LAT_RAD,
         _LON_RAD,
@@ -140,3 +145,12 @@ def test_1476_decodes_synthetic_v1v2_frame():
     assert rec.total_gps_svs == 8
     assert rec.num_glo_svs == 3
     assert rec.num_bds_svs == 1
+    # GLONASS time triplet (#N) — decoded, not discarded.
+    assert rec.glo_four_year == 6
+    assert rec.glo_days == 1234
+    assert rec.glo_tow_ms == 43200000
+    # And surfaced to consumers via to_dict's glonass sub-dict.
+    glonass = rec.to_dict()['svs']['glonass']
+    assert glonass['four_year'] == 6
+    assert glonass['days'] == 1234
+    assert glonass['tow_ms'] == 43200000

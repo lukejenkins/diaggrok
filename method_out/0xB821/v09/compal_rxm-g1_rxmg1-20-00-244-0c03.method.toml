@@ -1,0 +1,56 @@
+version = 9
+cond = "nr5g"
+modem_make = "Compal"
+modem_model = "RXM-G1"
+modem_firmware = "RXMG1.20.00.244_0C03"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "nr5g_serving_pci"
+status = "verified"
+sources = [
+    { kind = "other", value = "0xB97F NR5G ML1 serving_pci (cross-code)" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "arfcn"
+quantity = "nr5g_arfcn"
+status = "verified"
+sources = [
+    { kind = "other", value = "0xB97F NR5G ML1 nr_arfcn (cross-code)" },
+]
+
+[[field_map]]
+parser_field = "sib1_cell_id"
+quantity = "nr5g_cell_identity_nci"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "sib1_tac"
+quantity = "nr5g_tac"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mcc"
+quantity = "plmn_mcc"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+]
+
+[[field_map]]
+parser_field = "sib1_mnc"
+quantity = "plmn_mnc"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+]

@@ -37,26 +37,36 @@ from diaggrok.registry import register
 #     Empirical delta analysis: **+1 per record, 635/635 consecutive
 #     deltas on the two biggest captures** — this is a strict
 #     `+1 mod 256` frame counter, one tick per 0x1899 record.
-#   - `byte[2]` — 5-state status-machine field.  Distribution across the
-#     3380-record corpus: {0: 2601 (77%), 1: 657 (19%), 2: 109 (3%),
-#     3: 9 (0.3%), 4: 4 (0.1%)}.
+#   - `byte[2]` — small-enum engine-internal state field.  Distribution
+#     across the 3380-record corpus: {0: 2601 (77%), 1: 657 (19%),
+#     2: 109 (3%), 3: 9 (0.3%), 4: 4 (0.1%)}.  Values {0,1,2,3,4} observed.
 #
-# Status-machine interpretation (2026-04-21 RE):
+# ⛔ REFUTED (2026-07-19, <redacted-ref> F3 grounding — see #N): byte[2] is NOT a
+# GNSS fix-lifecycle state machine.  The 2026-04-21 RE named it
+# {0:idle_pre_fix, 1:tracking, 2:post_cold_reset_recovery}, inducing a
+# fix-progression meaning from a handful of captures where byte[2] happened
+# to co-vary with the session.  THREE independent lines of evidence overturn
+# that reading — the classic small-N invariance trap (core-memory 2026-05-08):
 #
-#     value  observed contexts
-#     -----  -----------------------------------------------------------
-#     0      pre-fix / idle — dominant state before first fix
-#     1      tracking — steady-state after fix acquisition.  Every capture
-#            transitions 0→1 at most once and stays in 1 until end.
-#     2      post-cold-reset recovery — only seen in
-#            `gnss_cold_reset_post_2026-04-12.dlf.gz` following a run of
-#            value 1; transition 1→2 after the reset.
-#     3, 4   LM960-only (SDX20) extension states — observed only on
-#            LM960 32.01.110 firmware.  Probable vendor-specific extra
-#            states (power-save / AGPS-injection); semantics TBD.
+#   1. HW/QMI ground truth (RM520N-GL SDX62, <redacted-ref> 5174): byte[2]
+#      stays 0 during a HELD FIX.  If 0 == "idle_pre_fix", a held fix would
+#      never read 0.
+#   2. F3 ground truth (EG18-NA cold_gnss_start, 2026-07-07): the GNSS fix
+#      became valid (mgp `FixVal 1`, `New fix saved as best`, `TPC:ALE
+#      position` with real Lat/Lon) ~1 s BEFORE byte[2] flipped 0→1, and the
+#      flip coincided with NO discrete engine event — it happened mid-tracking.
+#      If 1 == "tracking", it would flip AT fix acquisition, not a second later.
+#   3. Same-unit contradiction (EG18-NA boot_plus_gnss, 2026-07-07): byte[2]
+#      stayed 0 for ALL 242 records despite a full GNSS session on the SAME
+#      unit/firmware that flipped to 1 in cold_gnss_start.  A fix-lifecycle
+#      byte cannot read 0-throughout in one GNSS session and 0→1 in another.
+#
+# byte[2] is therefore an UNLABELLED engine-internal state byte (values
+# {0,1,2,3,4}; 3/4 LM960-32.01.110-only).  Its physical meaning is unknown
+# and demonstrably NOT a fix state — the names are now neutral `state_<n>`.
 #
 # The empirical invariant "within any capture the status sequence is
-# monotonic non-decreasing in {0,1,2}" holds on all 47 captures that
+# monotonic non-decreasing" holds on all 47 captures that
 # contain 0x1899 records — useful as a corruption-detection heuristic.
 #
 # All 106 other bytes are bit-exact constants across 6 chipsets,
@@ -72,7 +82,9 @@ from diaggrok.registry import register
 #
 #     [0]       u8     version            = 0x02 (CONSTANT across chipsets)
 #     [1]       u8     counter            u8 frame counter, +1 mod 256
-#     [2]       u8     status_byte_2      state enum (see above)
+#     [2]       u8     status_byte_2      engine-internal state enum, values
+#                                         {0,1,2,3,4}; meaning unknown, NOT a
+#                                         fix state (refuted 2026-07-19, #N)
 #     [3:10]    7B     reserved           all zero (CONSTANT)
 #     [10]      u8     status_flag_10     = 0x01 (CONSTANT)
 #     [11:58]  47B     reserved           all zero (CONSTANT)
@@ -81,13 +93,18 @@ from diaggrok.registry import register
 #     [85]      u8     status_flag_85     = 0x03 (CONSTANT)
 #     [86:108] 22B     reserved           all zero (CONSTANT)
 
-# Status-byte-2 enum mapping.  See docstring above for evidence.
+# Status-byte-2 enum mapping.  NEUTRAL labels only: the physical meaning of
+# byte[2] is unknown and was REFUTED as a GNSS fix-lifecycle state by the
+# 2026-07-19 F3/HW grounding pass (see docstring above and #N).  Values
+# 3/4 are LM960-32.01.110-only.  Do NOT re-introduce fix-progression names
+# (idle_pre_fix/tracking/post_cold_reset_recovery) without new ground truth
+# that survives the RM520N-held-fix=0 and EG18-NA same-unit 0-vs-0→1 tests.
 GNSS_STATUS_1899_STATES: dict[int, str] = {
-    0: 'idle_pre_fix',
-    1: 'tracking',
-    2: 'post_cold_reset_recovery',
-    3: 'lm960_ext_state_3',
-    4: 'lm960_ext_state_4',
+    0: 'state_0',
+    1: 'state_1',
+    2: 'state_2',
+    3: 'state_3',  # LM960 32.01.110 only
+    4: 'state_4',  # LM960 32.01.110 only
 }
 
 
@@ -150,15 +167,17 @@ class Diag0x1899:
     0x1899, domain="gnss",
     name="0x1899",
     description="GNSS status/heartbeat tick — 108B, every byte accounted for (#N)",
-    version=7,
+    version=8,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
         "RE across LM960 + EG18-NA + EP06A + FN980m + EM7511 + MC7455 + "
         "cold-reset (2026-04-20/21, #N) — 4154 records validated; 106/108 "
-        "bytes bit-exact constant; byte[1]=+1/rec u8 counter, byte[2]=5-state "
-        "machine {idle,tracking,post_reset_recovery,ext3,ext4}. "
+        "bytes bit-exact constant; byte[1]=+1/rec u8 counter, byte[2]=small-"
+        "enum engine-internal state {0,1,2,3,4}, physical meaning UNKNOWN "
+        "(the 2026-04-21 fix-lifecycle names were REFUTED 2026-07-19 by F3+HW "
+        "grounding — see module docstring; byte[2] is NOT a fix state). "
         "v5 (2026-04-21): all_invariants_ok validator — every byte now "
         "explicitly accounted for. "
         "v6 (2026-05-11, #N audit follow-up — Wave 3 G2): PROMOTED soft "

@@ -417,7 +417,7 @@ class Diag0xB192:
                    "plaintext, no MDM9207 qdb) confirms the LTE ML1 neighbour-meas "
                    "subsystem (lte_ml1_md.c Ngbr srch, quectel_cell_atc LIMSRV) and "
                    "an 'apply rsrp offset' path. "
-                   "v8 (2026-06-12, #N <redacted-ref>, host t480, RM500Q-AE "
+                   "v8 (2026-06-12, #N <redacted-ref>, host <redacted-host>, RM500Q-AE "
                    "round): added a Quectel RM500Q-AE (Qualcomm SDX55) v0x01 "
                    "sibling — HW run in LTE LIMSRV on AT&T B66 with a RICH "
                    "multi-neighbour set (187 records, num_cells 1–4). "

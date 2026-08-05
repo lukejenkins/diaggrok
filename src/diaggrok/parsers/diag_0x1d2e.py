@@ -1,6 +1,23 @@
-"""0x1D2E — LOG_1D2E (Qualcomm GNSS/config cell-array record) (#N).
+"""0x1D2E — LOG_1D2E cell-array record (data-services/QoS context) (#N).
 
 Split from gnss_nav_db.py per #N tier-3.
+
+⚠️ **"GNSS" framing REFUTED (2026-07-16 <redacted-ref>, F3-directed).** This code
+was filed and RE'd as a "GNSS/config" record only because it was first
+noticed during a 2026-04-16 GNSS-cross-reference session — the canonical
+name is ``RESERVED`` (no authority hint), so the GNSS label was purely
+circumstantial. F3 correlation refutes it: against the RM520N-GL
+``5govalidate-f3`` capture (RM520NGLAAR03A04M4G_01.203.01.203, resolved
+F3 guid=6552b4be @ rate 1.0, 123 records spanning the clean {123,160}
+and anomaly {196,233,270} families), the co-temporal F3 within ±8k ticks
+of every emission is overwhelmingly **data-services / QoS / bearer / RF-
+power-management** — ``ds_Net_BearerTechEx``, ``ipa_wan.c`` WAN bearer
+stats, ``ds_mppm_*`` (modem power/policy), ``ds_3gpp_pdn_throttle_sm.c``,
+``lmtsmgr_core.c`` (limits mgr), ``coex_algos.c``, ``rfe_nr5g.c`` — a
+**218-to-19 QoS/bearer-vs-GNSS-file ratio**. The reversed cell-array
+structure (49-B header + N×37-B cells, modem-specific magic) is itself
+consistent with a QoS/flow-profile table, not a GNSS nav record. The
+byte-level structure below is unchanged; only the GNSS label is scrubbed.
 
 **Variable-length structure (revised 2026-06-02, #N).** The original
 RE modelled this as a fixed 123-byte record because the only corpus at
@@ -131,7 +148,11 @@ class CounterCell:
 
 @dataclass
 class Diag0x1D2E:
-    """LOG_1D2E (0x1D2E) — Qualcomm GNSS/config cell-array record (#N)."""
+    """LOG_1D2E (0x1D2E) — cell-array record, data-services/QoS context (#N).
+
+    "GNSS" framing F3-refuted 2026-07-16 (see module docstring); byte
+    structure unaffected.
+    """
     log_time: int
     version: int
     subversion: int
@@ -168,9 +189,11 @@ class Diag0x1D2E:
 
 
 @register(
-    0x1D2E, domain="gnss",
+    0x1D2E,  # domain intentionally unset: F3 refutes the old "gnss" domain
+             # (co-temporal context is data-services/QoS/bearer, no clean
+             # DOMAIN_VOCAB match); see module docstring (#N, 2026-07-16).
     name="0x1D2E",
-    description="LOG_1D2E (0x1D2E) — GNSS/config cell-array record, 49-B header + N×37-B cells (#N)",
+    description="LOG_1D2E (0x1D2E) — cell-array record (49-B header + N×37-B cells); data-services/QoS context, GNSS label F3-refuted 2026-07-16 (#N)",
     version=2,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",

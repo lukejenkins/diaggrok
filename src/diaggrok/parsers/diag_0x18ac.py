@@ -118,6 +118,7 @@ community (specification) > community (reference).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from struct import unpack_from
 from typing import Any
 
 from diaggrok.registry import register
@@ -148,6 +149,7 @@ _V4_MAGIC_B_VAL = 0x01
 
 # v=4 per-cell byte surfaces exposed in v4-of-the-parser (#N 2026-05-25).
 # Both offsets are intra-cell — add cell base (3 / 61) for absolute offset.
+_V4_MEAS_WORD_OFF = 8         # intra +8..+11: the full f32-LE measurement word
 _V4_MEAS_HIGH_BYTE_OFF = 11   # IEEE 754 byte-3 of an f32-LE at +8..+11
 _V4_STATE_BYTE_19_OFF = 19    # cross-vendor anchor candidate (∈ {0x3e, 0x3f, 0x40})
 
@@ -167,6 +169,7 @@ _V1_MAGIC_A_VAL = 0x09
 _V1_MAGIC_B_OFF = 16        # intra +16 == 0x01 (cell1 abs 18, cell2 abs 52)
 _V1_MAGIC_B_VAL = 0x01
 # Surface exposed for future field RE — not invariant-enforced:
+_V1_MEAS_WORD_OFF = 8        # intra +8..+11: the full f32-LE measurement word
 _V1_MEAS_HIGH_BYTE_OFF = 11  # f32-LE sign+exp byte, bimodal 0x3e/0xbe (mirrors v=4)
 
 
@@ -210,6 +213,15 @@ class LteMl1InterFreqV4Cell:
     magic_a: int  # intra +3, validated 0x09 across 5 vendors
     magic_b: int  # intra +20, validated 0x01 across 5 vendors
     meas_high_byte: int  # intra +11, f32-LE sign+exp byte (bimodal 0x3e/0xbe)
+    meas_raw: int        # intra +8..+11 as a LE u32 — the WHOLE measurement word
+                         # (its MSB == meas_high_byte). meas_high_byte alone is a
+                         # near-constant 0x3e/0xbe; the per-cell magnitude lives in
+                         # the low 3 bytes this field now preserves (#N kaitai
+                         # cross-check, 2026-07-19).
+    meas_f32: float      # intra +8..+11 reinterpreted as f32-LE — the normalised
+                         # SE/SNE measurement (NOT dBm), F3-confirmed to
+                         # lte_LL1_meas_ncell.c NB_MEAS (qdb 6552b4be/404921d3).
+                         # Rounded to 6 dp (the 0x1d20 metric_a/b convention).
     state_byte_19: int   # intra +19, enum {0x3e, 0x3f, 0x40}
     raw: bytes
 
@@ -220,6 +232,8 @@ class LteMl1InterFreqV4Cell:
             'magic_a': self.magic_a,
             'magic_b': self.magic_b,
             'meas_high_byte': self.meas_high_byte,
+            'meas_raw': self.meas_raw,
+            'meas_f32': self.meas_f32,
             'state_byte_19': self.state_byte_19,
             'raw_hex': self.raw.hex(),
         }
@@ -247,6 +261,12 @@ class LteMl1InterFreqV1Cell:
     magic_a: int          # intra +3,  validated 0x09 across 3 vendors (== v=4 magic_a)
     magic_b: int          # intra +16, validated 0x01 across 3 vendors
     meas_high_byte: int   # intra +11, f32-LE sign+exp byte (bimodal 0x3e/0xbe)
+    meas_raw: int         # intra +8..+11 as a LE u32 — the WHOLE measurement word
+                          # (MSB == meas_high_byte). Mirrors the v=4 fix (#N
+                          # kaitai cross-check, 2026-07-19): the low 3 bytes carry
+                          # the per-cell magnitude the parser used to discard.
+    meas_f32: float       # intra +8..+11 as f32-LE, rounded 6 dp — normalised
+                          # SE/SNE measurement (NOT dBm). Same field on v=4.
     raw: bytes
 
     def to_dict(self) -> dict[str, Any]:
@@ -257,6 +277,8 @@ class LteMl1InterFreqV1Cell:
             'magic_a': self.magic_a,
             'magic_b': self.magic_b,
             'meas_high_byte': self.meas_high_byte,
+            'meas_raw': self.meas_raw,
+            'meas_f32': self.meas_f32,
             'raw_hex': self.raw.hex(),
         }
 
@@ -328,7 +350,7 @@ class Diag0x18AC:
 @register(LOG_LTE_ML1_INTER_FREQ_MEAS, domain="lte-signal",
     name="0x18AC",
     description="Per-carrier inter-frequency cell measurements (neighbor frequencies)",
-    version=14,
+    version=15,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -358,8 +380,8 @@ class Diag0x18AC:
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=14,
-    fields_parsed=14,
+    fields_identified=16,
+    fields_parsed=16,
     field_invariants={
         "version": {"enum": [0x01, 0x04]},
         # v4_num_carriers: invariantly 1 across 49,943 v=4 records / 5
@@ -480,6 +502,9 @@ def parse_0x18ac(log_time: int, data: bytes) -> Diag0x18AC | None:
                 magic_a=data[off + _V4_MAGIC_A_OFF - _V4_OUTER_HEADER_SIZE],
                 magic_b=data[off + _V4_MAGIC_B_OFF - _V4_OUTER_HEADER_SIZE],
                 meas_high_byte=data[off + _V4_MEAS_HIGH_BYTE_OFF],
+                meas_raw=int.from_bytes(
+                    data[off + _V4_MEAS_WORD_OFF:off + _V4_MEAS_WORD_OFF + 4], 'little'),
+                meas_f32=round(unpack_from('<f', data, off + _V4_MEAS_WORD_OFF)[0], 6),
                 state_byte_19=data[off + _V4_STATE_BYTE_19_OFF],
                 raw=bytes(data[off:off + _V4_CELL_SIZE]),
             )
@@ -533,6 +558,9 @@ def parse_0x18ac(log_time: int, data: bytes) -> Diag0x18AC | None:
             magic_a=c1_ma,
             magic_b=c1_mb,
             meas_high_byte=data[v1_cell1_off + _V1_MEAS_HIGH_BYTE_OFF],
+            meas_raw=int.from_bytes(
+                data[v1_cell1_off + _V1_MEAS_WORD_OFF:v1_cell1_off + _V1_MEAS_WORD_OFF + 4], 'little'),
+            meas_f32=round(unpack_from('<f', data, v1_cell1_off + _V1_MEAS_WORD_OFF)[0], 6),
             raw=bytes(data[v1_cell1_off:v1_cell1_off + _V1_CELL_SIZE]),
         ),
         LteMl1InterFreqV1Cell(
@@ -542,6 +570,9 @@ def parse_0x18ac(log_time: int, data: bytes) -> Diag0x18AC | None:
             magic_a=c2_ma,
             magic_b=c2_mb,
             meas_high_byte=data[v1_cell2_off + _V1_MEAS_HIGH_BYTE_OFF],
+            meas_raw=int.from_bytes(
+                data[v1_cell2_off + _V1_MEAS_WORD_OFF:v1_cell2_off + _V1_MEAS_WORD_OFF + 4], 'little'),
+            meas_f32=round(unpack_from('<f', data, v1_cell2_off + _V1_MEAS_WORD_OFF)[0], 6),
             raw=bytes(data[v1_cell2_off:v1_cell2_off + _V1_CELL_SIZE]),
         ),
     ]

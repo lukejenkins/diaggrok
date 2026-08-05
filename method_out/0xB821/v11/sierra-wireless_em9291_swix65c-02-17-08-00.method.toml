@@ -1,0 +1,55 @@
+version = 17
+cond = "nr5g"
+modem_make = "Sierra"
+modem_model = "EM9291"
+modem_firmware = "SWIX65C_02.17.08.00"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "nr5g_serving_pci_candidate"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "arfcn"
+quantity = "nr5g_arfcn_candidate"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "cell_global_id"
+quantity = "nr5g_ncgi_candidate"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "sib1_tac"
+quantity = "nr5g_tac_candidate"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+    { kind = "mbim", value = "MBIM_CID_REGISTER_STATE" },
+]
+
+[[field_map]]
+parser_field = "sib1_mcc"
+quantity = "plmn_mcc_candidate"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mnc"
+quantity = "plmn_mnc_candidate"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]

@@ -73,9 +73,9 @@ RE history:
   (SVID block 401-414, ``cd_navicdecode.c`` / ``cd_naviccalc.c`` /
   ``mc_gnsssearchstrategy.c``) yet NAViC is *dormant* — ``tm_util.c: NAVIC sv
   mask used=0x00 usable=0x00``, ``Strategy State NAVIC: IDLE``,
-  ``NAVIC_allowed_as_addon 0`` — because the modem was in Ogden, UT (41.2°N,
-  −111.9°W, from co-captured ``Serving cell position updated`` F3), outside
-  NAViC's Indian-regional footprint, so no NAViC SV is ever acquired. It
+  ``NAVIC_allowed_as_addon 0`` — because the modem was in North America (per
+  the co-captured ``Serving cell position updated`` F3; position withheld),
+  outside NAViC's Indian-regional footprint, so no NAViC SV is ever acquired. It
   therefore emits **no 0x158C seq slot and no ``mc_peak`` CNo** — confirming the
   observed seq map (1/2/4/5/9 + 6-8 L5) is complete *for this geography* and
   predicting that a future India-region capture of an NAViC-capable modem should
@@ -184,7 +184,10 @@ LOG_GNSS_RF_STATS = 0x158C
 #   i32  metric_b          @ 13    secondary metric
 #   u32  metric_c          @ 17    ≈ metric_b × 28.61
 #   u32  metric_d          @ 21    ≈ metric_b × 0.441
-#   u8   zeros[16]         @ 25
+#   u8   reserved2[16]     @ 25    EXPOSED (was discarded): all-zero on modern
+#                                  silicon, but 4 live LE u32 on MC7455/MDM9x30
+#                                  (semantics TBD — likely a legacy second metric
+#                                  quartet; #N / Kaitai layout audit #N).
 #   u8   flags             @ 41    state-dependent: {0x01, 0x02, 0x03} (#N)
 #   u8   zeros[7]          @ 42
 _RF_STATS_FMT = '<BBBBBBBBBiiII16sB7s'
@@ -234,6 +237,8 @@ class Diag0x158C:
     metric_b: int       # i32 — secondary measurement
     metric_c: int       # u32 — ≈ metric_b × 28.61
     metric_d: int       # u32 — ≈ metric_b × 0.441
+    reserved2: bytes    # 16B @25 — EXPOSED (was discarded); 0 on modern silicon,
+                        #   4 live LE u32 on MC7455/MDM9x30 (semantics TBD, #N/#N)
     flags: int          # u8 — state-dependent: {0x01, 0x02, 0x03}
     active: bool        # True if not an inactive sentinel
 
@@ -249,6 +254,7 @@ class Diag0x158C:
             'metric_b': self.metric_b,
             'metric_c': self.metric_c,
             'metric_d': self.metric_d,
+            'reserved2': self.reserved2.hex(),
             'flags': self.flags,
             'active': self.active,
         }
@@ -271,15 +277,16 @@ class Diag0x158C:
     description="Per-constellation RF signal statistics (0x158C)",
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
-    version=5,
+    version=6,
     source_type="re",
     source_detail="Clean-room RE from FN980m SDX55 + EG18-NA SDX20 V2 + RM520N-GL SDX62 DLF captures (#N); v=0x01 + c/b=28.611 / d/b=0.441 ratios HW-confirmed on T99W640 SDX72, seq 10-16 unmapped (#N, 2026-06-10)",
     source_url="",
     # version, sub_version, seq_num, constellation, metric_a, metric_b,
-    # metric_c, metric_d, flags, active — 10 named fields covering every
-    # byte of the 49B per-(constellation,band) record. (#N)
-    fields_identified=10,
-    fields_parsed=10,
+    # metric_c, metric_d, reserved2, flags, active — 11 named fields now covering
+    # EVERY byte of the 49B per-(constellation,band) record: reserved2 (#N
+    # Kaitai audit) closes the previously-discarded [25:41] gap. (#N)
+    fields_identified=11,
+    fields_parsed=11,
     # version=0x01 / sub_version=0x01 confirmed across 1.09 M records,
     # 235 captures, 16 chipsets (offset 0/1 distribution shows no
     # other value). flags @ +41 is state-dependent and NOT invariant
@@ -314,7 +321,7 @@ def parse_0x158c(log_time: int, data: bytes) -> Diag0x158C | None:
      seq_num,
      _r3, _r4, _r5,
      metric_a, metric_b, metric_c, metric_d,
-     _zeros, flags, _trail) = unpack_from(_RF_STATS_FMT, data)
+     reserved2, flags, _trail) = unpack_from(_RF_STATS_FMT, data)
 
     constellation = _SEQ_CONSTELLATION.get(seq_num, f'unknown-{seq_num}')
 
@@ -331,6 +338,7 @@ def parse_0x158c(log_time: int, data: bytes) -> Diag0x158C | None:
         metric_b=metric_b,
         metric_c=metric_c,
         metric_d=metric_d,
+        reserved2=reserved2,
         flags=flags,
         active=active,
     )

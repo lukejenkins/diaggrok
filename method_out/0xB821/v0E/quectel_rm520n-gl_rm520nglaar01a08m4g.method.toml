@@ -1,0 +1,89 @@
+version = 14
+cond = "nr5g"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR01A08M4G"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "nr5g_serving_pci_candidate"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "arfcn"
+quantity = "nr5g_arfcn_candidate"
+sources = [
+    { kind = "at", value = "AT+QNWINFO" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_cell_id"
+quantity = "nr5g_cell_identity_nci_candidate"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "sib1_tac"
+quantity = "nr5g_tac_candidate"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mcc"
+quantity = "plmn_mcc_candidate"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mnc"
+quantity = "plmn_mnc_candidate"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib4_params"
+quantity = "nr5g_sib4_inter_freq_neighbor_carriers"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "at", value = "AT+QENG=\"neighbourcell\"" },
+    { kind = "trigger", value = "AT+COPS=2/0 bounce or CFUN=4->1 — forces SI re-read" },
+    { kind = "other", value = "stock tshark nr-rrc A/B of msg_data" },
+]
+
+[[field_map]]
+parser_field = "sib5_params"
+quantity = "nr5g_sib5_eutra_neighbor_carriers"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QENG=\"servingcell\""
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QNWINFO"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "AT+QNWPREFCFG=\"mode_pref\",LTE fallback (restore AUTO after) — forces an E-UTRA camp"
+
+[[field_map.sources]]
+kind = "other"
+value = "stock tshark nr-rrc A/B of msg_data"

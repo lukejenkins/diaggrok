@@ -146,10 +146,10 @@ should filter on `any(s.active_flag == 0xFFFF for s in result.slots)`.
 
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_GNSS_PDSM_EXT_STATUS_MEAS_REPORT_C
-        source: qualcomm_diag_log_codes_h (authority: vendor_official)
-    aliases:
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
+        source: qualcomm_firmware_f3_log_emission_oracles (authority: vendor_official)
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
+    aliases: (none recorded)
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).

@@ -1,0 +1,23 @@
+version = 26
+cond = "connected"
+modem_make = "Wistron"
+modem_model = "LV55"
+modem_firmware = "3.33.101.0"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "verified"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetSignalInfo" },
+    { kind = "other", value = "DIAG 0xB116 config_word" },
+]
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT$QCRSRP?" },
+    { kind = "other", value = "DIAG 0xB193 earfcn" },
+]

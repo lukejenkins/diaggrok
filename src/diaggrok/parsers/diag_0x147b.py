@@ -42,12 +42,31 @@ class Diag0x147B:
     (#N) against EG18-NA and FN980m captures; body region is preserved
     as ``raw`` for future work.
 
-    ## Header layout (11 B, validated 2026-04-11)
+    ## Header layout — TWO layouts (version-dependent)
+
+    **Legacy layout (v8/9/11/18/23, 11-byte header, validated 2026-04-11):**
 
         byte 0:     u8   version        (11 on SDX20 V2, 18 on SDX55)
         byte 1..4:  u32  f_count        frame counter
         byte 5..6:  u16  gps_week       matches the capture's GPS week
         byte 7..10: u32  gps_ms         GPS time of week in ms
+
+    **SDX72 v24 layout (13-byte header, validated 2026-07-14, F3-grounded):**
+    The SDX72 (Foxconn T99W640) v=24 record inserts 2 bytes before the GPS
+    timestamp, shifting gps_week/gps_ms by +2:
+
+        byte 0:     u8   version        (24 = 0x18)
+        byte 1..6:  6 B  counter region ([1:3]=0x0001 const, u16@3 = a
+                                         +1000/record frame counter, [5:7]=0x0003)
+        byte 7..8:  u16  gps_week       2423 (F3-confirmed via tm_core.c/cd_task.c)
+        byte 9..12: u32  gps_ms         GPS time of week — monotonic +1000 ms/rec;
+                                        the first record's value 61220071 matches
+                                        the co-temporal F3 print
+                                        `cd_task.c:14223 GpsTowMs = 61220071`.
+
+    Naively routing v24 through the legacy offsets yields gps_week=3 (garbage) —
+    the "same code, new header layout" trap. The parser dispatches header
+    offsets on the version byte (see ``_HEADER_OFFSETS``).
 
     Note: unlike 0x1478, this log code does **not** have a flags u16
     before f_count. The two parsers share the concept of a per-epoch
@@ -65,11 +84,12 @@ class Diag0x147B:
     | 0x09 ( 9)     |  6,290  | 10.4 | 503      | MDM9x07 (Quectel EP06A, EG95-NA) |
     | 0x17 (23)     |  5,807  |  9.6 | 2464     | SDX62 (RM520N-GL)                |
     | 0x08 ( 8)     |  3,050  |  5.0 | 445      | MDM9x30 (Sierra MC7455)          |
+    | 0x18 (24)     |    12+  |  —   | 2472     | SDX72 (Foxconn T99W640) — NEW    |
 
     The version byte is declared as ``{"enum": [8, 9, 11, 18, 23]}`` in
     ``field_invariants`` — a 5-way chipset-generation discriminator is
     exactly what an enum invariant is for. The audit toolchain will
-    surface previously-unseen variants (e.g., a future SDX65 v=24)
+    surface previously-unseen variants (e.g., a future SDX75 v=25)
     instead of silently passing them through. The (size, version)
     profile-truncation trap from ``<redacted-ref>`` v1.5.0 specifically
     warned that the 503 B and 2464 B variants spread thin across many
@@ -108,7 +128,21 @@ class Diag0x147B:
 # mis-parsing a future-firmware layout that reuses a known version byte at
 # a new length ("size-invariance ≠ format-invariance", project core memory).
 # Mirrors the _VERSION_TO_SIZE gate the sibling 0x1478 parser already has.
-_VERSION_TO_SIZE = {0x08: 445, 0x09: 503, 0x0b: 535, 0x12: 1011, 0x17: 2464}
+_VERSION_TO_SIZE = {0x08: 445, 0x09: 503, 0x0b: 535, 0x12: 1011, 0x17: 2464, 0x18: 2472}
+
+# Header field offsets are version-dependent. The legacy layout (v8..23) packs
+# f_count(u32)@1, gps_week(u16)@5, gps_ms(u32)@7. The SDX72 v24 (0x18) layout
+# inserts 2 bytes before the GPS timestamp — gps_week(u16)@7, gps_ms(u32)@9 —
+# validated 2026-07-14 and F3-grounded (gps_week=2423 / gps_ms monotonic 1 Hz,
+# first-record gps_ms == F3 cd_task.c GpsTowMs print exactly). f_count stays a
+# u32@1 counter-region read (v24's [1:7] is 0x0001 + u16@3 +1000/rec + 0x0003;
+# the u32@1 view is monotonic per record, adequate as the frame counter).
+#   version: (f_count_off, gps_week_off, gps_ms_off)
+_HEADER_OFFSETS = {
+    0x08: (1, 5, 7), 0x09: (1, 5, 7), 0x0b: (1, 5, 7),
+    0x12: (1, 5, 7), 0x17: (1, 5, 7),
+    0x18: (1, 7, 9),
+}
 
 
 # Ground-truth recipe (#N). Authored OFFLINE (hw_run_performed=False); every
@@ -127,7 +161,7 @@ _VERSION_TO_SIZE = {0x08: 445, 0x09: 503, 0x0b: 535, 0x12: 1011, 0x17: 2464}
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
-    source_detail="EG18-NA SDX20 V2 + FN980m SDX55 DLF capture analysis (2026-04-11, #N); 5-version cross-chipset matrix (v=8 MDM9x30, v=9 MDM9x07, v=11 SDX20/MDM9650, v=18 SDX55, v=23 SDX62) confirmed via 60K-record corpus walk (2026-05-08); code name cross-checked against an external MIT reference that does not decode the body",
+    source_detail="EG18-NA SDX20 V2 + FN980m SDX55 DLF capture analysis (2026-04-11, #N); 5-version cross-chipset matrix (v=8 MDM9x30, v=9 MDM9x07, v=11 SDX20/MDM9650, v=18 SDX55, v=23 SDX62) confirmed via 60K-record corpus walk (2026-05-08); code name cross-checked against an external MIT reference that does not decode the body. 2026-07-14 (<redacted-ref>, F3-directed): 6th variant v=24 (0x18)/2472B SDX72 (Foxconn T99W640 @ FDE2.F0.0.0.1.2.TO.001, <redacted-pii><redacted-host>, 12 records) — header layout SHIFTED +2 (gps_week@7, gps_ms@9); F3-grounded (gps_week=2423, gps_ms monotonic +1000ms/rec, first-record gps_ms=61220071 == co-temporal F3 cd_task.c:14223 GpsTowMs print exactly)",
     source_url="",
     # fields_parsed/fields_identified intentionally unset: the dataclass
     # preserves the body region as ``raw`` (ongoing RE), so any equal-
@@ -136,21 +170,22 @@ _VERSION_TO_SIZE = {0x08: 445, 0x09: 503, 0x0b: 535, 0x12: 1011, 0x17: 2464}
     # to the parser inventory and the diag-decode audit template. (#N)
     #
     # Layer-2 plausibility — corpus walk 2026-05-22 against 43,632 records:
-    #   version (offset 0): {0x08, 0x09, 0x0b, 0x12, 0x17} corpus-wide
+    #   version (offset 0): {0x08, 0x09, 0x0b, 0x12, 0x17, 0x18} corpus-wide
     #     0x08 (8)  =  445B (MDM9x30: MC7455)
     #     0x09 (9)  =  503B (MDM9x07: EP06A, EG95-NA)
     #     0x0b (11) =  535B (SDX20 V2 / MDM9650 / MDM9207-OCPU)
     #     0x12 (18) = 1011B (SDX55: FN980m, EM9190, RM500Q)
     #     0x17 (23) = 2464B (SDX62: RM520N-GL)
-    # An enum invariant is the correct declaration for a 5-way chipset-
+    #     0x18 (24) = 2472B (SDX72: Foxconn T99W640 — shifted header, 2026-07-14)
+    # An enum invariant is the correct declaration for a 6-way chipset-
     # generation discriminator — it surfaces previously-unseen variants
-    # (e.g., a future SDX65 v=24) instead of silently emitting them.
+    # (e.g., a future SDX75 v=25) instead of silently emitting them.
     # The earlier docstring claim that "5 distinct values means NOT an
     # invariant" was wrong reasoning: enum invariants are precisely for
     # this case. f_count / gps_week / gps_ms remain undeclared because
     # they are time-varying (no enum/range fits).
     field_invariants={
-        "version": {"enum": [8, 9, 11, 18, 23]},
+        "version": {"enum": [8, 9, 11, 18, 23, 24]},
     },
     # v5 (2026-06-26, #N cadence-sweep): tagged timebase_roles=
     # ("absolute-time", "ts-anchor") — the FIRST exemplar of both roles
@@ -200,21 +235,23 @@ def parse_0x147b(log_time: int, data: bytes) -> Diag0x147B | None:
     the "same version byte, new layout" trap. A visible parse-rate drop
     is the desired signal instead. Mirrors the sibling 0x1478 gate.
     """
-    if len(data) < 11:
+    if len(data) < 13:
         return None
     # Layer-1 version gate (#N / #N).
-    if data[0] not in (8, 9, 11, 18, 23):
+    if data[0] not in (8, 9, 11, 18, 23, 24):
         return None
     # Layer-1 per-version size gate (#N). The `not in` form above keeps
     # the audit regex happy; this is the semantic (version, len) pairing
     # check — size is strictly version-correlated across the corpus.
     if len(data) != _VERSION_TO_SIZE[data[0]]:
         return None
+    # Version-aware header offsets — v24 (SDX72) shifts gps_week/gps_ms by +2.
+    fc_off, wk_off, ms_off = _HEADER_OFFSETS[data[0]]
     return Diag0x147B(
         log_time=log_time,
         version=data[0],
-        f_count=unpack_from('<I', data, 1)[0],
-        gps_week=unpack_from('<H', data, 5)[0],
-        gps_ms=unpack_from('<I', data, 7)[0],
+        f_count=unpack_from('<I', data, fc_off)[0],
+        gps_week=unpack_from('<H', data, wk_off)[0],
+        gps_ms=unpack_from('<I', data, ms_off)[0],
         raw=data,
     )

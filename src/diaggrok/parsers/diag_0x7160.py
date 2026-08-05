@@ -1,75 +1,83 @@
-"""0x7160 — GNSS-engine-start cluster sibling (#N), cross-chipset header-only stub.
+"""0x7160 — LOG_UMTS_NAS_PPLMN_LIST, cross-chipset preferred-PLMN-list dump (#N).
 
-Cluster: 0x7153/0x7154/0x7155/0x7156/0x7160 fire together during the
-GNSS-engine-start critical section. Siblings 0x7155 (slot-table) and
-0x7156 (empty-buffer twin) are RE'd; 0x7160 is the largest record of
-the cluster and remains structurally unresolved beyond the header.
+⚠️ SEMANTIC CORRECTION (v4, 2026-07-17, F3-grounded). Earlier revisions of
+this parser (v1–v3) framed 0x7160 as a "GNSS-engine-start cluster sibling"
+(alongside 0x7153/0x7154/0x7155/0x7156) and dismissed the names-block
+canonical `LOG_UMTS_NAS_PPLMN_LIST` as a "community mis-attribution". **That
+framing was wrong and is scrubbed.** Three independent lines of evidence, the
+last one an F3 ground-truth oracle no prior session had consulted, place this
+code firmly in the **UMTS/NAS registration (PLMN-selection)** subsystem:
 
-## Cross-chipset corpus (2026-05-20)
+1. **Canonical-name family.** The whole contiguous 0x715x–0x716x block in
+   `DIAG_LOG_INDEX.yaml` is one UMTS-NAS PLMN-list family (equipment_id 7, two
+   agreeing community sources): 0x7153 HPLMN_SEARCH_TIMER_START, 0x7154
+   HPLMN_SEARCH_TIMER_EXPIRE, 0x7155 HPLMN_SEARCH_START, 0x7156
+   HPLMN_SEARCH_END, **0x7160 PPLMN_LIST**, 0x7161 LTE_CELL_LIST. The prior
+   "GNSS cluster" was the *same* set of codes read under the wrong subsystem.
 
-`tools/diag_code_info.py 0x7160` shows the code is NOT LM960-only as
-the original #N title implies. It fires across **3 chipset
-generations / 3 vendors / 2 size classes**:
+2. **Emission context (no GNSS engine involved).** On the Wistron LV55 — a
+   Verizon 5G CPE with no GNSS use case — 0x7160 fires in every NAS/PLMN
+   scenario and no GNSS scenario: `08_manual_plmn_scan`, `07_cops_dereg_cycle`,
+   `03_lte_airplane_cycle`, `04_sim_power_cycle`, `12_psm_edrx_cycle`, PDP and
+   reject cycles. The original LM960 "fires only on GNSS scenarios" reading was
+   a boot-time confound — a full reboot triggers a NAS PLMN re-search, and the
+   GNSS antenna happened to be attached.
 
-| Modem        | Chipset | Firmware                  | Records | Payload size | byte0 |
-|--------------|---------|---------------------------|---------|--------------|-------|
-| LM960A18     | SDX20   | 32.01.1X0                 | 3       | **8004**     | 0x01  |
-| MC7411       | SDX20   | SWI9X50C_01.14.22.00_unit2| 8       | **8004**     | 0x01  |
-| FN980m       | SDX55   | M0H.030282 / AT&T profile | 16      | **9004**     | 0x02  |
-| RM520N-GL    | SDX62   | RM520NGLAAR03A03M4G       | 4       | **9004**     | 0x02  |
+3. **F3 ground truth (the decisive oracle).** In the co-temporal F3 window of a
+   0x7160 emission (RM520N-GL cops capture `<redacted-pii>`), the
+   firmware's own prints are entirely NAS/PLMN, zero GNSS:
+     - `reg_mode.c:2264` dumps a PLMN table — MCC-MNC / RAT / HPLMN / priority /
+       EARFCN rows (`310-260 LTE HPLMN`, `311-480 NR5G`, `310-410 NR5G`, ...).
+     - `reg_mode.c:7291  reg_mode_update_available_plmn_list`.
+     - `mmgsdicache.c` SIM-EF cache reads.
 
-**Clean chipset-keyed (size, version) split** — no overlap. Same shape
-as 0x1C6E (#N) and 0x1636 — byte 0 is the version field, the
-payload-size step (+1000 B between v1→v2) likely encodes a per-entry
-field added in the SDX55-era IPA/GNSS stack.
+## Structure (unchanged decode; re-interpreted)
 
-Header bytes:
-  - byte[1] = 0x01     (sub-flag, role TBD — corpus-invariant)
-  - bytes[2:4] = entry_count (LE u16), high byte (byte[3]) corpus-invariant 0x00
+The header decode is unchanged from v3 — only the *meaning* is corrected:
 
-## 2026-06-26 re-walk (N=31 → 514) — two prior claims REFUTED
+  byte[0]    = version      0x01 (SDX20) | 0x02 (SDX55+)     — Layer-1 gate
+  byte[1]    = sub_flag     corpus-invariant 0x01
+  bytes[2:4] = entry_count  LE u16 — number of POPULATED PLMN entries
+                            (obs {70, 100}, intra-capture variance)
+  bytes[4:]  = PLMN table   fixed 100-slot table (v2: 100×90 B = 9000 B;
+                            v1: 100×80 B = 8000 B). See body note below.
 
-A fresh corpus walk (514 records / 54 captures, incl. a new RM520N-GL
-survey `<redacted-pii>` with 69 records and a new Sierra
-EM7565 emitter) overturns the 2026-05-20 framing:
+## PLMN-table body (the correctly-framed open T1 lead)
 
-1. **entry_count is NOT "corpus-invariant 100".** It is dynamic —
-   observed values {70 (0x46), 100 (0x64)} with INTRA-capture variance
-   (one survey emits both). The prior `entry_count != 100` hard gate was
-   silently dropping 97/514 records (18.9%), including ALL 69 RM520N-GL
-   survey records. Gate relaxed to the real invariant (high byte 0x00).
+The 9004 B (v2) / 8004 B (v1) envelope is size-invariant regardless of
+`entry_count`, i.e. the body is a **fixed-capacity table**, not an
+`entry_count`-length array — which is why the old "entry_count × 90 B stride"
+test failed (the table is always 100 slots; entry_count counts the populated
+ones). Direct inspection of a v2 record confirms the PLMN-list shape:
 
-2. **The "100 × 90-byte entries" stride hypothesis is REFUTED.** On an
-   entry_count=70 RM520N-GL record, the body region past the predicted
-   70×90=6300 boundary is 69% non-zero (not zero-padded), and the body
-   carries a clean **12-byte repeating substructure**
-   (`XX XX 20 07 | e0 ff 0f 00 | YY YY f6 ff`) that flows through the
-   boundary. So entry_count does NOT index a 90 B/entry table. The
-   per-entry body layout remains unresolved (new lead: the 12 B stride).
+  - each 90 B slot begins with a 3-byte **BCD PLMN id** (`13 01 94` =
+    MCC 310 …; `25 f0 50` = MCC 520 …),
+  - unused slots past the populated region are the 3GPP `ff ff ff` "no PLMN"
+    sentinel (slots 4+ in the observed record),
+  - `entry_count` (=100 here) = populated-slot count.
+
+The per-slot layout beyond the PLMN-id prefix (AcT bitmask, priority, domain,
+EARFCN — the fields `reg_mode.c:2264` prints) is not yet fully mapped and stays
+`body_raw`. It is now correctly groundable via **AT+CPOL** (reads the preferred
+PLMN list w/ AcT) and **AT+COPS=?** (available-PLMN scan) — NOT the GNSS
+`AT+QGPS*` levers the old recipes used.
 
 ## "Size invariance ≠ format invariance" hedge
 
-Per `core-memories.md`: a future SDX65/SDX72 firmware can ship version
-0x03 in the same 9004-byte envelope under a new struct layout. This
-parser declares `field_invariants={"version": {"enum": [1, 2]}}` so
-a record with `byte[0] not in {1, 2}` returns None and surfaces as a
-no-parser miss instead of being silently mis-decoded as v2.
-
-Likewise, the (size, version) tuple is enforced inside the body —
-v1/9004 or v2/8004 records reject. The corpus has not yet shown
-mismatched tuples, so any future occurrence should be investigated as
-a real chipset variant before relaxing the gate.
+Per `core-memories.md`: a future SDX65/SDX72 firmware can ship version 0x03 in
+the same 8004/9004-byte envelope under a new struct layout. This parser
+declares `field_invariants={"version": {"enum": [1, 2]}}` so a record with
+`byte[0] not in {1, 2}` returns None and surfaces as a no-parser miss instead
+of being silently mis-decoded. The (size, version) tuple is likewise enforced.
 
 ## Next steps (tracked on #N)
 
-- 4-byte-header confirmed. The 80 B/90 B per-entry stride hypothesis is
-  REFUTED (see re-walk note above); the body instead shows a 12-byte
-  repeating substructure — decode that next (does entry_count count a
-  subset of the 12 B records? 9000 B / 12 = 750 candidate slots).
-- Cross-reference techplayon + SCAT for canonical
-  name (range 0x71xx is Qualcomm's Sensor / Location subsystem).
-- Promote to T1 once the 12 B-stride body substructure is RE'd and
-  entry_count's role (count of what?) is grounded.
+- Decode the per-slot PLMN entry: BCD PLMN-id (confirmed) + AcT/priority/domain/
+  EARFCN. Ground against a co-captured `AT+CPOL` / `AT+COPS=?` readback and the
+  co-temporal `reg_mode.c:2264` F3 table (both now identified as the oracles).
+- Promote to T1 once the per-slot fields are named + grounded.
+- Sibling cluster codes 0x7153/0x7154/0x7155/0x7156 (#N–#N) carry the SAME
+  stale "GNSS-lifecycle" framing and need the same NAS-PLMN correction.
 
 === names-block:start (auto-generated by tools/inject_names_block_parsers.py) ===
 
@@ -110,24 +118,25 @@ _VERSION_TO_SIZE = {
 # Header constants stable across all modems / both versions.
 # byte[1] = sub-flag (role TBD, corpus-invariant 0x01).
 _EXPECTED_SUB_FLAG = 0x01
-# bytes[2:4] = entry_count (LE u16). NOT a constant — 2026-06-26 re-walk
-# (N=514) shows it is DYNAMIC: observed {70, 100} with *intra-capture*
-# variance (one survey capture emits both 0x46 and 0x64). The prior
-# "corpus-invariant 100" claim is refuted; the only invariant is the
-# high byte (data[3]) == 0x00 (entry_count <= 255) corpus-wide.
+# bytes[2:4] = entry_count (LE u16) — number of POPULATED PLMN entries.
+# NOT a constant — 2026-06-26 re-walk (N=514) shows it is DYNAMIC:
+# observed {70, 100} with *intra-capture* variance (one survey capture
+# emits both 0x46 and 0x64). The body is a fixed-capacity 100-slot PLMN
+# table regardless; entry_count counts the populated slots. The only
+# invariant is the high byte (data[3]) == 0x00 (entry_count <= 255).
 _ENTRY_COUNT_HI_INVARIANT = 0x00  # data[3] — corpus-wide 0x00 (N=514)
 _ENTRY_COUNT_MAX = 0xFF           # high-byte-zero => value fits in a byte
 
 
 @dataclass
 class Diag0x7160:
-    """0x7160 — GNSS-engine-start cluster sibling, header-only stub (#N)."""
+    """0x7160 — LOG_UMTS_NAS_PPLMN_LIST preferred-PLMN-list header (#N)."""
     log_time: int
     version: int            # byte[0] — 0x01 (SDX20) | 0x02 (SDX55+)
     sub_flag: int           # byte[1] — corpus-invariant 0x01
-    entry_count: int        # bytes[2:4] LE u16 — DYNAMIC count (obs {70,100}); hi byte 0x00
+    entry_count: int        # bytes[2:4] LE u16 — populated PLMN entries (obs {70,100})
     payload_size: int
-    body_raw: bytes
+    body_raw: bytes         # bytes[4:] — fixed 100-slot PLMN table (per-slot decode TBD)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -140,28 +149,26 @@ class Diag0x7160:
         }
 
 
-# Ground-truth recipe (#N). v1 (8004B / byte0=0x01) is the SDX20 profile
-# the MC7411 + LM960 emit. The parser is header-only (version, sub_flag=0x01,
-# entry_count=100) — all structural constants, no field carries a physical
-# quantity an AT command returns. So this is a TRIGGER-CORRELATION recipe: the
-# value being validated is that a 0x7160 v1 record is emitted at GNSS-engine
-# start, captured in the SAME sky-fix session as 0x188E (which validates the
-# per-SV measurements). Names-block canonical (LOG_UMTS_NAS_PPLMN_LIST,
-# community) is a mis-attribution — the cross-modem cluster RE (#N) places
-# this firmly in the GNSS-engine-start critical section.
+# Ground-truth recipes (#N): per-(modem, version) TOMLs under
+# ground_truth/0x7160/. Both were re-authored in v4 (2026-07-17) to the
+# corrected NAS-PLMN framing — validating via AT+CPOL / AT+COPS=? that a
+# 0x7160 record's PLMN table matches the modem's preferred/available PLMN
+# list, NOT the old GNSS-engine-start trigger correlation (scrubbed).
 
 @register(
-    _LOG_CODE, domain="gnss",
+    _LOG_CODE, domain="nas",
     name="0x7160",
     description=(
-        "GNSS-engine-start cluster sibling — header-only stub (#N). "
-        "Chipset-keyed (size, version) split: 8004 B / v=1 on SDX20 "
-        "(LM960, MC7411, EM7565), 9004 B / v=2 on SDX55+ (FN980m, "
-        "RM520N-GL). Header: version, sub_flag=0x01, entry_count "
-        "(DYNAMIC u16, obs {70,100}, hi byte 0x00). Per-entry body NOT "
-        "decoded; the 90 B/entry stride hypothesis is REFUTED (#N)."
+        "LOG_UMTS_NAS_PPLMN_LIST — preferred-PLMN-list dump, header-only "
+        "decode (#N). Chipset-keyed (size, version) split: 8004 B / v=1 "
+        "on SDX20 (LM960, MC7411, EM7565), 9004 B / v=2 on SDX55+ (FN980m, "
+        "RM520N-GL). Header: version, sub_flag=0x01, entry_count (populated "
+        "PLMN entries, DYNAMIC u16, obs {70,100}). Body is a fixed 100-slot "
+        "PLMN table (v2 90 B/slot, v1 80 B/slot), per-slot decode NOT yet "
+        "landed (BCD PLMN-id prefix + 0xFFFFFF-sentinel padding confirmed). "
+        "F3-grounded to NAS reg_mode PLMN-list (v4, #N)."
     ),
-    version=3,
+    version=4,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -171,14 +178,21 @@ class Diag0x7160:
         "MC7411 SDX20 SWI9X50C_01.14.22.00, FN980m SDX55 M0H.030282 "
         "(AT&T profile 10), RM520N-GL SDX62 RM520NGLAAR03A03M4G. "
         "Clean chipset-keyed (size, version) split — same pattern as "
-        "0x1C6E (#N) and 0x1636. Per-entry layout not yet RE'd. "
-        "v3 (2026-06-26, #N): added an RM520N-GL (SDX62) v2/9004B "
-        "GroundTruth recipe — the Quectel owner cannot run the MC7411 "
-        "v1 Sierra-AT recipe, and RM520N-GL emits a different version "
-        "byte (v2), so it gets its own per-(modem,version) recipe "
-        "(triggered, hw_run_performed=False, fields hypothesis)."
+        "0x1C6E (#N) and 0x1636. Per-slot PLMN-entry layout not yet "
+        "fully RE'd. "
+        "v4 (2026-07-17, #N): SEMANTIC CORRECTION — the v1-v3 "
+        "'GNSS-engine-start cluster' framing was refuted by F3 ground "
+        "truth (reg_mode.c:2264 PLMN table + reg_mode_update_available_"
+        "plmn_list co-temporal with the emission; zero GNSS F3), by the "
+        "0x715x-0x716x canonical UMTS-NAS-PLMN name family, and by LV55 "
+        "emission context (fires on manual_plmn_scan / cops_dereg / "
+        "airplane / sim-cycle, not GNSS). domain gnss->nas; both "
+        "GroundTruth recipes re-authored to AT+CPOL / AT+COPS grounding."
     ),
-    source_url="",
+    source_url=(
+        "F3 ground truth: reg_mode.c:2264 / reg_mode.c:7291 co-temporal "
+        "with 0x7160 in RM520N-GL cops-f3 capture 20260626T225840Z (#N)"
+    ),
     issues=(),
     fields_parsed=4,        # version + sub_flag + entry_count + payload_size
     fields_identified=4,
@@ -194,7 +208,7 @@ class Diag0x7160:
     },
 )
 def parse_0x7160(log_time: int, data: bytes) -> Diag0x7160 | None:
-    """Parse the 4-byte header of a 0x7160 record.
+    """Parse the 4-byte header of a 0x7160 (PPLMN-list) record.
 
     Returns None if:
       - payload length is not 8004 (v1) or 9004 (v2)
@@ -224,10 +238,10 @@ def parse_0x7160(log_time: int, data: bytes) -> Diag0x7160 | None:
         return None
 
     # entry_count is a DYNAMIC u16 count (obs {70, 100}, intra-capture
-    # variance) — do NOT gate on a specific value (the prior `!= 100`
-    # gate silently dropped 97/514 records, incl. all 69 RM520N-GL
-    # survey records). The only structural reject is the corpus-wide
-    # high-byte-zero invariant (data[3] == 0x00).
+    # variance) of POPULATED PLMN entries — do NOT gate on a specific
+    # value (the prior `!= 100` gate silently dropped 97/514 records,
+    # incl. all 69 RM520N-GL survey records). The only structural reject
+    # is the corpus-wide high-byte-zero invariant (data[3] == 0x00).
     if data[3] != _ENTRY_COUNT_HI_INVARIANT:
         return None
     entry_count = unpack_from("<H", data, 2)[0]

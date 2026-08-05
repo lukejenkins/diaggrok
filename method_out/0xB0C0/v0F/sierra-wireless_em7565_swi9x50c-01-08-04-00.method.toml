@@ -1,0 +1,25 @@
+version = 15
+cond = "idle"
+modem_make = "Sierra"
+modem_model = "EM7565"
+modem_firmware = "SWI9X50C_01.08.04.00"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "verified"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (LTE serving PCI)" },
+    { kind = "other", value = "DIAG 0xB116 config_word / 0xB193 pci" },
+    { kind = "at", value = "AT!GSTATUS?" },
+]
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (EUTRA RF Channel)" },
+    { kind = "other", value = "DIAG 0xB193 earfcn" },
+    { kind = "at", value = "AT!GSTATUS?" },
+]

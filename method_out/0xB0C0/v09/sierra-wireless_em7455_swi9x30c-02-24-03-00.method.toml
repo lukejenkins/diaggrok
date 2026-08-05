@@ -1,0 +1,24 @@
+version = 9
+cond = "idle"
+modem_make = "Sierra"
+modem_model = "EM7455"
+modem_firmware = "SWI9X30C_02.24.03.00"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo (LTE serving PCI)" },
+]
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT!LTEINFO?" },
+    { kind = "at", value = "AT!GSTATUS?" },
+]

@@ -50,11 +50,11 @@ Split from lte_misc.py per #N tier-3 batch 10.
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_SRCH_GPS_MULTI_PEAKS_VERBOSE_INFO_C
         source: qualcomm_diag_log_codes_h (authority: vendor_official)
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
     aliases:
         LOG_INTERNAL_GPS_VERBOSE_MULTIPEAK_VERSION_2
             source: qxdm_3_12_714_2017_diag_log_codes
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).

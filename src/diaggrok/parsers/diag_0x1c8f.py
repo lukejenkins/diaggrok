@@ -63,14 +63,14 @@ Struct map (payload offsets, all little-endian)
 ===== altitude MSL + DOPs + declination =====
 * 0x045 f32 altitude_msl_m       Height above mean sea level.  ==
   ``AT+QGPSLOC=2`` altitude 100 % of joined polls; == altitude_ellipsoid_m
-  + ~16.4 m (N-Utah geoid undulation ≈ -16.4 m, so MSL sits ABOVE the
-  ellipsoidal height).
+  + ~16.4 m (the capture site's geoid undulation ≈ -16.4 m, so MSL sits ABOVE
+  the ellipsoidal height).
 * 0x049 f32 pdop / 0x04D f32 hdop / 0x051 f32 vdop / 0x055 f32 gdop /
   0x059 f32 tdop.  0.1-quantised.  Assignment is the UNIQUE survivor of all
   120 label permutations under (HDOP==AT-hdop, H<=P<=G, hypot(H,V)~P,
   hypot(P,T)~G).
 * 0x05D f32 magnetic_deviation_deg  0 (velocity-invalid rows) or
-  10.73..11.83 (N-Utah magnetic declination ≈ 11°E).
+  10.73..11.83 (the capture site's magnetic declination ≈ 11°E).
 
 ===== fix reliability + uncertainty ellipse =====
 * 0x061 u32 horizontal_reliability / 0x065 u32 vertical_reliability

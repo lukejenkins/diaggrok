@@ -1,0 +1,21 @@
+version = 2
+cond = "idle"
+modem_make = "Sierra"
+modem_model = "MC7700"
+modem_firmware = "SWI9200X_03.05.29.03ap"
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+]
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT!GSTATUS?" },
+]

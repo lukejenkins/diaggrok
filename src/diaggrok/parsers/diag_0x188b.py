@@ -31,8 +31,8 @@ from diaggrok.registry import register
 #     (EP06A, EG18-NA) and SDX20 (LM960). 2896 records total across the
 #     2026-04-20 corpus. 190/257 bytes constant; 6 coordinate-pair repeats
 #     at [4:12], [22:30], [130:138], [166:174], [220:228], [238:246], all
-#     decoding to the receiver's known static position (41.22°N, -111.94°W
-#     = WirelessHaven lab). A Qualcomm-default second reference pair at
+#     decoding to the receiver's known static position (the capture site;
+#     value withheld). A Qualcomm-default second reference pair at
 #     [40:48] decodes to (38.0000°N, -117.0000°W) constant across all
 #     chipsets.
 #
@@ -47,10 +47,13 @@ from diaggrok.registry import register
 #
 #     Critical new finding: v2/287B stores the receiver's reference
 #     position in BOTH radians AND decimal degrees:
-#       [4:8]   = f32 ref_lat_rad = 0.71934    (41.22°N in radians)
-#       [8:12]  = f32 ref_lon_rad = -1.95366   (-111.94°W in radians)
-#       [24:28] = f32 ref_lat_deg = 41.2151
-#       [28:32] = f32 ref_lon_deg = -111.936
+#       [4:8]   = f32 ref_lat_rad = <bench lat, radians>
+#       [8:12]  = f32 ref_lon_rad = <bench lon, radians>
+#       [24:28] = f32 ref_lat_deg = <bench lat, degrees>
+#       [28:32] = f32 ref_lon_deg = <bench lon, degrees>
+#     (values scrubbed #N — the radian pair recovers the position just as
+#     exactly as the degree pair, so scrubbing only the degrees would have left
+#     it fully readable. The FIELD LAYOUT is the RE finding; the position is not.)
 #     The 257B variant has no decimal-degree fields.
 #
 # **2026-04-21 RE update (1260 v2/287B records, up from 8):** extending

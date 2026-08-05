@@ -1,0 +1,54 @@
+version = 7
+cond = "nr5g"
+modem_make = "Compal"
+modem_model = "RXM-G1"
+modem_firmware = "RXMG1.20.00.244_0C03"
+
+[[field_map]]
+parser_field = "serving_pci"
+quantity = "nr5g_serving_pci"
+status = "verified"
+sources = [
+    { kind = "other", value = "0xB821 NR5G RRC OTA header pci (cross-code)" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "nr_arfcn"
+quantity = "nr5g_dl_arfcn"
+status = "verified"
+sources = [
+    { kind = "other", value = "0xB821 NR5G RRC OTA header arfcn (cross-code)" },
+]
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "nr5g_cell_pci"
+status = "partial"
+sources = [
+    { kind = "other", value = "0xB821 serving pci 596 (serving entry only)" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "nr5g_cell_rsrp_dbm"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+CESQ" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp_raw"
+quantity = "nr5g_cell_rsrp_raw_x128"
+status = "partial"
+sources = [
+    { kind = "other", value = "intra-record rsrp_raw/128 == rsrp dBm" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "nr5g_measured_cell_count"
+status = "partial"
+sources = [
+    { kind = "other", value = "structural (matches entries length)" },
+]

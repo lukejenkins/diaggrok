@@ -1,0 +1,43 @@
+version = 1
+cond = "sky-fix"
+modem_make = "Inseego"
+modem_model = "Skyus"
+modem_firmware = "SDx20WID-1.22.4.1"
+
+[[field_map]]
+parser_field = "engine_state"
+quantity = "gnss_engine_fix_state"
+sources = [
+    { kind = "qmi", value = "QMI_LOC GetEngineState" },
+    { kind = "nmea", value = "$GxGGA field 6 (fix quality 0/1/2)" },
+    { kind = "qmi", value = "QMI_LOC GetEngineState" },
+]
+
+[[field_map]]
+parser_field = "num_engines"
+quantity = "num_meas_engines_active"
+sources = [
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+    { kind = "nmea", value = "$GxGSA fields 4-15 (SVs used in solution)" },
+    { kind = "nmea", value = "$GxGGA field 7 (satellites tracked)" },
+]
+
+[[field_map]]
+parser_field = "field_3_high16"
+quantity = "fix_acquisition_burst_family"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "cold-start drive (clear assistance, no recent fix) to exercise the acquisition burst sequence"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GxGSA fix type 1/2/3 progression (no-fix->2D->3D)"
+
+[[field_map]]
+parser_field = "fix_flags"
+quantity = "fix_validity_flags"
+sources = [
+    { kind = "nmea", value = "$GxGGA field 6 (fix quality) + $GxRMC status A/V" },
+    { kind = "qmi", value = "QMI_LOC GetEngineState" },
+]

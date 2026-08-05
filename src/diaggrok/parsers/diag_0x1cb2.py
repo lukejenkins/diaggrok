@@ -25,21 +25,40 @@ falsification of the original "superset advantage" claim.
 ## Layout (variable size — 13-byte header + NMEA block)
 
     [0]      u8   version                (observed 2 across every record)
-    [1:9]    u64  timestamp_ms           (monotonic 1 ms counter; aligned
-                                          with other GNSS codes' ts)
+    [1:9]    u64  timestamp_ms           (the GNSS engine's epoch time, in ms.
+                                          F3-GROUNDED on the R03A04_01.203
+                                          F3-armed capture (qdb 6552b4be, 100%
+                                          F3): reads UTC/Unix-epoch ms — e.g.
+                                          1782614563628 → 2026-06-28T02:42:43Z,
+                                          matching the capture wallclock to the
+                                          second — and co-varies 1:1 (same ms
+                                          rate) with the engine's GPS
+                                          time-of-week (F3 ``ple_proc.c``
+                                          ``tow_msec``). It is an ABSOLUTE UTC
+                                          clock once the engine has acquired
+                                          time; on the pre-F3 2026-04-22 R03A03
+                                          wardrive it read ~1.9e6 (small),
+                                          consistent with a relative/uptime ms
+                                          before UTC sync. So: engine time
+                                          estimate, absolute-UTC-ms when time is
+                                          known. See #N for the F3 grounding.)
     [9:13]   u32  block_length           (bytes in the NMEA block; always
                                           equals ``len(payload) - 13``)
     [13:]    ascii NMEA sentences, each ``$...*XX`` + ``\r\n``
 
 ## Observed corpus
 
-RM520N-GL (SDX62) firmware RM520NGLAAR03A03M4G across four sessions:
-2026-04-21 (662 records), 2026-04-22 wardrive (1,250), 2026-04-23
-5-modem wardrive (2,330), 2026-04-27 LG290P-paired (616), and
-2026-04-28 LG290P-paired (620).  Sizes 552-987 B driven by how many
+RM520N-GL (SDX62) across two firmware builds.  **R03A03**
+(RM520NGLAAR03A03M4G): 2026-04-21 (662 records), 2026-04-22 wardrive
+(1,250), 2026-04-23 5-modem wardrive (2,330), 2026-04-27 LG290P-paired
+(616), 2026-04-28 LG290P-paired (620) — 5,478 records.  **R03A04**
+(RM520NGLAAR03A04M4G_01.203.01.203): the 2026-06-18..-07-02
+``5govalidate-f3`` fleet — 2,245 records across 7 F3-armed captures,
+475/475 parsed and 1,904/1,904 sentence-checksums valid on the
+2026-06-28T0243Z capture alone.  Sizes 552-987 B driven by how many
 SVs are in view at each epoch (GSV payload varies with SV count).
 ``version==2`` and ``block_length == len(payload) - 13`` hold across
-every record (5,478/5,478 audited).  ``payload[11:13]`` (the high half
+every record on both builds.  ``payload[11:13]`` (the high half
 of the u32 ``block_length``) is also zero across every record on this
 firmware, but the field is correctly typed as ``u32`` per its position.
 
@@ -47,7 +66,12 @@ A corpus-wide ``.scan.json`` walk on 2026-05-02 (and a direct
 ``iter_records`` re-probe on 2026-05-25 across 11 LG290P-paired
 GNSS-active captures — 5,072,511 DIAG records / ~1,350 MB
 decompressed, 4 non-SDX62 chipset families) confirms 0x1CB2 is
-emitted **only** by RM520N-GL R03A03 SDX62.  Per the 2026-05-25
+emitted **only** by RM520N-GL SDX62 (both R03A03 and R03A04 builds) —
+NOT R03A03-exclusive as earlier prose claimed (2026-07-15 #N F3
+pass added the R03A04_01.203 emitter).  Because both builds are the
+SAME chipset (SDX62), the ``≥2 QCA generations`` closure gate is still
+NOT satisfied — this is one generation, two firmware builds.  Per the
+2026-05-25
 direct probe, the same captures all carry the per-sentence NMEA
 sibling 0x1384 (286-7,315 records each) — the modems use the DIAG
 NMEA encapsulation surface, they just do not use the batched 0x1CB2
@@ -187,10 +211,14 @@ def _verify_nmea_checksum(sentence: str) -> bool:
 # SAME talker-ID set and the SAME sentence types, with per-sentence counts
 # matching the DIAG stream within ~1% (window-edge only). So the AT NMEA
 # port IS the ground-truth source — this recipe is unusually strong (content
-# equality, not a raw→physical scale hunt). The one field that AT cannot
-# ground is timestamp_ms: that GNSS-engine epoch clock is exactly 0x1CB2's
-# advantage over AT NMEA (host wallclock-on-receipt), so it is flagged as
-# having no AT reference.
+# equality, not a raw→physical scale hunt). The one field AT cannot ground
+# is timestamp_ms, but F3 now can: on the R03A04_01.203 F3-armed capture
+# (qdb 6552b4be, 100% F3, #N 2026-07-15) timestamp_ms reads UTC/Unix-epoch
+# ms (1782614563628 → 2026-06-28T02:42:43Z == capture wallclock) and
+# co-varies 1:1 with the GNSS engine's GPS time-of-week (F3 tow_msec). So
+# timestamp_ms is the engine's epoch clock, absolute-UTC-ms once time is
+# acquired — that absolute GNSS-engine timestamp is exactly 0x1CB2's
+# advantage over AT NMEA's host wallclock-on-receipt.
 
 @register(
     0x1CB2, domain="gnss",
@@ -199,9 +227,10 @@ def _verify_nmea_checksum(sentence: str) -> bool:
         "Batched NMEA-over-DIAG (multiple sentences per record). "
         "13B header (version u8 + u64 timestamp_ms + u32 block_length) + "
         "ASCII NMEA block. DIAG-domain mirror of the AT NMEA stream on the "
-        "validated SDX62 R03A03 corpus — same talker IDs and sentence "
-        "types as the AT port. Adds per-epoch GNSS-engine timestamps that "
-        "AT NMEA's host wallclock can't provide."
+        "validated SDX62 corpus (RM520N-GL R03A03 + R03A04_01.203) — same "
+        "talker IDs and sentence types as the AT port. timestamp_ms is "
+        "F3-grounded as UTC/Unix-epoch ms (the GNSS-engine epoch clock), "
+        "which AT NMEA's host wallclock can't provide."
     ),
     version=2,
     author="Luke Jenkins",

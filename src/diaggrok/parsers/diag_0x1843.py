@@ -247,11 +247,9 @@ prefer the new structural fields (`slot_count`, `active_slot_count`).
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_EVENTS_DS_GPRS_MAC_MSG_RECEIVED
         source: qxdm_3_12_714_2017_diag_log_codes (authority: community)
-    aliases:
-        LOG_EVENTS_GPRS_DS_MAC_MSG_RECEIVED
-            source: qxdm_3_12_714_2017_diag_log_codes
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
+    aliases: (none recorded)
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).
@@ -425,7 +423,7 @@ class Diag0x1843:
         "corpus-invariant (47,828/47,828 records); bytes +2:+4 form a u16le "
         "state field that varies with GNSS-subsystem state transitions and adds "
         "M2000-only `0xd816` / `0xd80b` and FN980-only `0xff00` / `0xff01` to the "
-        "previously-known `0x0000` / `0xd80d` / `0xc002` set. Session 0b1d also "
+        "previously-known `0x0000` / `0xd80d` / `0xc002` set. <redacted-ref> also "
         "discovered SDX62 slot-layout divergence: RM520N-GL emits 0x1843 with "
         "the canonical 3952B size + 4B-header layout but the per-SV slot "
         "active-marker `85 40 00 01` is absent (107/107 records have "

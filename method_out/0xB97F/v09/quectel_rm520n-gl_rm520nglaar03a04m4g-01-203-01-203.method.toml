@@ -1,0 +1,84 @@
+version = 9
+cond = "nr5g"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A04M4G_01.203.01.203"
+
+[[field_map]]
+parser_field = "serving_pci"
+quantity = "nr5g_serving_pci"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "nr_arfcn"
+quantity = "nr5g_dl_arfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QNWINFO" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "entries.pci"
+quantity = "nr5g_cell_pci"
+status = "partial"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrp"
+quantity = "nr5g_cell_rsrp_dbm"
+status = "verified"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QENG=\"servingcell\""
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetCellLocationInfo"
+
+[[field_map.sources]]
+kind = "other"
+value = "F3 quectel_signal.c:552 ql_get_nr5g_rsrp / quectel_led_modem.c:736 cell_msmts.rsrp"
+
+[[field_map]]
+parser_field = "entries.rsrp_raw"
+quantity = "nr5g_cell_rsrp_raw_x128"
+status = "verified"
+sources = [
+    { kind = "other", value = "intra-record rsrp_raw/128 == rsrp dBm == AT/QMI −98" },
+]
+
+[[field_map]]
+parser_field = "entries.rsrq"
+quantity = "nr5g_cell_rsrq_db"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "other", value = "intra-record rsrq_raw/128 == QENG RSRQ" },
+]
+
+[[field_map]]
+parser_field = "num_cells"
+quantity = "nr5g_measured_cell_count"
+status = "partial"
+sources = [
+    { kind = "other", value = "structural (matches entries length = 2)" },
+]
+
+[[field_map]]
+parser_field = "num_cc"
+quantity = "nr5g_component_carrier_count"
+status = "partial"
+sources = [
+    { kind = "trigger", value = "connected NR carrier-aggregation drive" },
+    { kind = "other", value = "structural (config&0xFF == number of decoded CC blocks)" },
+]

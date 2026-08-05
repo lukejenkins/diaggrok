@@ -75,6 +75,13 @@ def _synthetic_b193() -> bytes:
 
 
 def test_b193_decodes_synthetic_frame():
+    """v36 identity decodes; its signal fields are REFUTED and gated to None (#N).
+
+    The old assertions (rsrp == -76.5 / rsrq == -10.0) pinned the v36 `-raw/10`
+    scale, which the LM960's own F3 and AT show is wideband RSSI rather than
+    serving RSRP (~36 dB hot, and anti-correlated with truth across the three
+    grounded points). pci/earfcn stay verified.
+    """
     rec = parse_0xb193(1000, _synthetic_b193())
     assert rec is not None
     assert rec.version == 1
@@ -83,5 +90,5 @@ def test_b193_decodes_synthetic_frame():
     assert len(rec.entries) == 1
     assert rec.entries[0].pci == 6
     assert rec.entries[0].earfcn == 800
-    assert rec.entries[0].rsrp == -76.5
-    assert rec.entries[0].rsrq == -10.0
+    assert rec.entries[0].rsrp is None
+    assert rec.entries[0].rsrq is None

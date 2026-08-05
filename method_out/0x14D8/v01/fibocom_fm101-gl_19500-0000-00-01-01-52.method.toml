@@ -1,0 +1,44 @@
+version = 1
+cond = "sky-fix"
+modem_make = "Fibocom"
+modem_model = "FM101-GL"
+modem_firmware = "19500.0000.00.01.01.52"
+
+[[field_map]]
+parser_field = "engine_state"
+quantity = "gnss_engine_fix_state"
+sources = [
+    { kind = "at", value = "AT+FGPS_LOCDATA" },
+    { kind = "at", value = "AT+FGPS_INFO" },
+    { kind = "nmea", value = "$GxGGA field 6 (fix quality 0/1/2)" },
+    { kind = "qmi", value = "QMI_LOC GetEngineState" },
+]
+
+[[field_map]]
+parser_field = "num_engines"
+quantity = "num_meas_engines_active"
+sources = [
+    { kind = "nmea", value = "$GxGSA fields 4-15 (SVs used in solution)" },
+    { kind = "nmea", value = "$GxGGA field 7 (satellites tracked)" },
+    { kind = "qmi", value = "QMI_LOC GetGnssEngineState" },
+]
+
+[[field_map]]
+parser_field = "field_3_high16"
+quantity = "fix_acquisition_burst_family"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "cold-start drive (clear assistance, no recent fix) to exercise the acquisition burst sequence"
+
+[[field_map.sources]]
+kind = "nmea"
+value = "$GxGSA fix type 1/2/3 progression (no-fix->2D->3D)"
+
+[[field_map]]
+parser_field = "fix_flags"
+quantity = "fix_validity_flags"
+sources = [
+    { kind = "nmea", value = "$GxGGA field 6 (fix quality) + $GxRMC status A/V" },
+    { kind = "at", value = "AT+FGPS_LOCDATA" },
+]

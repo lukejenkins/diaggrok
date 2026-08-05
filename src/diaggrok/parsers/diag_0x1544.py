@@ -65,6 +65,96 @@ RE history:
   semantics).  ref_value left at T0 — polymorphic across firmwares,
   per-firmware RE deferred.  See "v8 — header-field semantic
   interpretation" section below for the cross-chipset value tables.
+- 2026-07-27 #N (v11): **THE BODY IS A QMI MESSAGE, AND THE HEADER IS
+  QMI FRAMING.**  The code's own canonical name has said so since the
+  names-block landed — ``LOG_QMI_MCS_QCSI_PKT``, a QMI Common Service
+  Interface packet log — but every RE pass v1..v10 read it as a bespoke
+  GNSS format and named fields accordingly.  Two measurements settle it:
+
+  1. **The body is a chain of QMI TLVs** — ``(type u8, length u16 LE,
+     value[length])``, repeated to the end of the body.  Walking that
+     grammar consumes the body **EXACTLY, on 100.0% of bodies, on every
+     body_kind, on both chipsets measured**: 7,556/7,556 (EG18-NA SDX20 V2)
+     and 4,318/4,318 (RM500Q-AE SDX55), zero trailing bytes, zero overruns.
+     Exact consumption is the detector, not a nicety — a merely-plausible
+     grammar leaves slack.
+  2. **Four header fields partition on QMI framing**, cross-tabulated
+     against the TLV chain over the RM500Q-AE capture:
+
+         header field            QMI role       observed
+         ----------------------  -------------  ---------------------------
+         num_constellations @4   service id     0x10 LOC (3786), 0x08 AT
+                                                (474), 0x03 (46), 0x01 (6),
+                                                0x05 (2), 0x2a (6)
+         sub_type @1             message type   LOC: all 2 (indication);
+                                                AT: {0:204, 1:204, 2:66} —
+                                                204 requests balanced
+                                                against 204 responses
+         counter2 @20            message id     scoped PER SERVICE — msg
+                                                0x0026 appears under svc
+                                                0x08, 0x10 AND 0x2a with
+                                                unrelated payloads
+         constellation_mask @12  client id      one constant per service
+                                                (LOC 131, AT 6, NAS 378)
+
+  What this explains, retroactively:
+
+  * The three "body kinds" are three QMI_LOC indications.  ``nmea`` is a
+    message whose single TLV 0x01 value is an NMEA sentence.  ``binary_sv``
+    is ``[0x01, 0x10]`` — a 1-byte mandatory TLV then TLV 0x10 whose value
+    is ``(count u8, svInfo[count] × 28 B)``.  ``idle`` is a lone TLV 0x02.
+  * ⛔ **v6's body[4]/body[5]/body[6] semantics are REFUTED.**  They are not
+    three fields; they are ONE TLV header.  ``body_header_signature`` = the
+    TLV *type* byte (hence its value 0x10 — a type, not an "ME format
+    code"); ``body_header_measurement`` = the **low** byte of that TLV's u16
+    length; ``body_header_enum`` = its **high** byte.  This is why v6's
+    "size echo" formula was ``(slots*28+1) mod 256`` — a mod-256 IS a low
+    byte — and why the "receiver capability class" partitioned chipset
+    families: it is the length's high byte, which tracks SV count, which
+    tracks receiver capacity.  v6 measured a real correlation and then named
+    it as three semantic fields instead of one length.  The fields are KEPT
+    (downstream compat, and the bytes are real) but their names are now
+    documented as misnomers; use ``tlvs`` instead.
+  * ⛔ **v8's "counter2 semantics are firmware-specific, not a universal
+    taxonomy" is REFUTED in its diagnosis** (the correlation it measured
+    stands).  counter2 is a QMI **message id**, which is scoped per
+    *service*, not per *firmware*.  The v8 cross-chipset value table
+    compared message ids drawn from different services as though they were
+    one namespace — which is exactly why no universal taxonomy appeared.
+  * ``body_seq_flag`` (body[3]) is TLV 0x01's 1-byte value on the
+    ``binary_sv`` shape.  v5 described it as "toggles 0/1, no correlation
+    with tracking-slot ratio" — consistent with a mandatory boolean.
+  * ``body_word1`` (v10) is simply the first TLV's length.  The .ksy left it
+    un-named because "the two roles disagree" (NMEA text length vs constant
+    1 on binary_sv); a length field taking different values for different
+    TLV values was the clue, not the obstacle.
+
+  Newly decoded this pass, both cross-checked against the modem's own AT
+  surface in the SAME capture (``at_poll.jsonl.zst``, ``AT+QGPSLOC=2``):
+
+  * **QMI_LOC position report** (svc 0x10, the 29-TLV chain) — TLV 0x10 f64
+    latitude, 0x11 f64 longitude, 0x1A f32 altitude wrt ellipsoid, 0x1B f32
+    altitude wrt mean sea level, 0x24 3×f32 (PDOP, HDOP, VDOP), 0x25 u64 UTC
+    ms, 0x26 u8 leap seconds, 0x27 (u16 gps_week, u32 tow_ms).  Six
+    independent agreements with AT ground truth: lat/lon to AT's 5-decimal
+    rounding; 0x1B altitude equal to AT's altitude while 0x1A sits 13 m
+    lower (the geoid separation, so the ELLIPSOID/MSL assignment is not
+    interchangeable); 0x24's middle f32 equal to AT's HDOP; and 0x25 / 0x27 /
+    0x26 mutually consistent — gps_week+tow resolves 18 s ahead of the
+    0x25 UTC stamp, which is exactly 0x26's value.
+  * **QMI AT service** (svc 0x08) — TLV 0x01 carries a length-prefixed
+    embedded AT string: the ``+QGPSLOC:`` response text on the sub_type=0
+    message and the bare ``+QGPSLOC`` command name on the sub_type=2
+    indication.  This is scope item 2 of #N: the bytes self-label with
+    the literal command name, so the body_kind is read off the capture
+    rather than invented.
+
+  Consequence for classification: ``unknown`` no longer means "12-21% of
+  records we cannot read".  A body whose TLV chain closes exactly is now
+  ``qmi_position_report`` / ``qmi_at_text`` / ``qmi_tlv_chain``; ``unknown``
+  is reserved for bodies where the grammar does NOT close, so the label
+  finally carries information.  See #N.
+
 - 2026-05-15 #N (v8.1, docs-only): ref_value formally classified as
   "intentionally polymorphic" per Option (b) of the issue's acceptance
   criteria — see module-level ``_REF_VALUE_INTERPRETATIONS`` lookup
@@ -426,6 +516,347 @@ def interpret_ref_value(
     return dict(entry)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# QMI framing (v11, #N)
+# ─────────────────────────────────────────────────────────────────────
+# 0x1544 is LOG_QMI_MCS_QCSI_PKT — a QMI Common Service Interface packet
+# log. The 28-byte header is QMI framing and the body is a QMI message
+# payload: a chain of (type u8, length u16 LE, value[length]) TLVs.
+
+_QMI_TLV_HDR_SZ = 3
+
+# QMI message type, from `sub_type` (u8 @1). Grounded on the AT service in
+# the RM500Q-AE capture, where requests and responses balance EXACTLY
+# (204 / 204) — a control-flow signature a mis-assignment would not produce.
+_QMI_MESSAGE_TYPES = {0: 'request', 1: 'response', 2: 'indication'}
+
+# QMI service id, from `num_constellations` (u8 @4).
+#
+# ⛔ ONLY payload-corroborated entries appear here. Six service ids are
+# observed in the corpus (0x01, 0x03, 0x05, 0x08, 0x10, 0x2a) but naming a
+# service from a remembered id table is inventing a label — the 0x1807
+# marker_a/marker_b rule (#N) applies to enum labels as much as to field
+# names. These two are named because THIS capture's payloads prove them:
+#   0x10 → the NMEA sentences, per-SV tables and f64 lat/lon position
+#          reports all arrive under it
+#   0x08 → its TLV 0x01 carries literal embedded "+QGPSLOC" AT text
+# The other four are left unnamed deliberately; `qmi_service_id` still
+# exposes the raw byte for every record. Add an entry only with an
+# authoritative source or in-capture payload evidence.
+_QMI_SERVICES = {
+    0x08: 'AT',
+    0x10: 'LOC',
+}
+
+# QMI_LOC position-report TLV types decoded in v11 (#N). Each was
+# confirmed against AT+QGPSLOC=2 ground truth in the same capture — see the
+# module docstring's v11 note for the six agreements.
+_TLV_LATITUDE = 0x10          # f64 degrees
+_TLV_LONGITUDE = 0x11         # f64 degrees
+_TLV_HOR_UNC = 0x12           # f32 metres
+_TLV_ALT_ELLIPSOID = 0x1A     # f32 metres
+_TLV_ALT_MSL = 0x1B           # f32 metres
+_TLV_DOP = 0x24               # 3 × f32: PDOP, HDOP, VDOP
+_TLV_UTC_MS = 0x25            # u64 milliseconds since the Unix epoch
+_TLV_LEAP_SECONDS = 0x26      # u8
+_TLV_GPS_TIME = 0x27          # u16 gps_week + u32 tow_ms
+
+
+@dataclass
+class QmiTlv:
+    """One TLV of a QMI message payload: (type u8, length u16 LE, value).
+
+    ``value`` is the raw slice — it may hold decoded PII (the position
+    report's f64 coordinates are the user's own location). ``to_dict()``
+    deliberately emits **type and length only**, never the value, so a
+    committed derived artifact (recipe output, corpus sweep, session log)
+    carries the message STRUCTURE without the captured values. Consumers
+    that genuinely want a value read it off the object.
+    """
+    type: int
+    length: int
+    value: bytes
+
+    def to_dict(self) -> dict[str, Any]:
+        return {'type': self.type, 'length': self.length}
+
+
+def walk_qmi_tlvs(body: bytes) -> tuple[list[QmiTlv], int]:
+    """Walk a QMI TLV chain over ``body``.
+
+    Returns ``(tlvs, trailing)`` where ``trailing`` is the number of bytes
+    the chain did not consume — 0 on a well-formed chain. The walk stops at
+    the first TLV whose declared length would overrun the body, leaving the
+    remainder in ``trailing`` rather than raising.
+
+    ⚠️ ``trailing`` is the correctness detector for this grammar, not a
+    diagnostic afterthought. Measured 0 on 11,874/11,874 bodies across
+    EG18-NA SDX20 V2 and RM500Q-AE SDX55 (#N); a nonzero value means the
+    body is not a plain QMI message and must not be interpreted as one.
+    """
+    tlvs: list[QmiTlv] = []
+    off = 0
+    n = len(body)
+    while off + _QMI_TLV_HDR_SZ <= n:
+        t = body[off]
+        ln = unpack_from('<H', body, off + 1)[0]
+        end = off + _QMI_TLV_HDR_SZ + ln
+        if end > n:
+            break
+        tlvs.append(QmiTlv(type=t, length=ln, value=body[off + _QMI_TLV_HDR_SZ:end]))
+        off = end
+    return tlvs, n - off
+
+
+@dataclass
+class QmiLocPositionReport:
+    """A QMI_LOC position report decoded from the body's TLV chain (#N).
+
+    Every field below is cross-checked against ``AT+QGPSLOC=2`` on the same
+    modem in the same capture (see the module docstring's v11 note). Two
+    checks are worth restating because they pin assignments that would
+    otherwise be interchangeable:
+
+    * ``altitude_msl_m`` equals AT's altitude field exactly, while
+      ``altitude_ellipsoid_m`` sits ~13 m lower — the geoid separation at
+      the capture site. Swapping the two would break that agreement, so
+      TLV 0x1A/0x1B are not assigned by convention but by measurement.
+    * ``gps_week`` + ``gps_tow_ms`` resolves exactly ``leap_seconds`` ahead
+      of ``utc_timestamp_ms``. Three fields mutually confirming one another
+      is stronger evidence than any one of them matching AT.
+
+    Fields are None when the corresponding TLV is absent — QMI optional
+    TLVs really are optional, and a short position message (the
+    ``[0x01 0x10 0x11]`` shape) carries coordinates and nothing else.
+    """
+    latitude_deg: float | None = None
+    longitude_deg: float | None = None
+    horizontal_unc_m: float | None = None
+    altitude_ellipsoid_m: float | None = None
+    altitude_msl_m: float | None = None
+    pdop: float | None = None
+    hdop: float | None = None
+    vdop: float | None = None
+    utc_timestamp_ms: int | None = None
+    leap_seconds: int | None = None
+    gps_week: int | None = None
+    gps_tow_ms: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'latitude_deg': self.latitude_deg,
+            'longitude_deg': self.longitude_deg,
+            'horizontal_unc_m': self.horizontal_unc_m,
+            'altitude_ellipsoid_m': self.altitude_ellipsoid_m,
+            'altitude_msl_m': self.altitude_msl_m,
+            'pdop': self.pdop,
+            'hdop': self.hdop,
+            'vdop': self.vdop,
+            'utc_timestamp_ms': self.utc_timestamp_ms,
+            'leap_seconds': self.leap_seconds,
+            'gps_week': self.gps_week,
+            'gps_tow_ms': self.gps_tow_ms,
+        }
+
+    @property
+    def has_position(self) -> bool:
+        return self.latitude_deg is not None and self.longitude_deg is not None
+
+
+def _decode_qmi_loc_position(tlvs: list[QmiTlv]) -> QmiLocPositionReport | None:
+    """Decode a QMI_LOC position report from a walked TLV chain.
+
+    Returns None unless BOTH the f64 latitude and f64 longitude TLVs are
+    present at their expected widths. Requiring the pair (and the exact
+    8-byte width) keeps this from firing on the unrelated messages that also
+    happen to use types 0x10/0x11 — e.g. the ``binary_sv`` shape's TLV 0x10
+    is a 981-byte SV array, not a coordinate.
+    """
+    by_type: dict[int, QmiTlv] = {}
+    for t in tlvs:
+        by_type.setdefault(t.type, t)
+
+    lat_tlv = by_type.get(_TLV_LATITUDE)
+    lon_tlv = by_type.get(_TLV_LONGITUDE)
+    if lat_tlv is None or lon_tlv is None:
+        return None
+    if lat_tlv.length != 8 or lon_tlv.length != 8:
+        return None
+
+    out = QmiLocPositionReport(
+        latitude_deg=unpack_from('<d', lat_tlv.value)[0],
+        longitude_deg=unpack_from('<d', lon_tlv.value)[0],
+    )
+
+    def _f32(tlv_type: int) -> float | None:
+        tlv = by_type.get(tlv_type)
+        if tlv is None or tlv.length != 4:
+            return None
+        return unpack_from('<f', tlv.value)[0]
+
+    out.horizontal_unc_m = _f32(_TLV_HOR_UNC)
+    out.altitude_ellipsoid_m = _f32(_TLV_ALT_ELLIPSOID)
+    out.altitude_msl_m = _f32(_TLV_ALT_MSL)
+
+    dop = by_type.get(_TLV_DOP)
+    if dop is not None and dop.length == 12:
+        out.pdop, out.hdop, out.vdop = unpack_from('<3f', dop.value)
+
+    utc = by_type.get(_TLV_UTC_MS)
+    if utc is not None and utc.length == 8:
+        out.utc_timestamp_ms = unpack_from('<Q', utc.value)[0]
+
+    leap = by_type.get(_TLV_LEAP_SECONDS)
+    if leap is not None and leap.length == 1:
+        out.leap_seconds = leap.value[0]
+
+    gps = by_type.get(_TLV_GPS_TIME)
+    if gps is not None and gps.length == 6:
+        out.gps_week = unpack_from('<H', gps.value)[0]
+        out.gps_tow_ms = unpack_from('<I', gps.value, 2)[0]
+
+    return out
+
+
+def _decode_qmi_at_text(tlvs: list[QmiTlv]) -> str | None:
+    """Extract the embedded AT string from a QMI AT-service TLV 0x01 value.
+
+    Two inner layouts are attested on RM500Q-AE, both a fixed prelude then a
+    length-prefixed string:
+
+        sub_type=0 (carries the response text)
+            u32 handle | u8 | u8 | u16 text_len | text[text_len]
+        sub_type=2 (carries the bare command name)
+            u32 handle | u32       | u8  text_len | text[text_len]
+
+    Rather than key off sub_type — which would bake in one modem's
+    convention — each layout is tried and accepted only if its length
+    prefix consumes the value EXACTLY. Same detector as the TLV walk: a
+    wrong layout cannot silently pass unless the two length fields agree,
+    and the printability check below closes that residual gap.
+    """
+    if not tlvs or tlvs[0].type != _TAG_01:
+        return None
+    val = tlvs[0].value
+
+    candidates: list[bytes] = []
+    # sub_type=2 layout: u8 length at offset 8.
+    if len(val) >= 9 and val[8] == len(val) - 9:
+        candidates.append(val[9:])
+    # sub_type=0 layout: u16 length at offset 6.
+    if len(val) >= 8 and unpack_from('<H', val, 6)[0] == len(val) - 8:
+        candidates.append(val[8:])
+
+    for raw in candidates:
+        if not raw:
+            continue
+        # An AT command / response is printable ASCII plus CR/LF/TAB. Any
+        # other byte means the length prefix matched by coincidence.
+        if any(not (0x20 <= b < 0x7F or b in (0x09, 0x0A, 0x0D)) for b in raw):
+            continue
+        try:
+            return raw.decode('ascii').strip('\r\n')
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+@dataclass
+class QgpslocFix:
+    """Fields of a Quectel ``+QGPSLOC:`` response embedded in an AT-service body.
+
+    Scope item 3 of #N. The AT text is `<mode 2>` form — decimal degrees —
+    which is what makes it directly comparable to the QMI_LOC TLV f64
+    coordinates decoded from the LOC-service records of the same capture:
+
+        +QGPSLOC: <utc>,<lat>,<lon>,<hdop>,<altitude>,<fix>,<cog>,<spkm>,
+                  <spkn>,<date>,<nsat>
+
+    ``<cog>`` is routinely empty on a stationary fix, so every field is
+    optional and a missing one stays None rather than failing the parse.
+    ``altitude_m`` is the mean-sea-level altitude — it is the field that
+    equals the position report's TLV 0x1B, NOT its TLV 0x1A.
+    """
+    utc: str | None = None
+    latitude_deg: float | None = None
+    longitude_deg: float | None = None
+    hdop: float | None = None
+    altitude_m: float | None = None
+    fix_type: int | None = None
+    course_over_ground: float | None = None
+    speed_kmh: float | None = None
+    speed_knots: float | None = None
+    date: str | None = None
+    num_satellites: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'utc': self.utc,
+            'latitude_deg': self.latitude_deg,
+            'longitude_deg': self.longitude_deg,
+            'hdop': self.hdop,
+            'altitude_m': self.altitude_m,
+            'fix_type': self.fix_type,
+            'course_over_ground': self.course_over_ground,
+            'speed_kmh': self.speed_kmh,
+            'speed_knots': self.speed_knots,
+            'date': self.date,
+            'num_satellites': self.num_satellites,
+        }
+
+
+_QGPSLOC_PREFIX = '+QGPSLOC:'
+
+
+def parse_qgpsloc(text: str) -> QgpslocFix | None:
+    """Parse a ``+QGPSLOC:`` response line into a QgpslocFix.
+
+    Returns None if ``text`` is not a ``+QGPSLOC:`` response (e.g. it is the
+    bare command name, which the AT service also carries). Positional
+    fields are decoded independently — an unparseable or empty field yields
+    None for that field only, so one odd value never discards the fix.
+    """
+    if _QGPSLOC_PREFIX not in text:
+        return None
+    body = text.split(_QGPSLOC_PREFIX, 1)[1].strip()
+    if not body:
+        return None
+    parts = [p.strip() for p in body.split(',')]
+
+    def _f(i: int) -> float | None:
+        if i >= len(parts) or not parts[i]:
+            return None
+        try:
+            return float(parts[i])
+        except ValueError:
+            return None
+
+    def _i(i: int) -> int | None:
+        if i >= len(parts) or not parts[i]:
+            return None
+        try:
+            return int(parts[i])
+        except ValueError:
+            return None
+
+    def _s(i: int) -> str | None:
+        return parts[i] if i < len(parts) and parts[i] else None
+
+    return QgpslocFix(
+        utc=_s(0),
+        latitude_deg=_f(1),
+        longitude_deg=_f(2),
+        hdop=_f(3),
+        altitude_m=_f(4),
+        fix_type=_i(5),
+        course_over_ground=_f(6),
+        speed_kmh=_f(7),
+        speed_knots=_f(8),
+        date=_s(9),
+        num_satellites=_i(10),
+    )
+
+
 @dataclass
 class SvSlot:
     """One row of the binary-body per-SV tracking table (28B stride).
@@ -515,7 +946,12 @@ class Diag0x1544:
     body_len: int
     body_raw: bytes
     # Discriminator: 'nmea' | 'binary_sv' | 'idle' | 'fn980_periodic_bundle'
-    # | 'unknown'
+    # | 'qmi_position_report' | 'qmi_at_text' | 'qmi_tlv_chain' | 'unknown'
+    #
+    # The last three are v11 (#N) refinements of what used to be a single
+    # 'unknown' bucket holding 12-21% of records.  'unknown' now means the
+    # QMI TLV grammar did NOT close on the body (tlv_trailing_bytes != 0) —
+    # i.e. genuinely unmodelled framing, not merely an uninterpreted payload.
     body_kind: str = 'unknown'
     # Sub-kind index 1..4 when body_kind == 'fn980_periodic_bundle' (#N);
     # None on every other body_kind.  Indexes the role within the 5-record
@@ -568,35 +1004,142 @@ class Diag0x1544:
     body_header_measurement: int | None = None
     body_header_enum: int | None = None
     sv_slots: list[SvSlot] | None = None
+    # v10 (2026-07-27, <redacted-ref> Kaitai layout re-audit, #N) — two RAW body
+    # words the parser previously read and then dropped before the dataclass.
+    # Both are surfaced UN-NAMED (raw), not semantically named: F3 on this
+    # modem's GNSS stack is rich (cd_*/tm_*/loc_*/sm_api sites) but carries NO
+    # per-field label for either, and the 0x1807 marker_a/marker_b rule (#N)
+    # says F3 silence on a confirmed subsystem means expose raw, never invent.
+    #
+    #   body_tag_raw — body[0] verbatim, whatever its value.  The existing
+    #     ``body_tag`` is NOT this byte: ``_decode_nmea_tlv`` returns None for
+    #     any tag != 0x01, so a non-0x01 body's tag byte vanished from the
+    #     dataclass entirely (it survived only inside body_raw).  Tag 0x14 is
+    #     attested in the corpus scan index, so this is live data, not theory.
+    #   body_word1 — the u16 LE at body[1:3].  ``_decode_nmea_tlv`` reads this
+    #     word on EVERY tag-0x01 body to bound the sentence, then discards it
+    #     unless the payload happens to start with '$'.  Measured: it is the
+    #     NMEA text length on nmea bodies, and is dropped on the 12-21% of
+    #     records that are neither nmea nor binary_sv (882/7,556 on EG18-NA
+    #     SDX20 V2; 916/4,320 on RM500Q-AE SDX55).
+    #
+    # Both are None only when the body is too short to contain them (body_len
+    # < 1 and < 3 respectively) — mirroring the .ksy's `if: body_len >= 3`
+    # gate so the layout closes 3-way.  See libs/diagspec/ksy/diag_0x1544.ksy.
+    body_tag_raw: int | None = None
+    body_word1: int | None = None
+    # v11 (2026-07-27, #N) — QMI framing.  The body is a QMI message
+    # payload; `tlvs` is its TLV chain and `tlv_trailing_bytes` is how many
+    # bytes the chain failed to consume (0 on every one of the 11,874 bodies
+    # measured — see walk_qmi_tlvs).  `tlv_trailing_bytes != 0` is the signal
+    # that a body is NOT a plain QMI message and must not be read as one.
+    tlvs: list[QmiTlv] | None = None
+    tlv_trailing_bytes: int | None = None
+    # Populated when the chain carries an f64 lat/lon pair (svc 0x10 LOC).
+    position: QmiLocPositionReport | None = None
+    # Populated on QMI AT-service bodies (svc 0x08): the embedded AT string,
+    # and its decoded fields when that string is a `+QGPSLOC:` response.
+    at_text: str | None = None
+    qgpsloc: QgpslocFix | None = None
+
+    @property
+    def qmi_service_id(self) -> int:
+        """QMI service id — the real meaning of ``num_constellations`` (u8 @4).
+
+        v11 (#N).  Grounded by cross-tabulation against the body's TLV
+        chain: 0x10 carries every NMEA / per-SV / position payload and 0x08
+        carries literal embedded ``+QGPSLOC`` AT text.  The legacy name is
+        kept on the dataclass for compatibility and because it is the name
+        the .ksy raw-field diff pins.
+        """
+        return self.num_constellations
+
+    @property
+    def qmi_service_name(self) -> str | None:
+        """Name of ``qmi_service_id`` for the two payload-corroborated
+        services; None otherwise.  Deliberately sparse — see _QMI_SERVICES."""
+        return _QMI_SERVICES.get(self.num_constellations)
+
+    @property
+    def qmi_message_id(self) -> int:
+        """QMI message id — the real meaning of ``counter2`` (u32 @20).
+
+        v11 (#N) supersedes v8's ``body_format_subcode`` DIAGNOSIS while
+        keeping its measurement: the value does predict body shape with 100%
+        purity, because a message id determines a message's payload.  It is
+        scoped **per service**, not per firmware, which is why v8's
+        cross-chipset table found no universal taxonomy — it was comparing
+        ids from different services in one namespace.  Always read this
+        together with ``qmi_service_id``; the pair is the key, not the id.
+        """
+        return self.counter2
+
+    @property
+    def qmi_message_type(self) -> str | None:
+        """'request' / 'response' / 'indication' from ``sub_type`` (u8 @1).
+
+        v11 (#N).  Grounded on the AT service, where requests and
+        responses balance exactly (204/204) in the RM500Q-AE capture.
+        """
+        return _QMI_MESSAGE_TYPES.get(self.sub_type)
+
+    @property
+    def qmi_client_id(self) -> int:
+        """QMI client id — the real meaning of ``constellation_mask`` (u16 @12).
+
+        v11 (#N).  Holds one constant value per service within a capture
+        (LOC 131, AT 6, NAS 378 on RM500Q-AE), which is a per-service client
+        handle and not the "active-band bitmask" v8 named it.
+        """
+        return self.constellation_mask
 
     @property
     def me_format_code(self) -> int | None:
-        """Semantic alias for body_header_signature — Measurement Engine
-        format code.  0x10 = modern, 0x02 = compact."""
+        """⛔ REFUTED NAME, kept for compatibility (v11, #N).
+
+        This is not a "Measurement Engine format code" — it is the **type
+        byte of the body's second QMI TLV**.  Its value 0x10 is a TLV type,
+        not a format enum.  Use ``tlvs`` instead.
+        """
         return self.body_header_signature
 
     @property
     def receiver_class(self) -> int | None:
-        """Semantic alias for body_header_enum — receiver capability
-        class; strongly per-chipset-family."""
+        """⛔ REFUTED NAME, kept for compatibility (v11, #N).
+
+        This is not a "receiver capability class" — it is the **high byte of
+        that TLV's u16 length**.  It appeared to partition chipset families
+        because the length tracks the SV-array size, which tracks receiver
+        capacity.  Use ``tlvs`` instead.
+        """
         return self.body_header_enum
 
     @property
     def body_format_subcode(self) -> int:
-        """v8 semantic alias for ``counter2`` — firmware-emitted body-format
-        classifier.  Predicts ``body_kind`` with 100% purity for the
-        majority subcode values within a single capture; per-firmware
-        meaning varies (see parser-module docstring v8 note for the
-        cross-chipset value table)."""
+        """v8 alias for ``counter2``.  ⚠️ SUPERSEDED by ``qmi_message_id``
+        (v11, #N): the value is a QMI **message id**, so it predicts body
+        shape for the ordinary reason that a message id determines a
+        message's payload.  It is scoped per SERVICE, not per firmware —
+        always pair it with ``qmi_service_id``.  Kept for compatibility;
+        prefer ``qmi_message_id``."""
         return self.counter2
 
     @property
     def body_size_echo_valid(self) -> bool | None:
-        """True iff the body_size_echo byte (body[5]) is consistent with
-        the slot count for the observed me_format_code.
+        """True iff body[5] is consistent with the decoded slot count.
 
-        Returns None on non-binary_sv records (echo byte is only
-        populated in the binary_sv variant).
+        ⚠️ **Weaker than its name suggests (v11, #N).**  v6 framed this as
+        an independent "size echo" corruption check.  It is not independent:
+        body[4:7] is a QMI TLV header, so body[5] is the **low byte of that
+        TLV's u16 length** and the compared quantity ``(n*28+1) & 0xFF`` is
+        that same length re-derived from the slot count — a mod-256 because
+        it is a low byte.  So this confirms that the TLV's declared length
+        agrees with the slot count the walker derived from the body size,
+        which is a real (if narrow) consistency check, not a second
+        independent witness to the record's integrity.  For genuine framing
+        validation use ``tlv_trailing_bytes == 0``.
+
+        Returns None on non-binary_sv records.
         """
         if self.body_header_signature is None or self.sv_slots is None:
             return None
@@ -632,7 +1175,34 @@ class Diag0x1544:
             'body_bytes': len(self.body_raw),
             'body_kind': self.body_kind,
             'body_tag': self.body_tag,
+            # v10 (#N Kaitai re-audit): raw body words, always exported.
+            # Unlike body_tag these are NOT filtered on tag == 0x01, so a
+            # non-0x01 body's tag byte and every body's length word survive
+            # into the dict instead of being reachable only via body_raw.
+            'body_tag_raw': self.body_tag_raw,
+            'body_word1': self.body_word1,
+            # v11 (#N): QMI framing aliases.  Always exported (derived) —
+            # a consumer reading this dict should not have to know that
+            # `num_constellations` is a service id and `counter2` a message
+            # id.  The legacy keys above stay for compatibility.
+            'qmi_service_id': self.qmi_service_id,
+            'qmi_service_name': self.qmi_service_name,
+            'qmi_message_id': self.qmi_message_id,
+            'qmi_message_type': self.qmi_message_type,
+            'qmi_client_id': self.qmi_client_id,
+            'tlv_trailing_bytes': self.tlv_trailing_bytes,
         }
+        if self.tlvs is not None:
+            # STRUCTURE ONLY — QmiTlv.to_dict() emits (type, length) and
+            # never the value, so a committed derived artifact carries the
+            # message shape without the captured bytes.  See QmiTlv.
+            out['tlvs'] = [t.to_dict() for t in self.tlvs]
+        if self.position is not None:
+            out['position'] = self.position.to_dict()
+        if self.at_text is not None:
+            out['at_text'] = self.at_text
+        if self.qgpsloc is not None:
+            out['qgpsloc'] = self.qgpsloc.to_dict()
         if self.body_sub_kind is not None:
             out['body_sub_kind'] = self.body_sub_kind
         if self.nmea_sentence is not None:
@@ -748,12 +1318,15 @@ def _decode_binary_sv_table(body: bytes) -> list[SvSlot] | None:
     LOG_GNSS_SV_AGGREGATE, domain="gnss",
     name="0x1544",
     description=(
-        "Variable-length GNSS SV aggregate report (0x1544) — header + "
-        "quad-mode body decode: NMEA sentence, binary per-SV tracking "
-        "table, idle/keepalive, or FN980m wardriving-mode periodic "
-        "bundle sub-record (all tag=0x01)."
+        "QMI Common Service Interface packet log (0x1544) — 28-byte QMI "
+        "framing header (service id / message type / message id / client "
+        "id) + a QMI TLV-chain body. Predominantly QMI_LOC traffic on this "
+        "fleet, hence the GNSS reputation: NMEA sentence, binary per-SV "
+        "tracking table, position report (f64 lat/lon, DOP, GPS time), "
+        "idle/keepalive, embedded AT text (QMI AT service), or FN980m "
+        "wardriving-mode periodic bundle sub-record."
     ),
-    version=9,
+    version=11,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -789,7 +1362,25 @@ def _decode_binary_sv_table(body: bytes) -> list[SvSlot] | None:
         "documented as active-band bitmask (popcount ≠ "
         "num_constellations).  sequence_counter documented as GLOBAL "
         "u8-wrapping frame counter across all subcodes.  ref_value "
-        "left at T0 — polymorphic across firmwares."
+        "left at T0 — polymorphic across firmwares.  "
+        "v11 (2026-07-27, #N): the body is a QMI message and the "
+        "header is QMI framing — the code's own canonical name "
+        "(LOG_QMI_MCS_QCSI_PKT) said so all along.  A "
+        "(type u8, len u16 LE, value) TLV chain consumes every body "
+        "EXACTLY (11,874/11,874 across EG18-NA SDX20 V2 + RM500Q-AE "
+        "SDX55, zero trailing bytes), and cross-tabulating the header "
+        "against that chain identifies num_constellations as the QMI "
+        "service id, sub_type as the message type, counter2 as the "
+        "service-scoped message id and constellation_mask as the client "
+        "id.  QMI_LOC position reports decoded (f64 lat/lon, "
+        "ellipsoid/MSL altitude, PDOP/HDOP/VDOP, UTC ms, leap seconds, "
+        "gps_week/tow) with six independent agreements against "
+        "AT+QGPSLOC=2 on the same modem in the same capture, plus the "
+        "QMI AT service's embedded AT text.  REFUTES v6's three "
+        "body-header semantics (one TLV header misread as three fields) "
+        "and v8's firmware-scoped reading of counter2 (it is "
+        "service-scoped); both field sets kept, names documented as "
+        "misnomers."
     ),
     source_url="",
     # v=5 field count: 11 header + 7 body-header (tag, seq_flag,
@@ -798,8 +1389,18 @@ def _decode_binary_sv_table(body: bytes) -> list[SvSlot] | None:
     # 19 + 7 = 26 parsed / 26 identified on binary_sv variant (every
     # byte of slot + body header named).  NMEA variant: 15 parsed /
     # 15 identified.  (#N)
-    fields_parsed=26,
-    fields_identified=26,
+    # v=10 (#N kaitai re-audit): +2 RAW body words (body_tag_raw,
+    # body_word1) exposed on EVERY body kind, not just the value-filtered
+    # tag-0x01 path -> 28 parsed / 28 identified on binary_sv.
+    # v=11 (#N): +14 fields decoded out of bytes that were previously
+    # reachable only as opaque `body_raw` — tlv_trailing_bytes, at_text, and
+    # the 12 QmiLocPositionReport fields.  `qgpsloc`'s 11 fields are NOT
+    # counted: they re-decode the same bytes `at_text` already exposes, and
+    # double-counting a re-parse would inflate the number.  The 5 QMI framing
+    # aliases are likewise uncounted — they rename existing header fields
+    # rather than reach new bytes.  -> 42 parsed / 42 identified.
+    fields_parsed=42,
+    fields_identified=42,
     # version=0x02 confirmed across 451,819 records / 188 captures /
     # 4+ chipset generations (MDM9x07 / MDM9x30 / MDM9650 / SDX20 /
     # SDX20 V2 / SDX55 / SDX62) by 2026-05-08 corpus walk. Per
@@ -819,7 +1420,22 @@ def _decode_binary_sv_table(body: bytes) -> list[SvSlot] | None:
     # identity / position / PCI-EARFCN at dataclass level: position
     # lives in 0x1476 (Phase 3), not here.
     wigle_direct=True,
-    wigle_roles=("gnss-quality",),
+    # v11 (#N) adds `position`.  The issue asked for a cross-check rather
+    # than an assumption, and the check passed on two independent axes: the
+    # QMI_LOC position report's TLV 0x10/0x11 f64 pair agrees with the same
+    # modem's AT+QGPSLOC=2 output to AT's 5-decimal rounding, and its TLV
+    # 0x1B altitude agrees with AT's altitude while TLV 0x1A sits a geoid
+    # separation below it.  0x1476 keeps `position` too — position is not an
+    # exclusive role, and the two codes are independent witnesses (0x1476
+    # carries lat/lon in RADIANS from the position engine, 0x1544 carries the
+    # DEGREES f64 the LOC service published to its QMI clients).
+    wigle_roles=("position", "gnss-quality"),
+    # v11 (#N) note: the QMI AT-service bodies carry embedded AT command /
+    # response text (`at_text`). ASCII_KINDS is a closed vocabulary with no
+    # at-command entry, and `config-token` ("embedded config/profile/path/
+    # operator-name strings") already covers an embedded command string, so
+    # no new kind is claimed here — extending the vocabulary is a
+    # cross-cutting registry change, not 0x1544's call.
     ascii_kinds=("config-token", "identifier", "nmea"),  # config dump ALSO embeds device IMEI (15-digit) (#N); nmea path ($GPVTG/$GNVTG/$GBVTG, +CGPSINFO) confirmed cross-vendor in the Telit+SIMCom slice (FN980m + SIM8202G-M2)
     # #N is the canonical "decode GNSS SV Aggregate" diag-decode tracker for
     # THIS code (sub-issues #N/#N; the RE history above is all #N); #N
@@ -855,6 +1471,14 @@ def parse_0x1544(log_time: int, data: bytes) -> Diag0x1544 | None:
 
     body_raw = data[_HDR_SZ:_HDR_SZ + body_len] if body_len > 0 else b''
     body_tag, nmea_sentence, nmea_sentence_type = _decode_nmea_tlv(body_raw)
+    # v10 (#N Kaitai re-audit): the two RAW body words, read unconditionally
+    # and independently of the NMEA discriminator.  `body_tag` above is None
+    # for any tag != 0x01 and `_decode_nmea_tlv`'s length word is discarded on
+    # every non-'$' body, so without these two the bytes reached the dataclass
+    # only as opaque `body_raw`.  Gated purely on length (mirrors the .ksy's
+    # `if: body_len >= 1` / `>= 3`), never on value.
+    body_tag_raw = body_raw[0] if len(body_raw) >= 1 else None
+    body_word1 = unpack_from('<H', body_raw, 1)[0] if len(body_raw) >= 3 else None
 
     # Discriminate body sub-format.  NMEA wins when a valid sentence is
     # present; otherwise try binary-SV; otherwise idle / fn980-bundle /
@@ -893,6 +1517,40 @@ def parse_0x1544(log_time: int, data: bytes) -> Diag0x1544 | None:
             body_kind = 'fn980_periodic_bundle'
             body_sub_kind = sub_kind
 
+    # v11 (#N): walk the body as the QMI TLV chain it is.  Done for EVERY
+    # body kind, not just the ones classified below — the chain is the body's
+    # real structure, and `nmea` / `binary_sv` / `idle` are simply three
+    # particular QMI messages.  `tlv_trailing_bytes == 0` on 11,874/11,874
+    # bodies measured, so a nonzero value is a genuine "not a QMI message"
+    # signal rather than a routine miss.
+    tlvs: list[QmiTlv] | None = None
+    tlv_trailing_bytes: int | None = None
+    position: QmiLocPositionReport | None = None
+    at_text: str | None = None
+    qgpsloc: QgpslocFix | None = None
+    if body_raw:
+        walked, tlv_trailing_bytes = walk_qmi_tlvs(body_raw)
+        tlvs = walked
+
+        # Only REFINE the `unknown` fallthrough.  The four established kinds
+        # keep their labels so no existing classification flips on a parser
+        # bump; what changes is that `unknown` stops absorbing well-formed
+        # messages.  After this, `unknown` means "the QMI grammar did not
+        # close on this body" — a label that finally carries information.
+        if body_kind == 'unknown' and tlv_trailing_bytes == 0 and walked:
+            if num_constellations == 0x08:
+                at_text = _decode_qmi_at_text(walked)
+                if at_text is not None:
+                    body_kind = 'qmi_at_text'
+                    qgpsloc = parse_qgpsloc(at_text)
+            if body_kind == 'unknown':
+                position = _decode_qmi_loc_position(walked)
+                if position is not None and position.has_position:
+                    body_kind = 'qmi_position_report'
+                else:
+                    position = None
+                    body_kind = 'qmi_tlv_chain'
+
     return Diag0x1544(
         log_time=log_time,
         version=version,
@@ -917,4 +1575,11 @@ def parse_0x1544(log_time: int, data: bytes) -> Diag0x1544 | None:
         body_header_measurement=body_header_measurement,
         body_header_enum=body_header_enum,
         sv_slots=sv_slots,
+        body_tag_raw=body_tag_raw,
+        body_word1=body_word1,
+        tlvs=tlvs,
+        tlv_trailing_bytes=tlv_trailing_bytes,
+        position=position,
+        at_text=at_text,
+        qgpsloc=qgpsloc,
     )

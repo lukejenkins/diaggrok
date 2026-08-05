@@ -82,6 +82,25 @@ SOURCE_KINDS = frozenset({
                 # (file:line or rendered template). Unlike at/qmi/mbim it is
                 # not a transport to poll: it is already in the capture, so it
                 # grounds a field with zero extra HW interaction. See #N.
+    "event",    # a 0x60 DIAG_EVENT_REPORT_F state-transition event co-captured
+                # in the SAME DIAG stream. The second IN-CAPTURE ORACLE beside
+                # "f3" (docs/diag-in-capture-oracles.md): like f3 it is not a
+                # transport to poll — it is already there, so it grounds a field
+                # with zero extra HW interaction. Value is the resolvable event
+                # id + name, e.g. "1966 EVENT_LTE_EMM_OTA_INCOMING_MSG"; the
+                # loader asserts the id resolves in sources/DIAG_EVENTS_INDEX.yaml.
+                #
+                # Unlike "f3", an event ground is SELF-CONTAINED with no extra
+                # citation: f3 resolves against a build-specific qdb (hence the
+                # firmware+GUID+origin+checksum rule, <redacted-ref> v1.5.0), whereas
+                # DIAG_EVENTS_INDEX.yaml is committed and build-independent, and
+                # its names are vendor_official/high from event_defs.h.
+                #
+                # Measured precedent (#N): EVENT_LTE_EMM_OTA_INCOMING_MSG
+                # (1966) payload IS the EMM msg_type, 3/3 exact vs real 0xB0EC
+                # records; EVENT_NAS_ATTACH (2556) byte[4] IS the EMM reject
+                # cause, 3/3 exact. ⚠️ n=3, one modem, one msg_type — check it,
+                # do not yet trust it.
     "trigger",  # an action that makes the modem EMIT the log (not read the
                 # quantity) — e.g. "AT+QGPSLOC=2 forces a fix". Often
                 # modem-specific; see Source.modem.

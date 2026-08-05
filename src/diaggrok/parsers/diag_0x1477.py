@@ -228,7 +228,7 @@ class Diag0x1477:
     # ("absolute-time", "ts-anchor") — the GPS-measurement sibling of the
     # already-tagged 0x1478 (LOG_GNSS_CLOCK_REPORT) and 0x147B, sharing the
     # gps_week + gps_milliseconds GPS-time header (HW-VERIFIED in
-    # _GROUND_TRUTH_0x1477 vs F3 mc_gnssmeasreport / NMEA). Per-code,
+    # the ground_truth/0x1477/ store vs F3 mc_gnssmeasreport / NMEA). Per-code,
     # cross-chipset evidence (memory-safe single-capture sequential decode +
     # linear-fit, the #N method):
     #   * absolute-time — decoded GPS time matches the capture's own wall-clock

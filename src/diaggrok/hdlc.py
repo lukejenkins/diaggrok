@@ -1,7 +1,7 @@
 # diaggrok-provenance: re
 """HDLC framing + opcode classification for Qualcomm DIAG byte streams.
 
-Shared between ``tools/hdlc_to_dlf.py`` (offline QMDL → DLF conversion) and
+Shared between ``diagmunge.munge.hdlc_to_dlf`` (offline QMDL → DLF conversion) and
 ``apps/diaggpsd/dlf_to_jsonl.py`` (raw-HDLC replay). Handles both the
 legacy DIAG_LOG_F (``0x10``) opcode and the multi-RADIO routing
 DIAG_MULTI_RADIO_CMD_F (``0x98``) wrapper that carries an inner ``0x10``
@@ -332,6 +332,104 @@ def parse_qsr_terse_0x92_envelope(body: bytes) -> "Qsr0x92Header | None":
     )
 
 
+# --- 0x4B / subsys 0x12 / cmd 0x0222 — the QSHRINK4 diag_id binding (#N) ---
+#
+# DIAG_SUBSYS_CMD_F body layout, CRC stripped:
+#   [0]     opcode = 0x4B
+#   [1]     subsys_id = 0x12 (the DIAG service itself)
+#   [2:4]   subsys_cmd (u16 LE) = 0x0222
+#   [4]     version      — observed 1 in every corpus capture
+#   [5]     entry_count  — libdiag.so's own `diagid_entry_count`
+#   [6:]    entry_count * [u8 diag_id][u8 name_len][char name[name_len]]
+#
+# `name_len` INCLUDES the NUL terminator (5 for "APPS\0", 18 for
+# "mdm/modem/root_pd\0"). That is what makes the walk SELF-CHECKING: a
+# wrong reading leaves trailing bytes rather than landing exactly on the
+# end of the body, so this parser returns None instead of plausible junk.
+#
+# Spec: libs/diagspec/ksy/framing/diag_hdlc_frame.ksy::qshrink4_binding_table.
+# That .ksy is the source of truth — this is a port of it, not a re-derivation.
+#
+# ⚠️ DO NOT hardcode `1 = APPS, 2 = mdm/modem/root_pd`. All 8 corpus
+# observations agree on that pair, but all three device trees behind them
+# are SDX55-class. The frame exists precisely BECAUSE the mapping is
+# per-device — the whole point is to read it.
+_QSHRINK4_BINDING_SUBSYS = 0x12
+_QSHRINK4_BINDING_CMD = 0x0222
+_QSHRINK4_BINDING_HEADER_LEN = 6  # opcode + subsys + u16 cmd + version + count
+
+
+@dataclass(frozen=True)
+class Qshrink4BindingEntry:
+    """One ``diag_id`` → protection-domain name binding."""
+    diag_id: int
+    name: str
+
+
+@dataclass
+class Qshrink4Binding:
+    """The in-band QSHRINK4 ``diag_id`` binding table (#N / #N).
+
+    A ``diag_id`` is a per-protection-domain logical channel on the shared
+    DIAG path. This table is the only structure in a capture that *names*
+    those peripherals — which matters because it is the index that says
+    WHICH ``qdsp6m.qdb`` could resolve a given peripheral's hashed ``0x99``
+    F3 / ``0x9D`` QSH-trace messages. Without it, a multi-PD capture has to
+    be treated as having one symbol database.
+
+    Emitted as an ordinary DIAG frame, so it survives in raw-HDLC captures
+    that have no QMDL2 file prologue at all — which is most of them.
+    """
+    version: int
+    entries: tuple[Qshrink4BindingEntry, ...]
+
+    def as_map(self) -> dict[int, str]:
+        """``{diag_id: pd_name}``. Convenience for the qdb-selection path."""
+        return {e.diag_id: e.name for e in self.entries}
+
+
+def parse_qshrink4_binding(body: bytes) -> "Qshrink4Binding | None":
+    """Parse a ``0x4B`` / subsys ``0x12`` / cmd ``0x0222`` binding frame.
+
+    ``body`` is the unescaped HDLC frame with the trailing 2-byte CRC
+    already stripped — same contract as :func:`parse_subsys_v2_header`.
+
+    Returns ``None`` for any frame that is not this ``(subsys, cmd)`` pair,
+    and — importantly — also for one that IS but whose entry walk does not
+    consume the body exactly. Trailing or missing bytes mean the reading is
+    wrong, and saying so is better than returning a table that looks fine.
+    """
+    if len(body) < _QSHRINK4_BINDING_HEADER_LEN or body[0] != 0x4B:
+        return None
+    if body[1] != _QSHRINK4_BINDING_SUBSYS:
+        return None
+    if struct.unpack_from("<H", body, 2)[0] != _QSHRINK4_BINDING_CMD:
+        return None
+
+    version, entry_count = body[4], body[5]
+    off = _QSHRINK4_BINDING_HEADER_LEN
+    entries: list[Qshrink4BindingEntry] = []
+    for _ in range(entry_count):
+        if off + 2 > len(body):
+            return None
+        diag_id, name_len = body[off], body[off + 1]
+        off += 2
+        name = body[off:off + name_len]
+        if len(name) != name_len:
+            return None
+        off += name_len
+        entries.append(
+            Qshrink4BindingEntry(
+                diag_id=diag_id,
+                # name_len counts the NUL; strip it for the Python string.
+                name=name.rstrip(b"\x00").decode("ascii", "replace"),
+            )
+        )
+    if off != len(body):
+        return None  # the walk is wrong — say so rather than guess
+    return Qshrink4Binding(version=version, entries=tuple(entries))
+
+
 # DIAG_LOG_F (0x10) layout after HDLC unescape, CRC stripped:
 #   [0]      opcode = 0x10
 #   [1]      pending_msgs
@@ -348,16 +446,75 @@ def parse_qsr_terse_0x92_envelope(body: bytes) -> "Qsr0x92Header | None":
 #   [16:]    payload
 _LOG_F_MIN_LEN = 16
 
+# 0x9D DIAG_QSH_TRACE_PAYLOAD_F, for the scan-pass subsystem tally (#N).
+# Defined locally rather than imported from ``qsr4`` to keep this module free of
+# a decode-layer dependency; ``qsr4.parse_qsh_trace_frame`` remains the
+# authority on the header, and ``test_hdlc_qsh_subsys`` pins the two together.
+_QSH_TRACE_CMD = 0x9D
+_QSH_TRACE_HDR_LEN = 16      # == qsr4._QSH_TRACE_HEADER_LEN
+
+
+def _tally_qsh_trace_subsys(stats: "HdlcStats", frame_no_crc: bytes) -> None:
+    """Accrue the per-subsystem 0x9D tally from one QSH-trace frame (#N).
+
+    Reads only the packed ``u16`` at offset 2 — no qdb, no payload decode, no
+    object allocated per frame. Its bit layout (#N)::
+
+        bits [13:6]  subsys_id   -- qsh_cat_e / the 0x9001 arming SSID
+        bits  [5:1]  sub_stream  -- index into that SSID's level bitmask
+        bit      0   always 0
+
+    ⚠️ Do NOT re-derive these boundaries by eye. Splitting this field at the
+    byte boundary (the pre-#N ``>> 8`` reading) is lossy by two bits and
+    silently MERGES distinct subsystems — it collapses DS+IPA+TRM into one id
+    and WMS+NR5GML1 into another. The qdb-free cross-vendor check that
+    distinguishes them: at the correct boundary 100.00% of recovered ids are
+    members of the armed maskset, versus 26.5% at the byte boundary.
+
+    Runt frames are skipped silently, matching
+    ``qsr4.parse_qsh_trace_frame``'s size≠format discipline — a frame too short
+    to hold the header is not counted as any subsystem rather than guessed at.
+    """
+    if len(frame_no_crc) < _QSH_TRACE_HDR_LEN:
+        return
+    w2 = struct.unpack_from("<H", frame_no_crc, 2)[0]
+    subsys_id = (w2 >> 6) & 0xFF
+    stats.qsh_trace_subsys[subsys_id] += 1
+    stats.qsh_trace_sub_streams.setdefault(subsys_id, set()).add((w2 >> 1) & 0x1F)
+
 
 @dataclass
 class HdlcStats:
     """Running counters for an HDLC extraction pass."""
     opcode_frames: Counter[int] = field(default_factory=Counter)
     opcode_bytes: Counter[int] = field(default_factory=Counter)
+    # CRC-VERIFIED shadow of ``opcode_frames`` / ``inner_0x98_opcodes``, populated
+    # only when a walk passes ``crc_census=True`` (#N). Empty otherwise.
+    #
+    # Why these exist as a SEPARATE tally rather than as a `verify_crc=True` walk:
+    # ``verify_crc`` also DROPS failing frames from the record yield, so flipping
+    # it to fix the census would change record extraction for every consumer of
+    # this module. ``crc_census`` is stats-only — the yield is byte-for-byte
+    # identical with it on or off; the only cost is one CRC-16 per frame.
+    #
+    # Why it matters (#N): ``opcode_frames`` tallies the first byte of EVERY
+    # 0x7E-delimited fragment, valid frame or not. For a high-volume opcode the
+    # noise is a rounding error; for a rare one it is the entire signal. Measured
+    # over 1 695 757 CRC-valid frames across 278 hdlc captures: 0x00 claimed
+    # 45 844 frames and has 6; 0x7C claimed 3 084 and has 3. Read these counters,
+    # not ``opcode_frames``, whenever the question is "how many frames are there".
+    opcode_frames_crc_ok: Counter[int] = field(default_factory=Counter)
+    opcode_bytes_crc_ok: Counter[int] = field(default_factory=Counter)
+    # True once a walk has run with ``crc_census=True`` (or ``verify_crc=True``),
+    # i.e. the ``*_crc_ok`` counters and ``crc_ok``/``crc_bad`` are meaningful.
+    # Distinguishes "0 CRC-valid frames" from "nobody checked" — the exact
+    # ambiguity that let the sidecar's histogram read as a population count.
+    crc_checked: bool = False
     # Inner opcode of each 0x98 DIAG_MULTI_RADIO_CMD_F wrapper (the byte at
     # offset 8). The wrapper carries a MIX — inner 0x10 LOG, but also inner
     # 0x79/0x99 F3 — so a top-level-only opcode tally hides wrapped F3 (#N).
     inner_0x98_opcodes: Counter[int] = field(default_factory=Counter)
+    inner_0x98_opcodes_crc_ok: Counter[int] = field(default_factory=Counter)
     log_records: int = 0
     log_records_from_wrapper: int = 0
     crc_ok: int = 0
@@ -374,14 +531,51 @@ class HdlcStats:
     subsys_0x80_counters: list[int] = field(default_factory=list)
     # 0x9E DIAG_SECURE_LOG_F envelope sequence values, in order seen (#N).
     secure_log_0x9e_seqs: list[int] = field(default_factory=list)
+    # In-band QSHRINK4 diag_id -> protection-domain bindings, in order seen
+    # (#N/#N). Usually one per capture, at the head of the stream; a
+    # list because nothing guarantees that, and a capture that re-announces
+    # a CHANGED binding mid-stream is exactly the event you would want to
+    # see rather than have overwritten. See ``qshrink4_binding``.
+    qshrink4_bindings: list["Qshrink4Binding"] = field(default_factory=list)
+
+    def qshrink4_binding(self) -> "Qshrink4Binding | None":
+        """The capture's ``diag_id`` binding, or ``None`` if none was seen.
+
+        Returns the FIRST binding observed. If a walk saw more than one and
+        they disagree, that is a real signal and this accessor hides it —
+        read :attr:`qshrink4_bindings` directly in that case.
+        """
+        return self.qshrink4_bindings[0] if self.qshrink4_bindings else None
+    # Per-subsystem 0x9D QSH-trace frame counts, keyed by the wire ``subsys_id``
+    # (#N). Tallied for BOTH bare 0x9D and inner-0x9D-under-0x98, so it does
+    # not miss the SDX72-class all-wrapped case.
+    #
+    # Why this is worth counting on the scan pass: ``subsys_id`` is ``qsh_cat_e``
+    # is the 0x9001 arming SSID — ONE namespace (#N) — so per-subsystem
+    # routing and rate accounting need **no qdb at all**. 86% of the 0x9D frames
+    # in the corpus are text-undecodable for want of one build's qdb (#N);
+    # this block still describes them.
+    qsh_trace_subsys: Counter[int] = field(default_factory=Counter)
+    # subsys_id -> the distinct sub_stream indices seen for it. Cross-checks the
+    # armed 0x9001 ``level`` bitmask: a sub_stream that was never armed should
+    # never appear (#N/#N).
+    qsh_trace_sub_streams: dict[int, set[int]] = field(default_factory=dict)
 
     def summary_lines(self) -> list[str]:
         """One-line-per-opcode summary suitable for stderr logging."""
         lines = []
         for op, n in self.opcode_frames.most_common():
             name = OPCODE_NAMES.get(op, "(unknown)")
+            # Show the CRC-verified count alongside the raw one when it is
+            # available, so a reader cannot mistake the raw tally for a
+            # population count (#N).
+            crc = (
+                f"  crc_ok={self.opcode_frames_crc_ok[op]:<6}"
+                if self.crc_checked else ""
+            )
             lines.append(
-                f"  0x{op:02X}  frames={n:<6}  bytes={self.opcode_bytes[op]:<9}  {name}"
+                f"  0x{op:02X}  frames={n:<6}  bytes={self.opcode_bytes[op]:<9}"
+                f"{crc}  {name}"
             )
         return lines
 
@@ -592,6 +786,7 @@ def _process_frame(
     verify_crc: bool,
     stats: HdlcStats,
     drop_desync: bool = False,
+    crc_census: bool = False,
 ) -> tuple[int, int, bytes] | None:
     """Decode ONE raw (still-escaped, delimiter-stripped) HDLC frame.
 
@@ -613,6 +808,12 @@ def _process_frame(
     that length field) stay in sync when a capture carries a boot-blob fragment
     with a bogus length. Default False preserves the historical yield-everything
     behavior for all existing consumers.
+
+    ``crc_census`` (#N): when True, the CRC is computed and the outcome is
+    tallied into ``stats.crc_ok``/``crc_bad`` and the ``*_crc_ok`` opcode
+    counters — but a failing frame is still processed and still yielded. This is
+    the STATS-ONLY half of ``verify_crc``: it makes a truthful frame census
+    available without changing what any consumer extracts.
     """
     if len(raw_frame) < 4:  # need opcode + 2 CRC + at least 1 byte
         return None
@@ -622,20 +823,36 @@ def _process_frame(
         stats.skipped_short += 1
         return None
 
-    if verify_crc:
+    # Local, not ``stats.crc_checked`` — that flag is sticky for the walk's
+    # lifetime, and a stats object shared across a checked and an unchecked walk
+    # would otherwise credit the unchecked frames as CRC-valid.
+    checked = verify_crc or crc_census
+    crc_valid = True
+    if checked:
+        stats.crc_checked = True
         payload_part = frame[:-2]
         crc_expected = struct.unpack_from("<H", frame, len(frame) - 2)[0]
-        if crc16_ccitt(payload_part) != crc_expected:
+        crc_valid = crc16_ccitt(payload_part) == crc_expected
+        if crc_valid:
+            stats.crc_ok += 1
+        else:
             stats.crc_bad += 1
+        # Only ``verify_crc`` drops. ``crc_census`` observes and moves on.
+        if verify_crc and not crc_valid:
             return None
-        stats.crc_ok += 1
 
     opcode = frame[0]
     stats.opcode_frames[opcode] += 1
     stats.opcode_bytes[opcode] += len(frame)
+    if checked and crc_valid:
+        stats.opcode_frames_crc_ok[opcode] += 1
+        stats.opcode_bytes_crc_ok[opcode] += len(frame)
 
     # Strip the 2-byte trailing CRC from the body we hand to extractors.
     body = frame[:-2]
+
+    if opcode == _QSH_TRACE_CMD:
+        _tally_qsh_trace_subsys(stats, body)
 
     if opcode == 0x10:
         if drop_desync and len(body) >= _LOG_F_MIN_LEN and _is_len_desync(body):
@@ -651,6 +868,12 @@ def _process_frame(
         # Tally the inner opcode so wrapped F3 (0x79/0x99) is visible to the
         # census, not just the inner-0x10 LOG case extracted below (#N).
         stats.inner_0x98_opcodes[body[wrap_off]] += 1
+        if checked and crc_valid:
+            stats.inner_0x98_opcodes_crc_ok[body[wrap_off]] += 1
+        if body[wrap_off] == _QSH_TRACE_CMD:
+            # On SDX72-class parts EVERY record is 0x98-wrapped, so a
+            # top-level-only tally misses all of that part's QSH (#N).
+            _tally_qsh_trace_subsys(stats, body[wrap_off:])
         # The 0x98 wrapper holds a complete inner 0x10 LOG_F frame;
         # it does NOT carry its own inner CRC, so no second strip.
         inner = body[wrap_off:]
@@ -674,6 +897,15 @@ def _process_frame(
         if env is not None:
             stats.secure_log_0x9e_seqs.append(env.sequence)
 
+    if opcode == 0x4B:
+        # Almost every (subsys, cmd) pair under 0x4B is opaque — 19 frames
+        # spanning 18 distinct pairs in a 64 KB real prefix (#N). The
+        # parser returns None for all of them and only fires on 0x12/0x0222,
+        # so this costs a subsys byte compare on the other 17 (#N).
+        binding = parse_qshrink4_binding(body)
+        if binding is not None:
+            stats.qshrink4_bindings.append(binding)
+
     return None
 
 
@@ -683,6 +915,7 @@ def iter_log_records(
     verify_crc: bool = False,
     stats: HdlcStats | None = None,
     drop_desync: bool = False,
+    crc_census: bool = False,
 ) -> Iterator[tuple[int, int, bytes]]:
     """Yield ``(log_code, ts64, payload)`` for every LOG packet in a raw
     HDLC-framed DIAG byte stream.
@@ -711,13 +944,20 @@ def iter_log_records(
         Optional ``HdlcStats`` to populate. The caller can inspect this
         after iteration for opcode counts + CRC stats. A fresh stats
         object is created if not provided (but then discarded).
+    crc_census:
+        When True, compute each frame's CRC and tally the outcome into
+        ``stats`` **without** dropping anything (#N). Use this — not
+        ``verify_crc`` — when you want a truthful per-opcode frame census:
+        ``verify_crc=True`` would also change which records this function
+        yields, and ``opcode_frames`` alone overstates rare opcodes by 3-4
+        orders of magnitude. Read ``stats.opcode_frames_crc_ok`` after.
     """
     if stats is None:
         stats = HdlcStats()
 
     for raw_frame in data.split(b"\x7e"):
         rec = _process_frame(raw_frame, verify_crc=verify_crc, stats=stats,
-                             drop_desync=drop_desync)
+                             drop_desync=drop_desync, crc_census=crc_census)
         if rec is not None:
             yield rec
 
@@ -729,6 +969,7 @@ def iter_log_records_stream(
     stats: HdlcStats | None = None,
     flush_tail: bool = True,
     drop_desync: bool = False,
+    crc_census: bool = False,
 ) -> Iterator[tuple[int, int, bytes]]:
     """Streaming equivalent of :func:`iter_log_records` (#N).
 
@@ -787,13 +1028,13 @@ def iter_log_records_stream(
         residual = parts.pop()
         for raw_frame in parts:
             rec = _process_frame(raw_frame, verify_crc=verify_crc, stats=stats,
-                                 drop_desync=drop_desync)
+                                 drop_desync=drop_desync, crc_census=crc_census)
             if rec is not None:
                 yield rec
 
     if flush_tail and residual:
         rec = _process_frame(residual, verify_crc=verify_crc, stats=stats,
-                             drop_desync=drop_desync)
+                             drop_desync=drop_desync, crc_census=crc_census)
         if rec is not None:
             yield rec
 
@@ -871,32 +1112,104 @@ def iter_outer_frames(
     never double-count.
     """
     for raw_frame in data.split(b"\x7e"):
-        if len(raw_frame) < 4:  # opcode + 2 CRC + >=1 byte
-            continue
-        frame = hdlc_unescape(raw_frame)
-        if len(frame) < 3:
-            continue
-        if verify_crc:
-            crc_expected = struct.unpack_from("<H", frame, len(frame) - 2)[0]
-            if crc16_ccitt(frame[:-2]) != crc_expected:
-                continue
-        body = frame[:-2]  # strip trailing CRC, same convention as _process_frame
-        if not body:
-            continue
-        opcode = body[0]
-        yield OuterFrame(opcode=opcode, body=body, wrapped=False, outer_opcode=opcode)
+        yield from _outer_frames_from_raw(
+            raw_frame, verify_crc=verify_crc,
+            unwrap_multi_radio=unwrap_multi_radio)
 
-        if unwrap_multi_radio:
-            wrap_off = _MULTI_RADIO_WRAPPER_OFFSET.get(opcode)
-            if wrap_off is not None and len(body) > wrap_off:
-                # The 0x98 wrapper carries one OUTER CRC and no inner CRC, so the
-                # inner frame is body[wrap_off:] un-stripped (matches the 0x98 F3
-                # unwrap in iter_f3_samples / the LOG unwrap in _process_frame).
-                inner = body[wrap_off:]
-                if inner:
-                    yield OuterFrame(
-                        opcode=inner[0],
-                        body=inner,
-                        wrapped=True,
-                        outer_opcode=opcode,
-                    )
+
+def _outer_frames_from_raw(
+    raw_frame: bytes,
+    *,
+    verify_crc: bool,
+    unwrap_multi_radio: bool,
+) -> Iterator[OuterFrame]:
+    """Decode ONE raw (still-escaped, delimiter-stripped) frame into OuterFrames.
+
+    Shared single-frame core for the whole-buffer :func:`iter_outer_frames` and
+    the chunked :func:`iter_outer_frames_stream`, mirroring what
+    :func:`_process_frame` is to the two LOG walkers. Yields 0, 1, or 2 frames
+    (2 when a ``0x98`` envelope is unwrapped).
+    """
+    if len(raw_frame) < 4:  # opcode + 2 CRC + >=1 byte
+        return
+    frame = hdlc_unescape(raw_frame)
+    if len(frame) < 3:
+        return
+    if verify_crc:
+        crc_expected = struct.unpack_from("<H", frame, len(frame) - 2)[0]
+        if crc16_ccitt(frame[:-2]) != crc_expected:
+            return
+    body = frame[:-2]  # strip trailing CRC, same convention as _process_frame
+    if not body:
+        return
+    opcode = body[0]
+    yield OuterFrame(opcode=opcode, body=body, wrapped=False, outer_opcode=opcode)
+
+    if unwrap_multi_radio:
+        wrap_off = _MULTI_RADIO_WRAPPER_OFFSET.get(opcode)
+        if wrap_off is not None and len(body) > wrap_off:
+            # The 0x98 wrapper carries one OUTER CRC and no inner CRC, so the
+            # inner frame is body[wrap_off:] un-stripped (matches the 0x98 F3
+            # unwrap in iter_f3_samples / the LOG unwrap in _process_frame).
+            inner = body[wrap_off:]
+            if inner:
+                yield OuterFrame(
+                    opcode=inner[0],
+                    body=inner,
+                    wrapped=True,
+                    outer_opcode=opcode,
+                )
+
+
+def iter_outer_frames_stream(
+    chunks: Iterable[bytes],
+    *,
+    verify_crc: bool = False,
+    unwrap_multi_radio: bool = True,
+    flush_tail: bool = True,
+) -> Iterator[OuterFrame]:
+    """Streaming equivalent of :func:`iter_outer_frames` (#N).
+
+    ``iter_outer_frames`` takes a complete ``bytes`` buffer, so reaching a
+    non-LOG opcode (``0x9D`` QSH-trace, ``0x92``, …) in a multi-GB wardrive
+    capture meant ``read_bytes()`` on a 1.9 GB file — which is exactly the OOM
+    trap :func:`iter_log_records_stream` exists to avoid on the LOG side. This
+    is the same primitive for the opcode-agnostic walk, so one pass over a
+    capture can feed a LOG consumer **and** a ``0x9D`` consumer without either
+    buffering the file.
+
+    The chunk-boundary argument is identical to
+    :func:`iter_log_records_stream`'s: HDLC byte-stuffs any in-frame ``0x7E`` as
+    ``0x7D 0x5E``, so a literal ``0x7E`` is always a delimiter. The residual
+    holds at most one in-flight frame, so memory is bounded.
+
+    Equivalence contract (pinned by ``test_hdlc.py``)::
+
+        list(iter_outer_frames_stream(chunks, flush_tail=True))
+            == list(iter_outer_frames(b"".join(chunks)))
+
+    for *any* chunking of the same underlying bytes.
+    """
+    residual = b""
+    for chunk in chunks:
+        if not chunk:
+            continue
+        buf = residual + chunk
+        parts = buf.split(b"\x7e")
+        residual = parts.pop()
+        for raw_frame in parts:
+            yield from _outer_frames_from_raw(
+                raw_frame, verify_crc=verify_crc,
+                unwrap_multi_radio=unwrap_multi_radio)
+
+    if flush_tail and residual:
+        yield from _outer_frames_from_raw(
+            residual, verify_crc=verify_crc,
+            unwrap_multi_radio=unwrap_multi_radio)
+
+
+#: Public alias for the LOG_F body decoder. A consumer walking
+#: :func:`iter_outer_frames_stream` needs to turn an ``opcode==0x10`` body into
+#: ``(log_code, ts64, payload)`` itself — the LOG walkers do that internally, so
+#: without this the only route was reaching into the private name (#N).
+extract_log_f = _extract_log_f

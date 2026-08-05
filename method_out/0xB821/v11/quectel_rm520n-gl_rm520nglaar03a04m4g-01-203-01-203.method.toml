@@ -1,0 +1,265 @@
+version = 17
+cond = "nr5g"
+modem_make = "Quectel"
+modem_model = "RM520N-GL"
+modem_firmware = "RM520NGLAAR03A04M4G_01.203.01.203"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "nr5g_serving_pci_candidate"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "other", value = "F3 tle_base.cpp:104 (qdb GUID 6552b4be)" },
+    { kind = "mbim", value = "MBIM_CID_BASE_STATIONS_INFO" },
+]
+
+[[field_map]]
+parser_field = "arfcn"
+quantity = "nr5g_arfcn_candidate"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QNWINFO" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "other", value = "F3 quectel_nwinfo_atc.c:336 (qdb 6552b4be)" },
+]
+
+[[field_map]]
+parser_field = "cell_global_id"
+quantity = "nr5g_ncgi_candidate"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "other", value = "F3 tle_base.cpp:104 (qdb GUID 6552b4be)" },
+]
+
+[[field_map]]
+parser_field = "sib1_tac"
+quantity = "nr5g_tac_candidate"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+    { kind = "mbim", value = "MBIM_CID_REGISTER_STATE" },
+]
+
+[[field_map]]
+parser_field = "sib1_mcc"
+quantity = "plmn_mcc_candidate"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mnc"
+quantity = "plmn_mnc_candidate"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_cell_id"
+quantity = "nr5g_ncgi_candidate"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "other", value = "DIAG 0xB821 header cell_global_id" },
+]
+
+[[field_map]]
+parser_field = "sib9_time_info_utc"
+quantity = "nr5g_network_utc_time"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.timeInfoUTC (stock dissector, #N Exported-PDU pcap)" },
+    { kind = "other", value = "wardrive host-clock session-start timestamp" },
+]
+
+[[field_map]]
+parser_field = "sib9_local_time_offset"
+quantity = "nr5g_network_local_time_offset"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.localTimeOffset (stock)" },
+]
+
+[[field_map]]
+parser_field = "sib9_dst"
+quantity = "nr5g_network_daylight_saving"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.dayLightSavingTime (stock)" },
+]
+
+[[field_map]]
+parser_field = "sib9_leap_seconds"
+quantity = "nr5g_network_gps_utc_leap_seconds"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.leapSeconds (stock)" },
+]
+
+[[field_map]]
+parser_field = "mib_scs_common"
+quantity = "nr5g_mib_subcarrier_spacing_common"
+status = "verified"
+sources = [
+    { kind = "other", value = "band-n41 SSB-SCS physics (FR1 TDD → 30 kHz)" },
+    { kind = "other", value = "same-cell MIB invariance (4 records)" },
+]
+
+[[field_map]]
+parser_field = "mib_cell_barred"
+quantity = "nr5g_mib_cell_barred"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+]
+
+[[field_map]]
+parser_field = "mib_coreset0"
+quantity = "nr5g_mib_controlResourceSetZero"
+status = "partial"
+sources = [
+    { kind = "other", value = "same-cell MIB invariance" },
+]
+
+[[field_map]]
+parser_field = "mib_searchspace0"
+quantity = "nr5g_mib_searchSpaceZero"
+status = "partial"
+sources = [
+    { kind = "other", value = "same-cell MIB invariance" },
+]
+
+[[field_map]]
+parser_field = "sib2_params.q_hyst_db"
+quantity = "nr5g_sib2_q_hyst_db"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.q_Hyst (stock Wireshark ASN.1 dissector)" },
+    { kind = "other", value = "SIB9 timeInfoUTC bit-exactness pin" },
+]
+
+[[field_map]]
+parser_field = "sib2_params.cell_reselection_priority"
+quantity = "nr5g_sib2_serving_freq_reselection_priority"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.cellReselectionPriority (SIB2 subtree)" },
+    { kind = "other", value = "SIB9 timeInfoUTC bit-exactness pin" },
+]
+
+[[field_map]]
+parser_field = "sib2_params.cell_reselection_sub_priority"
+quantity = "nr5g_sib2_serving_freq_reselection_sub_priority"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.cellReselectionSubPriority (SIB2 subtree)" },
+    { kind = "other", value = "SIB9 timeInfoUTC bit-exactness pin" },
+]
+
+[[field_map]]
+parser_field = "sib2_params.s_non_intra_search_p"
+quantity = "nr5g_sib2_s_non_intra_search_p"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.s_NonIntraSearchP" },
+    { kind = "other", value = "SIB9 timeInfoUTC bit-exactness pin" },
+]
+
+[[field_map]]
+parser_field = "sib2_params.thresh_serving_low_p"
+quantity = "nr5g_sib2_thresh_serving_low_p"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.threshServingLowP" },
+    { kind = "other", value = "SIB9 timeInfoUTC bit-exactness pin" },
+]
+
+[[field_map]]
+parser_field = "sib2_params.q_rxlevmin"
+quantity = "nr5g_sib2_q_rxlevmin"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.q_RxLevMin (SIB2 subtree)" },
+    { kind = "other", value = "SIB9 timeInfoUTC bit-exactness pin" },
+]
+
+[[field_map]]
+parser_field = "sib2_params.s_intra_search_p"
+quantity = "nr5g_sib2_s_intra_search_p"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.s_IntraSearchP" },
+    { kind = "other", value = "SIB9 timeInfoUTC bit-exactness pin" },
+]
+
+[[field_map]]
+parser_field = "sib2_params.t_reselection_nr"
+quantity = "nr5g_sib2_t_reselection_nr"
+status = "verified"
+sources = [
+    { kind = "other", value = "tshark nr-rrc.t_ReselectionNR (SIB2 subtree)" },
+    { kind = "other", value = "SIB9 timeInfoUTC bit-exactness pin" },
+]
+
+[[field_map]]
+parser_field = "sib4_params"
+quantity = "nr5g_sib4_inter_freq_neighbor_carriers"
+status = "partial"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QENG=\"servingcell\""
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QENG=\"neighbourcell\""
+
+[[field_map.sources]]
+kind = "qmi"
+value = "QMI_NAS GetCellLocationInfo"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "AT+COPS=2/0 bounce or CFUN=4->1 — forces SI re-read and possible inter-freq reselection onto a SIB4 carrier"
+
+[[field_map.sources]]
+kind = "other"
+value = "stock tshark nr-rrc A/B of msg_data"
+
+[[field_map]]
+parser_field = "sib5_params"
+quantity = "nr5g_sib5_eutra_neighbor_carriers"
+status = "partial"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QENG=\"servingcell\""
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QNWINFO"
+
+[[field_map.sources]]
+kind = "at"
+value = "AT+QENG=\"neighbourcell\""
+
+[[field_map.sources]]
+kind = "trigger"
+value = "AT+QNWPREFCFG=\"mode_pref\",LTE fallback (restore AUTO after) — forces an E-UTRA camp; landing EARFCN should be a SIB5 carrier"
+
+[[field_map.sources]]
+kind = "other"
+value = "stock tshark nr-rrc A/B of msg_data"

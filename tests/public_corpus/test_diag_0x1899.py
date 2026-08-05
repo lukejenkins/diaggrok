@@ -19,7 +19,7 @@ from diaggrok.parsers.diag_0x1899 import parse_0x1899
 # Fabricated field values (not from any real capture).
 _VERSION = 2          # data[0] -- field_invariants const
 _COUNTER = 42         # data[1] -- fabricated free-running counter
-_STATUS_BYTE_2 = 1    # data[2] -- 1 == 'tracking' per GNSS_STATUS_1899_STATES
+_STATUS_BYTE_2 = 1    # data[2] -- 1 == 'state_1' (neutral; fix-lifecycle names refuted #N)
 _STATUS_FLAG_10 = 1   # data[10] -- field_invariants const
 _RATE_MS = 1000       # u16 LE at [58:60] -- field_invariants const
 _STATUS_FLAG_85 = 3   # data[85] -- field_invariants const
@@ -62,7 +62,7 @@ def test_1899_decodes_synthetic_frame():
     assert rec.version == _VERSION
     assert rec.counter == _COUNTER
     assert rec.status_byte_2 == _STATUS_BYTE_2
-    assert rec.status_byte_2_name == 'tracking'
+    assert rec.status_byte_2_name == 'state_1'
     assert rec.status_flag_10 == _STATUS_FLAG_10
     assert rec.rate_ms == _RATE_MS
     assert rec.status_flag_85 == _STATUS_FLAG_85

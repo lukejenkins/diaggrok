@@ -141,6 +141,14 @@ class Diag0x1476:
     # const_id identifies the constellation (2 = GLONASS, others TBD). See
     # ``V10SecondarySv`` and :func:`_parse_v10_secondary_sv_block` (#N).
     secondary_svs: list['V10SecondarySv'] = field(default_factory=list)
+    # GLONASS time triplet (#N) — the direct GLONASS analog of gps_week/
+    # gps_tow_ms, exposed on the 291B _POS_FMT path (glo_four_year @29 u8,
+    # glo_days @30 u16, glo_tow_ms @32 u32). Previously unpacked-and-discarded
+    # (the .ksy named them but diaggrok dropped them). None on the v13/v24 and
+    # mdm9600 paths, where the offset is not yet located for that layout.
+    glo_four_year: int | None = None
+    glo_days: int | None = None
+    glo_tow_ms: int | None = None
 
     # Known Qualcomm GNSS cold-start seed positions (lat_rad, lon_rad).
     # These are hardcoded prediction positions emitted before the first
@@ -180,6 +188,12 @@ class Diag0x1476:
         glo_dict: dict[str, Any] = {
             'used': self.num_glo_svs, 'total': self.total_glo_svs,
         }
+        # GLONASS time triplet (#N) — the GLONASS analog of gps_week/gps_tow_ms,
+        # exposed on the 291B path. Omitted when absent (v13/mdm9600 paths).
+        if self.glo_four_year is not None:
+            glo_dict['four_year'] = self.glo_four_year
+            glo_dict['days'] = self.glo_days
+            glo_dict['tow_ms'] = self.glo_tow_ms
         # v10-only (#N): expose GLONASS PRNs + FCNs parsed from the
         # secondary SV block.  Observed on LM960 32.01.120: num_glo_svs
         # from the header (e.g. 5 used) can exceed the tail slot count
@@ -910,7 +924,7 @@ def _parse_0x1476_mdm9600(log_time: int, data: bytes) -> Diag0x1476:
     capture ``gnss_comparison_2026-06-02_099262_run2`` (and reproduced on two
     sibling firmwares): the header decodes to gps_week=1397, a valid in-week
     TOW matching the concurrent 0x1477 measurement clock, and lat/lon = a
-    stationary ~41.215 N / -<redacted-pii> (Utah) fix at ~1418 m — exactly the
+    stationary fix at the lab bench position, ~1418 m — exactly the
     fields the position comparison needs and that the ``_POS_FMT`` mis-parse
     turned to garbage.
 
@@ -992,7 +1006,7 @@ def _parse_0x1476_mdm9600(log_time: int, data: bytes) -> Diag0x1476:
     # heading_unc, vel_e/n/u, vel_sigma_e/n/u — then a 56-byte gap (clock /
     # uncertainty fields, not yet named) before the DOP triple at 144.
     # Grounded on the 1799-record gnss_comparison_2026-06-02_099262_run2
-    # capture (stationary Utah fix): heading@56 and vel_e/n/u@64/68/72 are
+    # capture (stationary fix): heading@56 and vel_e/n/u@64/68/72 are
     # 0.0 in 1799/1799 records, matching the concurrent ``AT!GPSLOC?``
     # (Heading 0.0 deg, VelHoriz/VelVert 0 m/s); vel_sigma@76/80/84 carry
     # real nonzero uncertainties (0.01–1.36 m/s).
@@ -1243,4 +1257,7 @@ def parse_0x1476(log_time: int, data: bytes) -> Diag0x1476:
         gps_sv_residuals=gps_residuals,
         v10_intermediate=v10_intermediate,
         secondary_svs=secondary_svs,
+        glo_four_year=d['glo_four_year'],
+        glo_days=d['glo_days'],
+        glo_tow_ms=d['glo_tow_ms'],
     )

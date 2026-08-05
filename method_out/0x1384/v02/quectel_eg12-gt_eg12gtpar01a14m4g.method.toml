@@ -1,0 +1,56 @@
+version = 2
+cond = "sky-fix"
+modem_make = "Quectel"
+modem_model = "EG12-GT"
+modem_firmware = "EG12GTPAR01A14M4G"
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_nmea_sentence_raw"
+sources = [
+    { kind = "at", value = "AT+QGPSGNMEA=\"GGA\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"RMC\"" },
+    { kind = "at", value = "AT+QGPSGNMEA=\"GSV\"" },
+]
+
+[[field_map]]
+parser_field = "parsed.latitude"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+]
+
+[[field_map]]
+parser_field = "parsed.longitude"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+]
+
+[[field_map]]
+parser_field = "parsed.altitude_m"
+quantity = "gnss_altitude_m"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+]
+
+[[field_map]]
+parser_field = "parsed.num_satellites"
+quantity = "gnss_num_satellites_used"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+]
+
+[[field_map]]
+parser_field = "fix_quality"
+quantity = "gnss_fix_quality_indicator"
+sources = [
+    { kind = "at", value = "AT+QGPSLOC=2" },
+]
+
+[[field_map]]
+parser_field = "client_id"
+quantity = "gnss_firmware_client_magic"
+sources = [
+    { kind = "trigger", value = "modem-identity: Quectel ⇒ 0x00000DA3" },
+]

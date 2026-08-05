@@ -7,9 +7,9 @@ See module body for the per-code RE history and field map.
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_CGPS_SM_EPH_RANDOMIZATION_INFO_C
         source: qualcomm_diag_log_codes_h (authority: vendor_official)
-    aliases:
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
+    aliases: (none recorded)
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).
@@ -62,13 +62,23 @@ from diaggrok.registry import register
 #                8); C/N0 is comparable across both states so it is not a
 #                signal-quality gate. Value is kept raw (size-invariance ≠
 #                format-invariance) — a future capture may show other values.
-#                Cross-modem scope (#N, <redacted-ref>): nav_state is
-#                **EM7565-build-specific**. Across all 10 in-corpus EM7511
-#                captures (1271 records, BOTH SWI9X50C_01.08.04.00 and
-#                01.14.22.00 firmwares) offsets [11]/[12] are 0x00 in 1271/1271
-#                — even though EM7511 is the same MDM9x50-class silicon and the
-#                same SWI9X50C firmware family. So the flag is emitted only by
-#                the EM7565 build's GNSS stack, not by the chipset family.
+#                Cross-modem scope (#N): nav_state is **build-specific,
+#                NOT chipset- or vendor-specific**. The earlier "EM7565-build-
+#                specific" reading (<redacted-ref>) was REFUTED by #N: the
+#                Quectel EG18-NA (MDM9640, fw_tag 0x7a 'z') emits a non-zero
+#                nav_state = 0x0010 on 290/290 records of its
+#                gnss_comparison_2026-07-07 capture — a different vendor AND a
+#                different chipset family from the Sierra EM7565 (MDM9x50,
+#                fw_tag 0x75 'u', nav_state 0x0110). Two facts survive:
+#                (a) byte[11]=0x10 is the shared "set" bit across BOTH non-zero
+#                builds; byte[12] carries a build-varying sub-state (0x01 on
+#                EM7565 'u', 0x00 on EG18-NA 'z'). (b) It tracks the fw_tag
+#                BUILD CHANNEL, not the silicon: EM7511 (same MDM9x50 silicon +
+#                same SWI9X50C family as EM7565) is 0x00 across all 10 in-corpus
+#                captures (1271/1271 records), and the *plain* EG18-NA 'm'-build
+#                fixture is 0x00 while the SAME model's 'z'-build is 0x0010. So
+#                the flag is emitted by specific GNSS-stack builds, keyed by the
+#                fw_tag channel — see gnss_14a6_eg18na_z.bin vs gnss_14a6_em7565.bin.
 #   [13]     u8  reserved_13 = 0 (constant across RE corpus + EM7565).
 #   [14]     u8  num_sv_family_a ∈ {0, 4, 5, 6, 8}
 #   [15]     u8  flag_15 ∈ {0, 1}
@@ -268,7 +278,7 @@ class Diag0x14A6:
         "retained as a back-compat property. Added gnss_14a6_em7565.bin "
         "fixture (fix=7, fw_tag=0x75, nav_state=0x0110). "
         "v7 (2026-06-11, #N): first per-modem HW validation (#N) — Quectel "
-        "RM520N-GL @ RM520NGLAAR03A03M4G (SDX62, <redacted-ref>, host t480, live 3D "
+        "RM520N-GL @ RM520NGLAAR03A03M4G (SDX62, <redacted-ref>, host <redacted-host>, live 3D "
         "fix). sv_slots.sv_id VERIFIED: 10/10 GPS-range sv_id contained in the GSV "
         "GPS PRN set (sv_id == GPS PRN, no offset). num_sv_fix / num_sv_tracked / "
         "cno_metric → PARTIAL (GPS-family counts ~10, not the multi-constellation "

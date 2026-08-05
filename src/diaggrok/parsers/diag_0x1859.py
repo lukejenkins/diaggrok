@@ -51,8 +51,6 @@ Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_EVENTS_DS_GSM_MESSAGE_RECEIVED
         source: qxdm_3_12_714_2017_diag_log_codes (authority: community)
     aliases:
-        LOG_EVENTS_GSM_DS_MESSAGE_RECEIVED
-            source: qxdm_3_12_714_2017_diag_log_codes
         LOG_DS_FIRST_REORIG_IP_PACKET_HEADER
             source: qxdm_itemtype_list_zukgit_2025_04_03
 

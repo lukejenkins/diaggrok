@@ -1,0 +1,53 @@
+version = 9
+cond = "nr5g"
+modem_make = "Wistron"
+modem_model = "LV55"
+modem_firmware = "3.33.101.0"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "nr5g_serving_pci"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "other", value = "0xB97F NR5G ML1 serving_pci (cross-code)" },
+]
+
+[[field_map]]
+parser_field = "arfcn"
+quantity = "nr5g_arfcn"
+sources = [
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+    { kind = "other", value = "0xB97F NR5G ML1 nr_arfcn (cross-code)" },
+]
+
+[[field_map]]
+parser_field = "sib1_cell_id"
+quantity = "nr5g_cell_identity_nci"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "sib1_tac"
+quantity = "nr5g_tac"
+sources = [
+    { kind = "at", value = "AT+C5GREG?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mcc"
+quantity = "plmn_mcc"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mnc"
+quantity = "plmn_mnc"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]

@@ -80,9 +80,9 @@ Closure is blocked on:
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_EVENT_MTP_FORMAT_STORE_STARTED
         source: qxdm_3_12_714_2017_diag_log_codes (authority: community)
-    aliases:
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
+    aliases: (none recorded)
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).

@@ -1,11 +1,29 @@
-"""0x18F8 — GNSS misc status, 20B fixed, EM7511 mode-transition edge-case (#N).
+"""0x18F8 — modem misc status word, mode-transition edge-case (#N).
 
 Split from `lte_misc.py` per #N tier-3 batch 14.
 
-Emitted during LTE mode transitions (airplane-mode cycle, SIM power cycle).
-12 records total: 5 per airplane cycle, 5 per SIM cycle, 2 pre-reboot.
+⚠️ SUBSYSTEM: **unconfirmed — NOT GNSS.** The original filing (2026-04-20)
+guessed "GNSS/location misc" purely from the 0x18xx code range. That guess is
+**refuted** by two independent lines of evidence gathered since:
+  * The records fire in **LTE/NR RF state-transition** captures (airplane-mode
+    cycle, SIM power cycle, reboot, PSM/eDRX) — GNSS is *not* active in any of
+    them. On the Sierra EM7511 the trigger is the LTE mode change, not a fix.
+  * **F3 co-temporal check (2026-07-19, RM520N-GL 6552b4be, 4.06M F3 frames):**
+    no F3 print co-fires with a 0x18F8 record (median nearest-F3 distance sits
+    at the correlation-window edge). The ambient F3 in-window is dominated by
+    **RF front-end device programming** (FEM/ELNA/PA/ASM port selection,
+    tx_agc) — the signature of an RF state transition — with only trace GNSS-RF
+    background. This is an RF/mode-transition context, not a GNSS measurement.
+So the parser is **undomained** (``domain=None``); the topical bucket is left
+unset rather than mis-filed under ``gnss``. Semantics of the varying fields
+remain open RE (AT-correlation, not F3 — F3 does not label this code).
 
-Layout (20 B fixed, version 0x01):
+Two versions coexist in the corpus, partitioned by byte[0] (the Qualcomm
+version byte). The corpus is now **~97% v0x02** — the original v0x01 RE covered
+only the residual ~3%.
+
+--- v0x01 (20 B fixed) — EM7511 / MC7411 (MDM9650) -------------------------
+Emitted during LTE mode transitions. RE'd 2026-04-20 from 12 EM7511 records.
   [0]     u8   version    = 0x01 (const; the Qualcomm version byte)
   [1]     u8   type_b     = 0x02 (const)
   [2:6]   u32  sentinel_a = 0xFFFFFFFF (const)
@@ -16,21 +34,33 @@ Layout (20 B fixed, version 0x01):
   [14]    u8   reserved_1  = 0x00 (const)
   [15]    u8   const_7d    = 0x7D (const; 125 decimal)
   [16:20] u32  sentinel_d  = 0xFFFFFFFF (const)
+The lone varying field is [6:8] (0x0079=121, 0x007B=123, 0x0083=131,
+0x00A8=168, 0xFFFF=N/A). Semantics: unknown; a candidate RF/mode metric.
 
-The only varying field is [6:8].  Observed values: 0x0079=121, 0x007B=123,
-0x0083=131, 0x00A8=168, 0xFFFF=not-available (during mode-off phase).
-Semantic: unknown; possible location accuracy in 0.1 m units or an RF metric.
+--- v0x02 — RM520N-GL (SDX62) + EM9291 (SDX65) ----------------------------
+A DISTINCT dual-shape format, discriminated by byte[1] (``record_type``). Each
+mode-transition event emits a **pair** — one 72 B record (record_type=0x01)
+and one 20 B record (record_type=0x02); the corpus counts the two shapes in
+near-lockstep. Cross-gen attested: the layouts are **byte-identical across
+SDX62 and SDX65** (2 QCA generations, no HW needed).
 
-#N version-compliance — byte[0] is the version discriminant, not a
-generic "type".  The corpus partitions byte[0] cleanly by firmware:
-0x01 on the EM7511/MC7411 family (this RE'd 20-B layout), 0x02 on
-em9291 SWIX65C.  The 0x02 records carry different sentinel content
-(sentinel_a/sentinel_d are NOT 0xFFFFFFFF) and a separate 72-B variant —
-a distinct format this parser does not model.  byte[0] is therefore
-renamed ``type_a`` -> ``version`` and gated to the RE'd value 0x01 (both
-layer-1 and via ``field_invariants['version']``), so an em9291 0x02
-record (or any future version) fails fast rather than being mis-decoded
-under the v1 layout (core-memory rule, 2026-05-08).
+  v0x02-A (72 B, record_type=0x01): a firmware-static capability/config table —
+    every one of the 72 bytes is invariant across both chipset gens. Structure:
+    three blocks, each ``[4 sequential u16 IDs][zeros][2 u16 values]`` —
+    IDs 200-203 / 190-193 / 180-183, values ~2400-3200. Semantics unconfirmed
+    (looks like a thermal/RF-power reference table); preserved as ``table_raw``.
+
+  v0x02-B (20 B, record_type=0x02): richer than v0x01 — byte[2] is a real
+    per-record value (30-36 on SDX62, 57-61 on SDX65 — firmware-scaled) where
+    v0x01 carries the 0xFF sentinel there. byte[3] varies (0x0b-0x10). The u16
+    at [6:8] (byte7=0x00) ranges 131-216 — overlapping v0x01's [6:8]
+    ``measurement`` (121-168), so it is very likely the **same quantity
+    continued into v0x02**. Named ``measurement`` for continuity.
+
+#N version-compliance: byte[0] is the version discriminant. Both v0x01 and
+v0x02 are now modelled; a future v0x03 (or a v0x02 sub-shape with an unknown
+record_type) fails fast rather than being mis-decoded (core-memory rule,
+2026-05-08 — size invariance ≠ format invariance).
 
 Closure: #N.
 
@@ -44,6 +74,13 @@ Names by source (from sources/DIAG_LOG_INDEX.yaml):
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).
 === names-block:end ===
+
+⚠️ The community name ``LOG_MCS_VBATT_INFO`` (battery voltage) is the
+LOWEST-authority source and is **not corroborated** by evidence: the F3 check
+above found VBATT/VADC telemetry *exists* in this firmware but **never
+co-fires with a 0x18F8 record**, and the ``measurement`` range (121-216) does
+not match any observed VADC microvolt/threshold value. Treat the VBATT name as
+unverified index noise, not a decode hint.
 """
 from __future__ import annotations
 
@@ -56,7 +93,7 @@ from diaggrok.registry import register
 
 @dataclass
 class Diag0x18F8:
-    """GNSS misc status (0x18F8) — 20B fixed, emitted on LTE mode transitions."""
+    """0x18F8 v0x01 — 20B fixed, EM7511/MC7411 MDM9650, LTE mode transitions."""
     log_time: int
     version: int     # [0] const 0x01 — Qualcomm version byte (#N)
     type_b: int      # [1] const 0x02
@@ -96,51 +133,93 @@ class Diag0x18F8:
         return d
 
 
+@dataclass
+class Diag0x18F8V2:
+    """0x18F8 v0x02 — dual-shape, RM520N-GL (SDX62) + EM9291 (SDX65).
+
+    ``record_type`` (byte[1]) selects the shape: 0x01 → 72 B static table,
+    0x02 → 20 B per-record status. Byte-identical across both chipset gens
+    (cross-gen attested; see the module docstring).
+    """
+    log_time: int
+    version: int          # [0] const 0x02 — Qualcomm version byte
+    record_type: int      # [1] 0x01 (72B table) | 0x02 (20B status)
+    length: int           # record length (72 or 20)
+    # v0x02-B (20B) named fields — None on the 72B shape:
+    field_2: int | None       # [2] per-record value (30-36 SDX62 / 57-61 SDX65)
+    field_3: int | None       # [3] varies 0x0b-0x10
+    measurement: int | None   # [6:8] u16 — same offset/range as v0x01 measurement
+    # v0x02-A (72B) static table — None on the 20B shape:
+    table_raw: str | None     # [2:72] hex; firmware-static, cross-gen-identical
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            'type': 'Diag0x18F8V2',
+            'log_time': self.log_time,
+            'version': self.version,
+            'record_type': self.record_type,
+            'length': self.length,
+        }
+        if self.record_type == 0x02:
+            d['field_2'] = self.field_2
+            d['field_3'] = self.field_3
+            d['measurement'] = self.measurement
+        elif self.record_type == 0x01:
+            d['table_raw'] = self.table_raw
+        return d
+
+
 # --- Ground-truth recipe (#N) ---------------------------------------
-# Authored offline (hw_run_performed=False). DISCOVERY recipe: 19/20 bytes
-# are constants/sentinels and `measurement` is the lone variable field with
-# UNKNOWN semantics (range 121-168, 0xFFFF=N/A). The community-only name
-# LOG_MCS_VBATT_INFO (lowest source-precedence) HINTS battery voltage but is
-# NOT authoritative; the observation-based RE called it "possible location
-# accuracy in 0.1 m units or an RF metric". This recipe names the candidate
-# quantities and what a correlation must recover; it does NOT assert one.
+# Authored offline (hw_run_performed=False). DISCOVERY recipe for the v0x01
+# EM7511 layout: 19/20 bytes are constants/sentinels and `measurement` is the
+# lone variable field with UNKNOWN semantics (range 121-168, 0xFFFF=N/A).
 #
-# ⚠️ TARGET = Sierra EM7511 (MDM9650), NOT the RM520N-GL house default:
-# the RM520N-GL (SDX62) emits 0x18F8 ONLY at v=0x02 (verified via the
-# 2026-06-07 diag_at_correlate scan: every 20B AND 72B record has byte0=0x02),
-# which this v=0x01 parser does not model. v=0x01 is the EM7511/MC7411 MDM9650
-# layout this parser was RE'd from — so the recipe targets the EM7511 we own.
-# Sierra AT dialect (AT!*/AT+CESQ), not Quectel AT+Q*.
+# ⚠️ NOT a GNSS measurement and NOT battery voltage:
+#   * F3 co-temporal check (2026-07-19) shows the in-window F3 is RF-front-end
+#     device programming, not GNSS — see module docstring. The recipe grounds
+#     `measurement` against RF/mode AT surfaces (AT+CESQ / AT!GSTATUS?), not
+#     GNSS or CGNSSINFO.
+#   * The community `LOG_MCS_VBATT_INFO` name is uncorroborated (no co-temporal
+#     VBATT F3; range mismatch) — do NOT chase battery voltage.
+#
+# ⚠️ v0x01 TARGET = Sierra EM7511 (MDM9650): RM520N-GL/EM9291 emit ONLY v0x02,
+# which this recipe's v0x01 layout does not cover. Sierra AT dialect
+# (AT!*/AT+CESQ), not Quectel AT+Q*.
 
 @register(
-    0x18F8, domain="gnss",
+    0x18F8, domain=None,
     name="0x18F8",
-    description="GNSS misc status (0x18F8) — 20B fixed v0x01, version-gated (#N)",
-    version=2,
+    description="Modem misc status (0x18F8) — v0x01 20B + v0x02 dual-shape, version-gated (#N)",
+    version=3,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Clean-room RE from 12 EM7511 MDM9650 records across airplane-mode + SIM + "
-        "reboot transitions 2026-04-20; 19 of 20 bytes constant (#N). "
-        "v2 (#N): byte[0] renamed type_a->version and gated to 0x01 — the "
-        "corpus partitions byte[0] by firmware (0x01 EM7511/MC7411, 0x02 em9291 "
-        "with different sentinels + a 72-B variant); the v1 layout only models 0x01."
+        "Clean-room RE. v0x01: 12 EM7511 MDM9650 records, airplane/SIM/reboot "
+        "transitions 2026-04-20, 19/20 bytes constant. v0x02 (v3, 2026-07-19): "
+        "dual-shape (72B record_type=0x01 static table + 20B record_type=0x02 "
+        "status), byte-identical across RM520N-GL SDX62 + EM9291 SDX65 — "
+        "cross-gen attested over the on-host corpus. Subsystem is NOT gnss "
+        "(F3 co-temporal check + LTE/NR-transition emission context); domain "
+        "left unset. See module docstring."
     ),
     issues=(),
-    fields_identified=10,
-    fields_parsed=10,
+    fields_identified=13,
+    fields_parsed=13,
     field_invariants={
-        # Layer-2 drift detection. 19 of 20 bytes are constant across all 12
-        # EM7511 MDM9650 records — these are the version/sentinel discriminators
-        # that protect against a future firmware shipping a different layout
-        # in the same 20-byte envelope (core-memory rule, 2026-05-08).
-        # ``measurement`` (the lone varying field) is deliberately NOT enumerated
-        # — 12 records yields 4 distinct values + the 0xFFFF not-available
-        # sentinel, too small a sample to claim a closed enum (small-N rule,
+        # Layer-2 drift detection. version is the shared discriminant across
+        # both modelled layouts. The remaining v0x01 sentinels and the v0x02
+        # discriminators are named per-layout; check_invariants() skips any
+        # invariant whose field is absent from a given record's to_dict()
+        # (registry.py:1330), so v0x01 and v0x02 invariants coexist harmlessly
+        # in one dict — each fires only on records of its own version.
+        #
+        # ``measurement`` (v0x01) and ``field_2``/``field_3`` (v0x02) are the
+        # varying fields and are deliberately NOT enumerated (small-N rule,
         # <redacted-ref> v1.4.0).
-        # #N: byte[0]=version, gated to 0x01 at layer-1 (parser body) too.
-        "version":    {"enum": [0x01]},
+        # #N: byte[0]=version, gated at layer-1 (parser body) too.
+        "version":       {"enum": [0x01, 0x02]},
+        # --- v0x01 constants (skipped for v0x02 records) ---
         "type_b":     {"enum": [0x02]},
         "sentinel_a": {"enum": [0xFFFFFFFF]},
         "sentinel_b": {"enum": [0xFFFF]},
@@ -149,26 +228,64 @@ class Diag0x18F8:
         "reserved_1": {"enum": [0x00]},
         "const_7d":   {"enum": [0x7D]},
         "sentinel_d": {"enum": [0xFFFFFFFF]},
+        # --- v0x02 discriminator (skipped for v0x01 records) ---
+        "record_type":   {"enum": [0x01, 0x02]},
     },
 )
-def parse_0x18f8(log_time: int, data: bytes) -> Diag0x18F8 | None:
-    if len(data) < 20:
+def parse_0x18f8(log_time: int, data: bytes) -> Diag0x18F8 | Diag0x18F8V2 | None:
+    if len(data) < 2:
         return None
-    # #N first-byte version-gate. byte[0]=0x01 is the only version this
-    # 20-B layout models; em9291's 0x02 (different sentinels + 72-B variant)
-    # and any future version are rejected here rather than mis-decoded.
-    if data[0] != 0x01:
+    # #N first-byte version-gate (Layer-1). Only the two RE'd versions are
+    # modelled; a future v0x03 (or unknown) fails fast rather than being
+    # mis-decoded. Explicit `data[0] not in (...)` form for the version-gate
+    # ratchet audit (test_parser_version_gate_ratchet).
+    if data[0] not in (0x01, 0x02):
         return None
-    return Diag0x18F8(
-        log_time=log_time,
-        version=data[0],
-        type_b=data[1],
-        sentinel_a=unpack_from('<I', data, 2)[0],
-        measurement=unpack_from('<H', data, 6)[0],
-        sentinel_b=unpack_from('<H', data, 8)[0],
-        reserved_0=unpack_from('<H', data, 10)[0],
-        sentinel_c=unpack_from('<H', data, 12)[0],
-        reserved_1=data[14],
-        const_7d=data[15],
-        sentinel_d=unpack_from('<I', data, 16)[0],
-    )
+    version = data[0]
+    if version == 0x01:
+        if len(data) < 20:
+            return None
+        return Diag0x18F8(
+            log_time=log_time,
+            version=data[0],
+            type_b=data[1],
+            sentinel_a=unpack_from('<I', data, 2)[0],
+            measurement=unpack_from('<H', data, 6)[0],
+            sentinel_b=unpack_from('<H', data, 8)[0],
+            reserved_0=unpack_from('<H', data, 10)[0],
+            sentinel_c=unpack_from('<H', data, 12)[0],
+            reserved_1=data[14],
+            const_7d=data[15],
+            sentinel_d=unpack_from('<I', data, 16)[0],
+        )
+    if version == 0x02:
+        record_type = data[1]
+        if record_type == 0x01:
+            # 72B static table (cross-gen-identical). Preserve the body.
+            if len(data) < 72:
+                return None
+            return Diag0x18F8V2(
+                log_time=log_time,
+                version=version,
+                record_type=record_type,
+                length=len(data),
+                field_2=None, field_3=None, measurement=None,
+                table_raw=data[2:72].hex(),
+            )
+        if record_type == 0x02:
+            # 20B per-record status.
+            if len(data) < 20:
+                return None
+            return Diag0x18F8V2(
+                log_time=log_time,
+                version=version,
+                record_type=record_type,
+                length=len(data),
+                field_2=data[2],
+                field_3=data[3],
+                measurement=unpack_from('<H', data, 6)[0],
+                table_raw=None,
+            )
+        # Unknown v0x02 sub-shape — fail fast (do not mis-decode).
+        return None
+    return None

@@ -1,0 +1,46 @@
+version = 12
+cond = "nr5g"
+modem_make = "Sierra"
+modem_model = "EM9190"
+modem_firmware = "SWIX55C_03.17.04.00"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "nr5g_serving_pci_candidate"
+sources = [
+    { kind = "at", value = "AT!NRPCI?" },
+    { kind = "at", value = "AT!NRINFO?" },
+    { kind = "qmi", value = "QMI_NAS GetCellLocationInfo" },
+]
+
+[[field_map]]
+parser_field = "arfcn"
+quantity = "nr5g_arfcn_candidate"
+sources = [
+    { kind = "at", value = "AT!NRINFO?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_tac"
+quantity = "nr5g_tac_candidate"
+sources = [
+    { kind = "at", value = "AT!NRINFO?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mcc"
+quantity = "plmn_mcc_candidate"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]
+
+[[field_map]]
+parser_field = "sib1_mnc"
+quantity = "plmn_mnc_candidate"
+sources = [
+    { kind = "at", value = "AT+COPS?" },
+    { kind = "qmi", value = "QMI_NAS GetServingSystem" },
+]

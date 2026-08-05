@@ -1,0 +1,59 @@
+version = 2
+cond = "sky-fix"
+modem_make = "SIMCom"
+modem_model = "SIM7600NA-H"
+modem_firmware = "LE20B01SIM7600NA_210506"
+
+[[field_map]]
+parser_field = "nmea_sentence"
+quantity = "gnss_nmea_sentence_raw"
+sources = [
+    { kind = "nmea", value = "SIM7600NA NMEA-port sentence (same type + utc_time)" },
+]
+
+[[field_map]]
+parser_field = "parsed.latitude"
+quantity = "gnss_latitude_deg"
+sources = [
+    { kind = "at", value = "AT+CGNSSINFO" },
+    { kind = "at", value = "AT+CGPSINFO" },
+]
+
+[[field_map]]
+parser_field = "parsed.longitude"
+quantity = "gnss_longitude_deg"
+sources = [
+    { kind = "at", value = "AT+CGNSSINFO" },
+    { kind = "at", value = "AT+CGPSINFO" },
+]
+
+[[field_map]]
+parser_field = "parsed.altitude_m"
+quantity = "gnss_altitude_m"
+sources = [
+    { kind = "at", value = "AT+CGNSSINFO" },
+    { kind = "at", value = "AT+CGPSINFO" },
+]
+
+[[field_map]]
+parser_field = "parsed.num_satellites"
+quantity = "gnss_num_satellites_used"
+sources = [
+    { kind = "at", value = "AT+CGNSSINFO" },
+]
+
+[[field_map]]
+parser_field = "parsed.fix_quality"
+quantity = "gnss_fix_quality_indicator"
+sources = [
+    { kind = "at", value = "AT+CGNSSINFO" },
+    { kind = "at", value = "AT+CGPS?" },
+]
+
+[[field_map]]
+parser_field = "client_id"
+quantity = "gnss_firmware_client_magic"
+
+[[field_map.sources]]
+kind = "trigger"
+value = "modem-identity: SIMCom MDM9207 ⇒ constant client magic (value TBD on HW)"

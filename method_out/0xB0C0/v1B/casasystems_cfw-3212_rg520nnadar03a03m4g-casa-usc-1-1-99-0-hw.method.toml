@@ -1,0 +1,23 @@
+version = 27
+cond = "connected"
+modem_make = "CasaSystems"
+modem_model = "CFW-3212"
+modem_firmware = "RG520NNADAR03A03M4G"
+
+[[field_map]]
+parser_field = "pci"
+quantity = "lte_serving_pci"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "other", value = "DIAG 0xB116 config_word / 0xB193 pci" },
+]
+
+[[field_map]]
+parser_field = "earfcn"
+quantity = "lte_serving_earfcn"
+status = "verified"
+sources = [
+    { kind = "at", value = "AT+QENG=\"servingcell\"" },
+    { kind = "other", value = "DIAG 0xB193 earfcn" },
+]

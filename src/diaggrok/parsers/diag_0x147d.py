@@ -7,9 +7,9 @@ See module body for the per-code RE history and field map.
 Names by source (from sources/DIAG_LOG_INDEX.yaml):
     canonical: LOG_GNSS_PE_KF_POSITION_REPORT_C
         source: qualcomm_diag_log_codes_h (authority: vendor_official)
-    aliases:
-        RESERVED
-            source: qxdm_itemtype_list_zukgit_2025_04_03
+    deprecated_name: RESERVED
+        source: qxdm_itemtype_list_zukgit_2025_04_03 (authority: community) - #N demotion
+    aliases: (none recorded)
 
 Source-precedence (#N): vendor_official > observation >
 community (specification) > community (reference).

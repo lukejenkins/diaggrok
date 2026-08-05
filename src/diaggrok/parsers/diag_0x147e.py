@@ -5,6 +5,18 @@ LOG_GNSS_PRX_RF_HW_STATUS_REPORT — reports the state of the GNSS front-end
 
 - **SDX20 V2 (EG18-NA)**: fixed 349 bytes, version byte = 4
 - **SDX55 (FN980m)**: fixed 722 bytes, version byte = 5
+- **SDX62 (RM520N-GL)**: fixed 749 bytes, version byte = 6
+- **SDX72 (Foxconn T99W640)**: fixed 816 bytes, version byte = 7
+
+  The v7 header is byte-for-byte offset-stable with v4/5/6 (validated
+  2026-07-14 against the ``t99w640-<redacted-host>`` SDX72 capture, 13 records):
+  ``fw_id='9.010.0060'``, ``constellations='16'`` (numeric-as-string, like
+  v5/v6), ``sdr_chip='SDR753'``, ``board_id='L1EG0'``, ``ms_counter`` at
+  [36:40]. Only the version-byte gate rejected it before v7 was added to
+  the enum. NOTE: the co-temporal F3 GNSS-RF driver module reports itself
+  as ``navrx_sdr875.cpp`` while the record's ``sdr_chip`` string is
+  ``SDR753`` — a driver-family-vs-reported-part label difference on the
+  DW5934e, not a decode error.
 
 The header region (bytes 0..63) is stable across records and contains
 identity strings + a millisecond counter. The body region (bytes 64 to
@@ -290,7 +302,14 @@ class Diag0x147E:
         "Offset map (tools/diag_147e_band_offsets.py, 8,000 records): band "
         "labels at fixed body offsets, GLO SV blocks at 27-byte stride; "
         "extracted by scan (not fixed offset) for size-vs-format robustness. "
-        "v4 body is binary (no labels) -> both fields empty."
+        "v4 body is binary (no labels) -> both fields empty. "
+        "2026-07-14 (<redacted-ref>, F3-directed): 4th (size,version) profile added — "
+        "816B/v=7 SDX72 (Foxconn T99W640 @ FDE2.F0.0.0.1.2.TO.001, "
+        "<redacted-pii><redacted-host>, 13 records). Header "
+        "offset-stable with v4/5/6: fw_id='9.010.0060', constellations='16', "
+        "sdr_chip='SDR753', board_id='L1EG0'. Enum extended to {4,5,6,7} so the "
+        "SDX72 header decodes rather than invariant-rejecting. Body (bytes "
+        "64..815) remains raw — v7 rf_bands/glonass_channels not yet cataloged."
     ),
     source_url="",
     # Layer-2 plausibility — corpus walk 2026-05-22 against 40,269 records:
@@ -309,8 +328,16 @@ class Diag0x147E:
     # are not yet decoded into named fields. The version-byte enum is a
     # layer-2 hardening only — body-decode closure is gated on cross-layer
     # ground truth (controlled-jamming AT correlation or vendor docs).
+    #   2026-07-14 (<redacted-ref>, F3-directed): SDX72 (Foxconn T99W640, fw
+    #     FDE2.F0.0.0.1.2.TO.001) adds a 4th profile — 816B / v=7 — with a
+    #     header byte-for-byte offset-stable to v4/5/6. Added 7 to the enum
+    #     so the SDX72 header (fw_id='9.010.0060', constellations='16',
+    #     sdr_chip='SDR753', board_id='L1EG0', ms_counter) decodes instead of
+    #     invariant-rejecting to None. Grounded in a GNSS-active capture whose
+    #     F3 stream (resolution_rate 1.0, qdb guid 7515f7c4) reports GpsWk 2423
+    #     via tm_core.c/ale_getpt.c co-temporal with these records.
     field_invariants={
-        "version": {"enum": [4, 5, 6]},
+        "version": {"enum": [4, 5, 6, 7]},
     },
     # ASCII audit (#N, Quectel slice): 31/31 records carry fixed
     # GNSS-engine / RF-chip descriptor labels in the body region
@@ -334,7 +361,7 @@ def parse_0x147e(
     # SDX65/SDX75 record with a new version byte at the same 749/685/etc.
     # size would otherwise silently route through structural decode and
     # produce ASCII strings sliced at offsets that no longer hold them.
-    if data[0] not in (4, 5, 6):
+    if data[0] not in (4, 5, 6, 7):
         return None
     body = data[64:]
     return Diag0x147E(

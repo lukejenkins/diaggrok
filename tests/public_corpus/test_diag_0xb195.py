@@ -24,11 +24,14 @@ are transcribed from diaggrok.parsers.diag_0xb195's live ``parse_0xb195`` /
         [0:4]   u32  earfcn_raw (low 18 bits)
         [4:6]   u16  num_cells_raw = 1 (<=32, used directly)
         [6:8]   u16  reserved
-        Per-cell record (52 B), body[8:60]:
-          [+0:2]   u16  pci (<=503, gated)
-          [+24:26] u16  rsrp_raw   -> dBm = -raw/10.0, gated -140..-30
-          [+36:38] u16  rsrq_rx0_raw -> dB = (raw-60)/2.0, gated -34..2.5
-          [+38:40] u16  rsrq_rx1_raw -> dB = (raw-60)/2.0, gated -34..2.5
+        Per-cell record (52 B, byte-identical to 0xB192 — #N), body[8:60]:
+          [+0:4]   u32  pci (low 9 bits)
+          [+8:12]  u32  energy1 (per-Rx integrated energy)
+          [+24:26] u16  meas_index (a counter — the byte the pre-#N parser
+                        MIS-decoded as "rsrp" via -raw/10; #N v6 REFUTED)
+          [+36:38] u16  aux0 (was mis-read as "rsrq_rx0")
+          [+40:44] u32  timing
+        rsrp/rsrq are None — no calibrated dBm in this packet (#N).
 """
 from public_corpus.support.synthetic import diag_frame, pack
 from diaggrok.parsers.diag_0xb195 import parse_0xb195
@@ -36,21 +39,21 @@ from diaggrok.parsers.diag_0xb195 import parse_0xb195
 _VERSION = 0x01
 _SP_VER = 4
 _EARFCN = 800          # low 18 bits of the u32 at carrier-header+0
-_PCI = 45              # u16 at cell+0, <= 503
-_RSRP_RAW = 800        # u16 at cell+24 -> dBm = -800/10.0 = -80.0
-_RSRQ_RX0_RAW = 40     # u16 at cell+36 -> dB = (40-60)/2.0 = -10.0
-_RSRQ_RX1_RAW = 50     # u16 at cell+38 -> dB = (50-60)/2.0 = -5.0
+_PCI = 45              # low 9 bits of the u32 at cell+0
+_ENERGY1 = 4224007     # u32 at cell+8 (RSRP-tracking energy, #N)
+_MEAS_INDEX = 682      # u16 at cell+24 (a counter — NOT rsrp)
+_AUX0 = 40             # u16 at cell+36 (unresolved — was mis-read as rsrq)
+_TIMING = 138004       # u32 at cell+40
 
 
 def _synthetic_cell() -> bytes:
     cell = bytearray(52)
-    cell[0:2] = pack('<H', _PCI)
-    # cell[2:24] reserved/timing fields, not asserted -- zero-filled
-    cell[24:26] = pack('<H', _RSRP_RAW)
-    # cell[26:36] reserved, zero
-    cell[36:38] = pack('<H', _RSRQ_RX0_RAW)
-    cell[38:40] = pack('<H', _RSRQ_RX1_RAW)
-    # cell[40:52] reserved, zero
+    cell[0:4] = pack('<I', _PCI)
+    cell[8:12] = pack('<I', _ENERGY1)
+    cell[24:26] = pack('<H', _MEAS_INDEX)
+    cell[36:38] = pack('<H', _AUX0)
+    cell[40:44] = pack('<I', _TIMING)
+    cell[44:48] = pack('<I', _TIMING)   # +44 == +40 always
     assert len(cell) == 52
     return bytes(cell)
 
@@ -100,6 +103,12 @@ def test_b195_decodes_synthetic_frame():
     entry = rec.entries[0]
     assert entry.pci == _PCI
     assert entry.earfcn == _EARFCN
-    assert entry.rsrp == -80.0
-    assert entry.rsrq_rx0 == -10.0
-    assert entry.rsrq_rx1 == -5.0
+    # rsrp/rsrq are None (energy-not-dBm, #N/#N v6); the raw words are
+    # exposed instead (#N).
+    assert entry.rsrp is None
+    assert entry.rsrq_rx0 is None
+    assert entry.rsrq_rx1 is None
+    assert entry.energy1 == _ENERGY1
+    assert entry.meas_index == _MEAS_INDEX
+    assert entry.aux0 == _AUX0
+    assert entry.timing == _TIMING
