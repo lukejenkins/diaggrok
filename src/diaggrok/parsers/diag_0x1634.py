@@ -1,0 +1,237 @@
+"""0x1634 — GNSS per-SV range measurement (31B fixed).
+
+F3 grounding:
+  0x1634 is the **GNSS FFT-acquisition/search measurement report**, not a
+  tracking-loop report. Established by co-temporal correlation against the
+  firmware's own `gpsfft_spansrchcore.c` F3 prints on an RM520N-GL (SDX62)
+  capture (2406 records, 2406/2406 matched):
+    - `constellation [5]` == the search engine's `Gnss` enum. Diagonal
+      match 2406/2406: (0,0)GPS (1,1)GLO (2,2)BDS (3,3)GAL (4,4)QZSS.
+    - `meas_a [7:11]` == the search `Cf` (carrier-frequency / Doppler
+      search-bin, Hz) — **bit-exact i32 equality 2406/2406** with the F3 arg.
+    - `meas_b [11:15]` == the same Doppler in a second unit: meas_a/meas_b
+      is a constant ≈ -62.44 (51150/-819, 153450/-2458, 255750/-4096, ...),
+      i.e. two unit conversions of one physical quantity, F3-grounded as
+      Doppler/Cf.
+  Citation sites: gpsfft_spansrchcore.c:1414 `Num Peaks %u Gnss %u ScanM %u
+  Cf %d`, :2681 `Gnss %d ScanM %d Cf %d`; QZSS ordering corroborated by
+  gnss_xtra_common.c:818/:821 (GPS/GLO/BDS/GAL then QZSS).
+
+Corpus: 39,996 records / 31B fixed / 12 chipset+firmware pairs:
+  v=1: MDM9x07, MDM9650, SDX20, SDX20 V2 chipsets (7720 records)
+  v=2: SDX55, SDX65 chipsets (fn980m + rm500q) (32276 records)
+
+Full-byte decode (every one of 31 bytes named — no body_raw):
+  [0]    u8  version         ∈ {1, 2}  (old vs SDX55+ layouts)
+  [1:3]  u16 LE counter_ms   monotonic-increasing within capture; wraps
+                             every ~65s; delta ~= 1000 per record →
+                             1 ms per LSB, 1 Hz emission cadence.
+  [3]    u8  aux_counter     small rolling counter, 47 uniq values 0..250
+  [4]    u8  flag_4          ∈ {0, 1}
+  [5]    u8  constellation   0=GPS, 1=GLONASS, 2=BDS, 3=GAL, 4=QZSS.
+                             F3-grounded as the GNSS search-engine `Gnss`
+                             enum (see F3 block at top), which matched 4↔4
+                             on 2406/2406 records. Value 4 is ~4.8% of an
+                             878,250-record walk. constellation is
+                             intentionally NOT a closed-enum invariant, so
+                             an unseen value still parses.
+  [6]    u8  flags_6         ∈ {0..7}
+  [7:11] i32 LE meas_a       F3-grounded: == the search engine's `Cf`
+                             (carrier-frequency / Doppler search-bin, Hz).
+                             Bit-exact 2406/2406 vs gpsfft_spansrchcore.c
+                             `Cf` arg. Range ~±4M.
+  [11:15] i32 LE meas_b      the same Doppler quantity in a second unit:
+                             meas_a/meas_b ≈ -62.44 constant (e.g.
+                             (+51150, -819), (+153450, -2458)).
+  [15]   u8  signal_type     ∈ {1, 2, 3}  (L1/L2/L5-style band tag)
+  [16]   u8  flag_16         ∈ {0, 1, 2}
+  [17]   u8  sub_idx         ∈ {2, 3, 4, 9} in v1; =4 in v2
+  [18]   u8  sv_slot         ∈ {1..5}
+  [19]   u8  reserved_19     = 0 (constant 39996/39996)
+  [20]   u8  param_20        ∈ {2, 4, 8}
+  [21]   u8  param_21        enum, 6 values
+  [22]   u8  param_22        enum, 6 values
+  [23]   u8  cno_dbhz        ∈ {36, 38, 46} → plausibly C/N0 dB-Hz value
+  [24]   u8  reserved_24     = 0 (constant 39996/39996)
+  [25:27] u16 LE metric_25   16 uniq 53..310
+  [27:31] i32 LE ext_meas    v2-active (range ~±1.8M, 16403 uniq values);
+                             v1 mostly zero (6960/7720 records are 0) but
+                             non-zero values populate the same i32 field
+                             in the remaining 760 v1 records.
+
+Two invariants enforced via named reserved fields (39996/39996 obs):
+  - [19] == 0
+  - [24] == 0
+
+F3 grounding holds on both versions independently. Across every F3-bearing
+capture, ``gpsfft_spansrchcore.c`` "Gnss %d ScanM %d Cf %d" within ±50 ms
+carries exactly ``constellation`` and ``meas_a`` (i32) on 112,071 v0x01
+records (3 misses, 141 captures) and 731,808 v0x02 records (19 misses, 151
+captures), confirming the shared 31-byte layout. ``signal_type`` vs ``ScanM``
+stays CANDIDATE (the pairing differs by chipset).
+
+Log name: LOG_LTE_REG_OUTGOING_MSG
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from struct import unpack_from
+from typing import Any
+
+from diaggrok.registry import register
+
+# --- Ground-truth recipe ---------------------------------------------------
+# 0x1634 is per-SV GNSS range data straight off the measurement engine.
+# Two field classes ground very differently: (1) constellation + cno_dbhz
+# map cleanly onto NMEA GSV (talker ID + per-SV C/N0), so those validate by
+# near-direct equality; (2) meas_a / meas_b are raw signed range words
+# (pseudorange / Doppler-style, observed as ±ratio pairs = two unit
+# conversions of the same quantity) for which NMEA exposes NOTHING — there
+# is no AT command that returns a pseudorange. Those are flagged as
+# no-AT-source hypotheses rather than mapped to a command that doesn't
+# carry the quantity. v=0x02 is the SDX55/SDX62/SDX65 layout; RM520N-GL
+# (SDX62) is the recommended target.
+
+@dataclass
+class Diag0x1634:
+    """GNSS per-SV range measurement (0x1634) — 31B fixed.
+
+    See module docstring above the `parse_0x1634` register for
+    field semantics, corpus evidence, and closure decisions.
+    """
+    log_time: int
+    version: int
+    counter_ms: int          # [1:3] u16 LE 1-ms-tick counter
+    # Back-compat aliases for the raw bytes of counter_ms; downstream code may
+    # still reference them. The names are swapped relative to the content.
+    counter_hi: int          # [1] low byte of counter_ms
+    counter_lo: int          # [2] high byte of counter_ms
+    aux_counter: int         # [3]
+    flag_4: int              # [4]
+    constellation: int       # [5] 0/1/2/3
+    flags_6: int             # [6]
+    meas_a: int              # [7:11] i32 LE
+    meas_b: int              # [11:15] i32 LE
+    signal_type: int         # [15]
+    flag_16: int             # [16]
+    sub_idx: int             # [17]
+    sv_slot: int             # [18]
+    reserved_19: int         # [19] = 0
+    param_20: int            # [20]
+    param_21: int            # [21]
+    param_22: int            # [22]
+    cno_dbhz: int            # [23]
+    reserved_24: int         # [24] = 0
+    metric_25: int           # [25:27] u16 LE
+    ext_meas: int            # [27:31] i32 LE
+    payload_size: int
+
+    @property
+    def constellation_name(self) -> str:
+        # constellation [5] == the GNSS FFT-search engine's `Gnss` enum,
+        # F3-grounded 2406/2406 co-temporal on RM520N-GL SDX62
+        # (gpsfft_spansrchcore.c:1414/:2681 `Gnss %u`). Value 4 is QZSS,
+        # matching the GPS/GLO/BDS/GAL/QZSS order the firmware itself prints
+        # in gnss_xtra_common.c:818/:821.
+        return {0: 'GPS', 1: 'GLONASS', 2: 'BDS', 3: 'GAL', 4: 'QZSS'}.get(
+            self.constellation, f'UNKNOWN_{self.constellation}'
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'type': 'Diag0x1634',
+            'log_time': self.log_time,
+            'version': self.version,
+            'counter_ms': self.counter_ms,
+            'aux_counter': self.aux_counter,
+            'flag_4': self.flag_4,
+            'constellation': self.constellation,
+            'constellation_name': self.constellation_name,
+            'flags_6': self.flags_6,
+            'meas_a': self.meas_a,
+            'meas_b': self.meas_b,
+            'signal_type': self.signal_type,
+            'flag_16': self.flag_16,
+            'sub_idx': self.sub_idx,
+            'sv_slot': self.sv_slot,
+            'param_20': self.param_20,
+            'param_21': self.param_21,
+            'param_22': self.param_22,
+            'cno_dbhz': self.cno_dbhz,
+            'metric_25': self.metric_25,
+            'ext_meas': self.ext_meas,
+            'payload_size': self.payload_size,
+        }
+
+
+@register(
+    0x1634, domain="gnss",
+    name="0x1634",
+    description="GNSS per-SV range measurement (0x1634) — 31B fixed, fully decoded",
+    version=5,
+    author="Luke Jenkins",
+    author_url="https://github.com/lukejenkins",
+    source_type="re",
+    source_detail=(
+        "Clean-room RE from a cross-chipset corpus: EG12-GT, EG18-NA SDX20 V2, "
+        "EG25-G MDM9207, EM7511 MDM9650, EP06-A MDM9x07, FN980 SDX55, LM960 "
+        "SDX20, RM500Q SDX65. v1 (MDM9x07 / SDX20 / MDM9207 / MDM9650 family) "
+        "and v2 (SDX55 / SDX62 / SDX65 family) share the same layout; v2 "
+        "activates the [27:31] extension field. Every byte named. "
+        "constellation and meas_a are F3-grounded on both versions against "
+        "gpsfft_spansrchcore.c search prints; meas_b is the same Doppler in a "
+        "second unit. The byte-0 version gate is a closed enum {0x01, 0x02} "
+        "over 681,462 records / 159 captures / 15 modem variants. "
+        "signal_type and the remaining param/flag bytes stay CANDIDATE."
+    ),
+    source_url="",
+    issues=(),
+    # 31/31 bytes named across 39996-record corpus. Fields counted:
+    # version, counter_ms, aux_counter, flag_4, constellation (+derived name),
+    # flags_6, meas_a, meas_b, signal_type, flag_16, sub_idx, sv_slot,
+    # reserved_19 (invariant=0), param_20, param_21, param_22, cno_dbhz,
+    # reserved_24 (invariant=0), metric_25, ext_meas, payload_size = 22.
+    fields_identified=22,
+    fields_parsed=22,
+    field_invariants={
+        # version is a closed 2-element enum across 681,462 records (15 modem variants). v1 = MDM9x07/SDX20/
+        # MDM9207/MDM9650 generation; v2 = SDX55/SDX62/SDX65 generation.
+        "version": {"enum": [0x01, 0x02]},
+        "payload_size": {"enum": [31]},
+    },
+)
+def parse_0x1634(log_time: int, data: bytes) -> Diag0x1634 | None:
+    if len(data) != 31:
+        return None
+    # Byte-0 version gate before reading counter_ms at offset 1, so an
+    # unknown layout is rejected rather than silently mis-parsed. Corpus
+    # (681,462 records, 15 modem variants): version ∈ {0x01, 0x02}.
+    if data[0] not in (0x01, 0x02):
+        return None
+    counter_ms = unpack_from('<H', data, 1)[0]
+    return Diag0x1634(
+        log_time=log_time,
+        version=data[0],
+        counter_ms=counter_ms,
+        counter_hi=data[1],
+        counter_lo=data[2],
+        aux_counter=data[3],
+        flag_4=data[4],
+        constellation=data[5],
+        flags_6=data[6],
+        meas_a=unpack_from('<i', data, 7)[0],
+        meas_b=unpack_from('<i', data, 11)[0],
+        signal_type=data[15],
+        flag_16=data[16],
+        sub_idx=data[17],
+        sv_slot=data[18],
+        reserved_19=data[19],
+        param_20=data[20],
+        param_21=data[21],
+        param_22=data[22],
+        cno_dbhz=data[23],
+        reserved_24=data[24],
+        metric_25=unpack_from('<H', data, 25)[0],
+        ext_meas=unpack_from('<i', data, 27)[0],
+        payload_size=len(data),
+    )

@@ -1,0 +1,431 @@
+"""0x1488 - CGPS slow-clock calibration report (51 B and 241 B variants).
+
+See the module body for the variant dispatch, field map and evidence.
+
+Log name: LOG_CGPS_SLOW_CLOCK_CALIB_REPORT_C
+Also known as: LOG_CGPS_SLOW_CLOCK_CALIBRATION_REPORT
+Also seen applied to this code, but belonging to a different log: LOG_GAN_RLP_SUSPEND
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from struct import unpack_from
+from typing import Any
+
+from diaggrok.registry import register
+
+
+# ---------------------------------------------------------------------------
+# 0x1488 - GNSS config/measurement (51B AND 241B variants)
+# ---------------------------------------------------------------------------
+# Corpus (51,751 records / 235 captures):
+#
+#   sz=51   (18,315 records, 35.4%): MDM9x07/MDM9x30/MDM9x50 + SDX20 family
+#                                    (eg18na, eg95na, em7455, em7511, em7565,
+#                                    ep06a, lm960, mc7411, mc7455, mc7700,
+#                                    sim7600na, EG12-GT)
+#   sz=241 (33,435 records, 64.6%): SDX55/SDX62 (FN980, M2000, RM500Q,
+#                                    RM520N-GL, em9190, em9291, sim8202g-m2,
+#                                    casasystems cfw3212)
+#
+# The variant split is clean: sz=241 on the 5G-NR SDX silicon (SDX55/SDX62,
+# including sim8202g-m2 with 3,826 records), sz=51 on the older SDX20 +
+# MDM9xxx parts. The 241B layout is checked across 7 modems.
+#
+# Forms the gate REJECTS on purpose. Each drop
+# goes through registry.parse -> _warn_unhandled, a rate-limited WARN naming
+# (code, version, len) plus a tally, so none of them is silent:
+#   - 217B, byte0=0xDF: 1 record in the Wistron LV55 IPv6-PDP-attach edge-case
+#     capture (it appears twice in the corpus: a .dlf and a .normalized.dlf copy
+#     of the same capture). Not 0x1488-shaped: six u64 tick-like values
+#     ``df b4 9c ad 03 00 00 00`` then 0xFFFFFFFF pairs. A mis-framed record.
+#   - 192B, byte0=0x01: 2 records on the Quectel EM160R (SDX24), from one
+#     GNSS comparison capture; the only 0x1488 the EM160R corpus holds (later
+#     EM160R captures emit none). A real third layout:
+#     header ``01 01 08 xx`` and 26-byte slots starting ``01 09 75 09`` that
+#     slide between consecutive records (record 2's slot A == record 1's slot
+#     B, byte for byte). Two records and no F3 in that capture, so no field can
+#     be grounded; left undecoded until an EM160R capture with 0x1488 + F3.
+#
+# (size, byte0) is a corpus-wide perfect 1:1 - sz=51↔byte0=0x00,
+# sz=241↔byte0=0x04. The variants are structurally distinct (different
+# [0]/[1]/[2] header values) - they are two different message types
+# multiplexed through code 0x1488, dispatched by SIZE in this parser
+# and cross-validated against byte[0] (size_class):
+#   [0]=0  (51B) - slow-clock calibration LATCH record (F3-grounded below)
+#   [0]=4  (241B) - extended diagnostic / ephemeris-style record
+#
+# ## Shared 3-byte header
+#   [0] u8 size_class   0 → 51B, 4 → 241B
+#   [1] u8 flags_1      {1, 3, 16} for 51B; always 1 for 241B
+#   [2] u8 header_2     0 for 51B; ∈ {0, 1} for 241B
+#
+# ## 51B variant = the mc_slow_clk.c new latch (F3-grounded)
+# Each 51B record is co-emitted (lag p50 ~550 diag ticks) with the plaintext
+# ``0x79`` prints of mc_slow_clk.c, and lays the NEW latch onto the wire:
+#   DPO11: NewL <FC> <a1> <SC> <RefFC> <GpsMs> <f5> <f6> <f7> <f8>     (3551/3587)
+#   DPO11: Computed GpsT <ms.frac> GpsTUnc <unc> PropFactor <p>        (3101/3137)
+# Measured on 6 modems / 5 chipsets, every check 100% of co-emitted pairs:
+# Wistron 81UMV91B1 (MDM9655), Wistron 81UMV91M21, Ficosa Carcom-G1
+# (MDM9250), Quectel EG18-NA (SDX20 V2), Quectel EG25-G (MDM9607), Sierra
+# EM7455 (MDM9x30). The ``Latch1`` print (the PREVIOUS latch, same format)
+# matches 0% - the record carries the new latch, not the old one.
+#   [0:3]   shared header
+#   [3:7]   u32 LE  slow_clk_count       NewL <SC> == WkUpSC (distinct per record)
+#   [7:11]  u32 LE  latch_fcount         NewL <FC>
+#   [11:15] u32 LE  newl_arg1            NewL arg 1 (unlabelled in the F3 format)
+#   [15:19] u32 LE  gps_time_ms          Computed GpsT rounded to the nearest ms
+#   [19:23] f32 LE  gps_time_residual_ms gps_time_ms - Computed GpsT, so
+#                                        GpsT = gps_time_ms - residual (|r| <= 0.5)
+#   [23:27] f32 LE  gps_time_unc_ms      Computed GpsTUnc (not NewL arg 6)
+#   [27:31] f32 LE  newl_arg7            NewL arg 7 (was "f_hdop_like": NOT HDOP)
+#   [31:35] f32 LE  newl_arg8            NewL arg 8 (was "f_elev_like": NOT elevation)
+#   [35:37] 2B      reserved_a = 0 (constant 3145/3145)
+#   [37:39] 2B      raw_flags            ungrounded
+#   [39:43] f32 LE  f_bias_like          ungrounded (±0.35)
+#   [43:47] u32 LE  raw_2                ungrounded (high entropy)
+#   [47:51] f32 LE  f_misc               ungrounded (0..0.4, often 0)
+# The older shape-based names (counter_u32, timestamp_u32, raw_0, raw_1,
+# f_measure_0, f_variance_0, f_hdop_like, f_elev_like) remain as read-only
+# aliases on the dataclass. The F3 shows newl_arg7/newl_arg8 are not HDOP or
+# elevation, and that the "clock-bias-like" f32 is the GPS-time residual.
+#
+# ## 241B variant layout (partial - 3-subrecord structure)
+# The 241B variant shares the 3-byte header but has a distinct body
+# layout.  Variance analysis on a 63-record FN980 corpus shows a clean
+# three-subrecord structure:
+#
+#   [0:15]     15B preamble (shared-header echoed: "04 01 01 08" + 11 zeros)
+#   [15:53]    38B pre-body variable region - 5-byte blocks separated by
+#              "c2 be 00 00" constants at [19:23], [27:31], [44:48]
+#              (f32-like high-byte marker 0xbe = negative small number,
+#              exponent field ≈ 2^-4 to 2^-5)
+#   [53:111]   58B sub-record 1 - "slot A" measurement record (01 01 XX 09 header)
+#   [111:169]  58B sub-record 2 - "slot B" parallel measurement (same schema,
+#              one-higher counter)
+#   [169:227]  58B sub-record 3 - status/summary slot (distinct header
+#              `01 00 01 XX` with XX ∈ {0x0d..0x11})
+#   [227:241]  14B trailer - all-zero on every observed record
+#
+# Inter-record variance in sub-record 1 (1288 sz=241 records / 2 chipsets /
+# 5 captures - FN980 SDX55 + RM520N-GL SDX62):
+# - 4B header `01 01 XX 09` where XX ∈ {0x6d..0x70} across that
+#   corpus. Byte [2] is NOT a firmware-version or chipset tag - both
+#   FN980 SDX55 (0x6d/0x6e/0x6f) and RM520N-GL SDX62 (0x6f/0x70/0x70)
+#   cover overlapping values that vary per capture. Appears to be a
+#   shared chipset-internal counter tracked in lockstep across modems
+#   (~weekly cadence hypothesis pending confirmation).
+# - rel [8:12]  f32 LE = GNSS RECEIVER CLOCK BIAS (seconds), F3-grounded:
+#   it tracks the co-temporal mc_clock.c:5320 `ClockPut_GPS ... TBias`
+#   print to within ~2e-5 s across 3 captures / 2 chipsets (RM500Q SDX55
+#   TBias -0.4406 and +0.2210; RM520N-GL SDX62 TBias -0.2877) - the field's
+#   per-capture absolute value equals that capture's TBias. This fits the
+#   code name LOG_CGPS_SLOW_CLOCK_CALIB_REPORT. Exposed as the
+#   decoded field `subrec1_clock_bias_s` (and `subrec2_clock_bias_s` for the
+#   parallel slot B at abs [119:123]).
+# - rel [16:20] f32 LE - secondary measurement, same unit as [8:12]
+# - rel [24:28] u32 LE counter, sub-record 2 always value+1 higher
+#   than sub-record 1 (sequence IDs)
+# - rel [29:33] f32 LE taking ~5 discrete values - quantized angle/category
+# - rel [44:58] 14B all-zero on **both** sub-record 1 AND sub-record 2
+#   (100% of records, FN980 plus 927 RM520N-GL records)
+#
+# Sub-record 3 distinct-schema evidence:
+# - 4B header family `01 00 01 XX` where XX ∈ {0x0c..0x12} (7 discrete
+#   values in the 927-record RM520N-GL SDX62 sample; a 37-record FN980
+#   sample shows only {0x0d..0x11}). Different prefix from sub-record 1/2's
+#   `01 01`.
+# - rel [8:12] = 0 on every record (no measurement at the position where
+#   sub-record 1/2 carry their primary f32)
+# - rel [7:15] 8B zero block + rel [25:28] 3B zero + rel [35:47] 13B zero -
+#   consistent with a status/summary role with sparse data regions
+#
+# Sub-record 1 payload structure (cross-chipset confirmed FN980+RM520N-GL):
+#   [0:4]    header (const `01 01 XX 09`)
+#   [4:8]    u32 LE - likely a signal or channel ID (cycles within a record)
+#   [8:12]   f32 LE = GNSS receiver clock bias (s) - F3-grounded, see above
+#   [12:16]  f32 LE - signed, often -2.0 (discrete values)
+#   [16:20]  f32 LE - secondary measurement ≈ 0.5
+#   [20:24]  mixed 4B - probably a packed bitfield / versioned sub-record
+#   [24:28]  u32 LE - sequence counter
+#   [28:32]  mixed 4B
+#   [32:36]  mixed 4B
+#   [36:40]  mixed 4B (contains byte [36]=4 const discriminator + flag byte)
+#   [40:44]  u32 LE - flags (often `00 00 00 01`)
+#   [44:58]  14B trailing zero pad
+#
+# Open: EM9190 and EM7511 241B captures, and whether the sub-record
+# header's byte [2] is a counter or reflects a firmware-version difference.
+
+@dataclass
+class Diag0x1488:
+    """GNSS config/measurement (0x1488) - 51B or 241B variant.
+
+    See module docstring above for variant dispatch, f32 layouts, and
+    corpus evidence.  Every byte of the 51B variant is named; the 241B
+    variant exposes a structured body region pending expanded RE corpus.
+    """
+    log_time: int
+    size_class: int             # [0]
+    flags_1: int                # [1]
+    header_2: int               # [2]
+    payload_size: int
+    # 51B-only fields (None when size_class != 0). F3-grounded against the
+    # mc_slow_clk.c NewL / Computed GpsT prints.
+    slow_clk_count: int | None          # [3:7]
+    latch_fcount: int | None            # [7:11]
+    newl_arg1: int | None               # [11:15]
+    gps_time_ms: int | None             # [15:19]
+    gps_time_residual_ms: float | None  # [19:23]
+    gps_time_unc_ms: float | None       # [23:27]
+    newl_arg7: float | None             # [27:31]
+    newl_arg8: float | None             # [31:35]
+    reserved_a: bytes | None
+    raw_flags_37_39: int | None
+    f_bias_like: float | None
+    raw_2: int | None
+    f_misc: float | None
+    # 241B-only body region (None when size_class != 4)
+    body_region_241: bytes | None
+    # 241B-only sub-record structure (63-record FN980 corpus).
+    # Preamble + 3 × 58B sub-records + 14B trailer = 241 bytes.
+    sz241_preamble_53: bytes | None       # [0:53]
+    sz241_subrecord_1: bytes | None       # [53:111]  58B - slot A
+    sz241_subrecord_2: bytes | None       # [111:169] 58B - slot B (same schema as slot A)
+    sz241_subrecord_3: bytes | None       # [169:227] 58B - status/summary slot (distinct schema)
+    sz241_trailer_14: bytes | None        # [227:241] all-zero on every fn980 record
+    # 241B decoded field (F3-grounded): each of the
+    # two parallel sub-records carries the GNSS receiver clock bias in seconds
+    # as f32 LE at sub-record rel offset [8:12] (abs [61:65] / [119:123]).
+    # Verified against co-temporal mc_clock.c:5320 `ClockPut_GPS ... TBias`
+    # F3 across 3 captures / 2 chipsets (RM500Q SDX55 TBias -0.4406 and
+    # +0.2210; RM520N-GL SDX62 TBias -0.2877) - the field tracks the varying
+    # per-capture TBias to within ~2e-5 s. Fits the code's name (CGPS Slow
+    # Clock Calib Report). None on the 51B variant: its +19 f32 (alias
+    # f_measure_0) does NOT track TBias (EM7455, 5/155 coincidental hits); F3
+    # shows it is the GPS-time rounding residual (gps_time_residual_ms).
+    subrec1_clock_bias_s: float | None    # [61:65]  f32 LE - GNSS clock bias (s)
+    subrec2_clock_bias_s: float | None    # [119:123] f32 LE - GNSS clock bias (s), slot B
+
+    # Back-compat aliases
+    @property
+    def version(self) -> int:
+        """Back-compat alias: byte[0] (size_class) as `version`."""
+        return self.size_class
+
+    @property
+    def flags(self) -> int:
+        """Back-compat alias for flags_1."""
+        return self.flags_1
+
+    # Older shape-based names for the 51B fields, kept read-only so existing
+    # callers keep working. The F3 shows these are not HDOP or elevation.
+    @property
+    def counter_u32(self) -> int | None:
+        return self.slow_clk_count
+
+    @property
+    def timestamp_u32(self) -> int | None:
+        return self.latch_fcount
+
+    @property
+    def raw_0(self) -> int | None:
+        return self.newl_arg1
+
+    @property
+    def raw_1(self) -> int | None:
+        return self.gps_time_ms
+
+    @property
+    def f_measure_0(self) -> float | None:
+        return self.gps_time_residual_ms
+
+    @property
+    def f_variance_0(self) -> float | None:
+        return self.gps_time_unc_ms
+
+    @property
+    def f_hdop_like(self) -> float | None:
+        return self.newl_arg7
+
+    @property
+    def f_elev_like(self) -> float | None:
+        return self.newl_arg8
+
+    @property
+    def gps_time_of_week_ms(self) -> float | None:
+        """Computed GPS time of week (ms) with sub-ms precision, 51B only:
+        ``gps_time_ms - gps_time_residual_ms`` (F3 ``Computed GpsT``)."""
+        if self.gps_time_ms is None or self.gps_time_residual_ms is None:
+            return None
+        return self.gps_time_ms - self.gps_time_residual_ms
+
+    def to_dict(self) -> dict[str, Any]:
+        base = {
+            'type': 'Diag0x1488',
+            'log_time': self.log_time,
+            'size_class': self.size_class,
+            # `version` is an alias for size_class (byte[0] plays the format-
+            # discriminator role in every DIAG record). Emitted so the
+            # registry-level field_invariants["version"] check can
+            # validate it without a second derivation path.
+            'version': self.version,
+            'flags_1': self.flags_1,
+            'header_2': self.header_2,
+            'payload_size': self.payload_size,
+        }
+        if self.size_class == 0:
+            base.update({
+                'slow_clk_count': self.slow_clk_count,
+                'latch_fcount': self.latch_fcount,
+                'newl_arg1': self.newl_arg1,
+                'gps_time_ms': self.gps_time_ms,
+                'gps_time_residual_ms': self.gps_time_residual_ms,
+                'gps_time_of_week_ms': self.gps_time_of_week_ms,
+                'gps_time_unc_ms': self.gps_time_unc_ms,
+                'newl_arg7': self.newl_arg7,
+                'newl_arg8': self.newl_arg8,
+                'reserved_a_zero': self.reserved_a == b'\x00\x00',
+                'raw_flags_37_39': self.raw_flags_37_39,
+                'f_bias_like': self.f_bias_like,
+                'raw_2': self.raw_2,
+                'f_misc': self.f_misc,
+            })
+        elif self.size_class == 4:
+            base.update({
+                'body_region_241_bytes': len(self.body_region_241 or b''),
+                'sz241_preamble_53_bytes': len(self.sz241_preamble_53 or b''),
+                'sz241_subrecord_1_bytes': len(self.sz241_subrecord_1 or b''),
+                'sz241_subrecord_2_bytes': len(self.sz241_subrecord_2 or b''),
+                'sz241_subrecord_3_bytes': len(self.sz241_subrecord_3 or b''),
+                'sz241_trailer_14_all_zero': self.sz241_trailer_14 == b'\x00' * 14 if self.sz241_trailer_14 is not None else None,
+                'subrec1_clock_bias_s': self.subrec1_clock_bias_s,
+                'subrec2_clock_bias_s': self.subrec2_clock_bias_s,
+            })
+        return base
+
+
+@register(
+    0x1488, domain="gnss",
+    name="0x1488",
+    description=("CGPS slow-clock calibration report (0x1488) - 51B slow-clock latch "
+                 "(F3-grounded vs mc_slow_clk.c NewL/Computed GpsT) and 241B "
+                 "sub-record variant (F3-grounded clock bias)"),
+    version=4,
+    author="Luke Jenkins",
+    author_url="https://github.com/lukejenkins",
+    source_type="re",
+    source_detail=(
+        "Clean-room RE on a cross-chipset corpus (EG12-GT, EG18-NA SDX20 V2, "
+        "EM7511 MDM9650, EP06A MDM9x07, LM960 SDX20, FN980 SDX55, RM520N-GL "
+        "SDX62 and others; 51,751 records / 235 captures). The 51B variant "
+        "is F3-grounded as the mc_slow_clk.c NEW latch (NewL print args "
+        "0/1/2/7/8 at +7/+11/+3/+27/+31; Computed GpsT = +15 u32 - +19 f32; "
+        "GpsTUnc at +23), 100% of co-emitted pairs on 6 modems / 5 chipsets "
+        "(81UMV91B1 MDM9655, 81UMV91M21, Carcom-G1 MDM9250, EG18-NA SDX20 V2, "
+        "EG25-G MDM9607, EM7455 MDM9x30); older shape-based names are kept "
+        "as read-only aliases. The 241B variant is a 53B preamble + 3 × 58B "
+        "sub-records + 14B all-zero trailer; sub-records 1 and 2 share a "
+        "schema and carry the GNSS receiver clock bias (s) at rel [8:12], "
+        "F3-grounded against mc_clock.c TBias on RM500Q and RM520N-GL; "
+        "sub-record 3 is a structurally distinct status/summary slot. "
+        "Remaining gaps: the 51B tail ([37:51]) and most of the 241B "
+        "sub-record bodies are ungrounded."
+    ),
+    source_url="",
+    issues=(),
+    # Layer-2 invariants from a corpus walk (19,563 records / 78 captures
+    # across MDM9x07/x30/x50, SDX20, SDX55, SDX62 chipsets). (size, byte0)
+    # is a corpus-wide perfect
+    # 1:1 mapping: sz=51 ↔ size_class=0x00, sz=241 ↔ size_class=0x04. The
+    # parser already Layer-1 enforces both directions (size ∉ {51, 241}
+    # → None; size=51 with byte[0] != 0 → None; size=241 with byte[0] != 4
+    # → None). Declared here so consumers querying
+    # field_invariants can filter records by valid (size_class, size)
+    # combos without re-deriving the corpus walk.
+    field_invariants={
+        "size_class": {"enum": [0x00, 0x04]},
+        # `version` is an alias for `size_class` (the byte[0] format
+        # discriminator) - declared so the version invariant is checked
+        # like every other parser's. Same {0, 4} enum.
+        "version": {"enum": [0x00, 0x04]},
+        "payload_size": {"enum": [51, 241]},
+    },
+)
+def parse_0x1488(log_time: int, data: bytes) -> Diag0x1488 | None:
+    # Layer-1 version-byte-first gate: reject any byte[0]
+    # outside the declared {0, 4} enum before any structural decode.
+    if not data or data[0] not in (0x00, 0x04):
+        return None
+    size = len(data)
+    if size not in (51, 241):
+        return None
+    size_class = data[0]
+    # (size, byte0) is a corpus-wide 1:1 across 19,563 records / 78 captures
+    # (sz=51↔byte0=0x00, sz=241↔byte0=0x04). Cross-check the size↔byte0
+    # pairing here - a 51B payload with size_class=4 is a structural
+    # impossibility per the corpus and is rejected.
+    if size == 51 and size_class != 0:
+        return None
+    if size == 241 and size_class != 4:
+        return None
+    base_kwargs = dict(
+        log_time=log_time,
+        size_class=size_class,
+        flags_1=data[1],
+        header_2=data[2],
+        payload_size=size,
+        slow_clk_count=None,
+        latch_fcount=None,
+        newl_arg1=None,
+        gps_time_ms=None,
+        gps_time_residual_ms=None,
+        gps_time_unc_ms=None,
+        newl_arg7=None,
+        newl_arg8=None,
+        reserved_a=None,
+        raw_flags_37_39=None,
+        f_bias_like=None,
+        raw_2=None,
+        f_misc=None,
+        body_region_241=None,
+        sz241_preamble_53=None,
+        sz241_subrecord_1=None,
+        sz241_subrecord_2=None,
+        sz241_subrecord_3=None,
+        sz241_trailer_14=None,
+        subrec1_clock_bias_s=None,
+        subrec2_clock_bias_s=None,
+    )
+    if size == 51:
+        base_kwargs.update(
+            slow_clk_count=unpack_from('<I', data, 3)[0],
+            latch_fcount=unpack_from('<I', data, 7)[0],
+            newl_arg1=unpack_from('<I', data, 11)[0],
+            gps_time_ms=unpack_from('<I', data, 15)[0],
+            gps_time_residual_ms=unpack_from('<f', data, 19)[0],
+            gps_time_unc_ms=unpack_from('<f', data, 23)[0],
+            newl_arg7=unpack_from('<f', data, 27)[0],
+            newl_arg8=unpack_from('<f', data, 31)[0],
+            reserved_a=bytes(data[35:37]),
+            raw_flags_37_39=unpack_from('<H', data, 37)[0],
+            f_bias_like=unpack_from('<f', data, 39)[0],
+            raw_2=unpack_from('<I', data, 43)[0],
+            f_misc=unpack_from('<f', data, 47)[0],
+        )
+    else:  # size == 241
+        base_kwargs.update(
+            body_region_241=bytes(data[3:241]),
+            sz241_preamble_53=bytes(data[0:53]),
+            sz241_subrecord_1=bytes(data[53:111]),
+            sz241_subrecord_2=bytes(data[111:169]),
+            sz241_subrecord_3=bytes(data[169:227]),
+            sz241_trailer_14=bytes(data[227:241]),
+            # F3-grounded: GNSS clock bias (s) at sub-record rel [8:12]
+            # in each parallel slot. See dataclass field comment for evidence.
+            subrec1_clock_bias_s=unpack_from('<f', data, 61)[0],
+            subrec2_clock_bias_s=unpack_from('<f', data, 119)[0],
+        )
+    return Diag0x1488(**base_kwargs)
+
+
