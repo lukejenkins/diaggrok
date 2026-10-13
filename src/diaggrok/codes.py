@@ -45,7 +45,7 @@ LOG_GNSS_ME_BDS_B1C                 = LOG_IPA_RT_RULE_TABLE_DUMP
 LOG_GNSS_SEARCH_STRATEGY_TASK_ALLOCATION = 0x148A  # canonical LOG_GNSS_SEARCH_STRATEGY_TASK_ALLOCATION_C, not LOG_GNSS_SV_STATUS
 LOG_GNSS_DATA_14FD                  = 0x14FD
 LOG_GNSS_PE_STATUS_14FE             = 0x14FE  # GNSS Position-Engine status report
-LOG_GNSS_INIT_1509                  = 0x1509
+LOG_SENSORS_SDP_SSD                 = 0x1509  # GNSS SDP static-state-detector decision, GPS-time stamped
 LOG_GNSS_INIT_1516                  = 0x1516
 LOG_GNSS_NAV_MEAS_VALIDITY          = 0x1526
 LOG_GNSS_SV_AGGREGATE               = 0x1544
@@ -74,12 +74,14 @@ LOG_GNSS_GPS_RF_STATUS              = LOG_GNSS_CLOCK_REPORT             # 0x1478
 LOG_GNSS_GPS_SV_HEALTH              = LOG_GNSS_CD_DB_REPORT             # 0x147B
 LOG_GNSS_GAL_MEASUREMENT_REPORT     = LOG_GNSS_GAL_MEASUREMENT_REPORT_C # 0x1886
 LOG_GNSS_ME_POSITION_FIX            = LOG_TEMPERATURE_MONITOR_LOG       # 0x14D8 — deprecated; not GNSS per F3
+LOG_GNSS_INIT_1509                  = LOG_SENSORS_SDP_SSD               # 0x1509 — deprecated; an SSD decision log, not init, per F3
 
 _LEGACY_ALIASES: frozenset[str] = frozenset({
     "LOG_GNSS_GPS_RF_STATUS",
     "LOG_GNSS_GPS_SV_HEALTH",
     "LOG_GNSS_GAL_MEASUREMENT_REPORT",
     "LOG_GNSS_ME_POSITION_FIX",
+    "LOG_GNSS_INIT_1509",
     "LOG_GNSS_ME_GPS_L1C",
     "LOG_GNSS_ME_BDS_B1C",
 })
@@ -122,6 +124,8 @@ LOG_LTE_ML1_SERVING_CELL_MEAS_RSP   = 0xB193
 LOG_LTE_ML1_NEIGHBOR_CELL_MEAS      = 0xB192
 LOG_LTE_ML1_CONNECTED_NEIGHBOR_MEAS = 0xB195
 LOG_LTE_ML1_SYSTEM_SCAN_RESULTS     = 0xB18E
+LOG_LTE_ML1_INIT_ACQ_RESULTS        = 0xB176  # 16B hdr + black-cell PCIs + detected cells + PBCH/MIB decodes; v0x03/0x10/0x20 F3-grounded. See diag_0xb176.py
+LOG_LTE_ML1_MTPL_FLOW_CONTROL       = 0xB1FB  # 8B v0x30 structural stub; body raw. See diag_0xb1fb.py
 
 # LTE ML1 measurement pair
 LOG_LTE_ML1_INTRA_FREQ_MEAS         = 0x18AB
@@ -192,6 +196,18 @@ LOG_GPRS_RLC_DL_STATS               = 0x520A  # GPRS RLC downlink statistics (47
 LOG_GPRS_LLC_ME_INFO                = 0x5212  # GPRS LLC ME info (TLLI, encryption); poison 0xFFFFFFFF@2 = unassigned TLLI
 LOG_GPRS_LLC_5213                   = 0x5213  # GPRS LLC per-SAPI state (0x5213–0x521A LLC block); index 1/3/5/7/9/11 = LLC SAPIs
 LOG_GPRS_LLC_5214                   = 0x5214  # GPRS LLC per-SAPI record (37B); index = LLC SAPI, body = per-SAPI LLC params
+# GSM multi-subscription mirror block (0x5Axx/0x5Bxx = classic 0x50xx/0x51xx + 0xA00).
+LOG_GSM_DSDS_L1_NEIGHBOR_CELL_ACQUISITION = 0x5A75  # per-ARFCN FCCH/SCH acquisition: status start/success/fail, ARFCN word, rx power 1/16 dBm
+LOG_GSM_DSDS_CXM                    = 0x5A94  # GL1 coexistence-manager frame timeline: GSM FN + N x 30B RX-activity windows
+# Prefix mirrors: 0x01 version byte + the base code's payload, decoded by the base parser.
+LOG_GSM_DSDS_L1_FCCH_ACQUISITION    = 0x5A65  # mirror of 0x5065
+LOG_GSM_DSDS_L1_SCH_ACQUISITION     = 0x5A66  # mirror of 0x5066
+LOG_GSM_DSDS_NEW_BURST_METRICS      = 0x5A6A  # mirror of 0x506A
+LOG_GSM_DSDS_L1_BURST_METRICS       = 0x5A6C  # mirror of 0x506C
+LOG_GSM_DSDS_SURROUND_CELL_BA_LIST  = 0x5A71  # mirror of 0x5071
+LOG_GSM_DSDS_L1_SERVING_AUX_MEAS    = 0x5A7A  # mirror of 0x507A
+LOG_GSM_DSDS_L1_NEIGHBOR_AUX_MEAS   = 0x5A7B  # mirror of 0x507B
+LOG_GSM_DSDS_RR_SIGNALING_MESSAGE   = 0x5B2F  # mirror of 0x512F
 
 # 3G / WCDMA signalling
 LOG_WCDMA_SIGNALLING_MESSAGE        = 0x412F  # WCDMA RRC/RLC/MAC signalling PDU
@@ -210,6 +226,7 @@ LOG_GNSS_NMEA_BATCH_1CB2            = 0x1CB2  # variable-size NMEA burst, full d
 LOG_UIM_APDU_PARSE_1CC8             = 0x1CC8  # 11316B UICC/SIM APDU-parse F3 trace, v=0x03 — not NR5G ML1
 LOG_NR5G_ML1_1D24                   = 0x1D24  # 144B NR5G ML1 short
 # Codes first observed together on an EM9291 (SDX65).
+LOG_NR5G_ML1_1CE2                   = 0x1CE2  # 608B v=0x05 NR5G ML1 (range-inferred) structural stub, R562L5 SDX62
 LOG_NR5G_ML1_1CE5                   = 0x1CE5  # 24B v=0x01 NR5G ML1 sleep-state event
 LOG_NR5G_ML1_1D1E                   = 0x1D1E  # 117B v=0x00 NR5G ML1, length-prefixed APN @78
 LOG_NR5G_ML1_1D31                   = 0x1D31  # 31B v=0x01 NR5G ML1 boot/cycle state
@@ -236,7 +253,7 @@ LOG_MDM9600_SUBSYS_TABLE_1263       = 0x1263  # var 56+N names, v=0x38
 # in lockstep at 1 Hz with a constant bias clock_b-clock_a == 0x0916ED07
 # (local-tick vs GPS-referenced time); 26B zero tail. GPS-active only.
 # Sibling gpsOne records 0x13BA/0x1440 share the same fix clock.
-LOG_MDM9600_GNSS_TIMESTATE_150B     = 0x150B  # fixed 40B, v=0x0101
+LOG_MDM9600_GNSS_TIMESTATE_150B     = 0x150B  # fixed 40B v0x01: uptime_ms + GPS week/TOW time-sync
 
 # MDM9600 (Sierra SWI9200X / MC7700) gpsOne/PDS GNSS measurement records that
 # share ONE millisecond time-of-week (TOW) clock during a live standalone fix:
@@ -245,7 +262,7 @@ LOG_MDM9600_GNSS_TIMESTATE_150B     = 0x150B  # fixed 40B, v=0x0101
 # tags 0x33 / 0x32 are adjacent. Conservative parsers decode version + TOW +
 # well-understood fields; the per-SV array (0x1440) and float metric (0x13BA)
 # semantics await multi-epoch hardware ground-truth.
-LOG_MDM9600_GNSS_MEAS_13BA          = 0x13BA  # fixed 15B, v=0x33; TOW @+0x0B
+LOG_MDM9600_GNSS_MEAS_13BA          = 0x13BA  # CGPS ME job info, fixed 15B, v=0x33
 LOG_MDM9600_GNSS_MEAS_1440          = 0x1440  # fixed 102B, v=0x32; TOW @+0x35
 
 # IMS-signaling ASCII cluster (seen on a registered RM520N-GL SDX62). These
@@ -287,6 +304,10 @@ LOG_B3XX_B368                       = 0xB368  # SDX72 NR5G/LTE serving-cell reco
 LOG_NR5G_ML1_B835                   = 0xB835  # NR5G ML1 var record v=0x00; 20B hdr, slot_value@16 keyed by (subtype,freq/slot)
 LOG_NR5G_ML1_B834                   = 0xB834  # NR5G ML1 large var meas-dump v=0x00; 16B hdr, up to 8226B
 LOG_RF_ATUNER_B8A6                  = 0xB8A6  # RF antenna-tuner / RF-front-end (F3: rfcommon_atuner_*/rfdevice_asm/fem, NOT NR5G ML1); fixed 36B v=0x00; marker 0x02 + sig 01 01 62; state@18 + two (id,flag,u16 counter) tuner-param entries @28/@32, SDX55 rxm-g1/m2000/lv55
+LOG_FTM_VER_2_C                     = 0x117C  # 8B header 0x1125 + 3 u16 words; pairs per LTE measurement gap, T77W595 MDM9625
+LOG_QMI_LINK_12_RX_PDU              = 0x13A4  # QMUX-framed QMI requests, link 12, shared _qmux_helpers
+LOG_QMI_LINK_12_TX_PDU              = 0x13A5  # QMUX-framed QMI responses, link 12, shared _qmux_helpers
+LOG_LTE_ML1_INTRA_FREQ_CELL         = 0xB191  # v=0x01 108B; EARFCN u16@4 F3-grounded, cell-array tail opaque
 
 
 # ── Name resolution (single-sourced for every generated diag-log list) ──

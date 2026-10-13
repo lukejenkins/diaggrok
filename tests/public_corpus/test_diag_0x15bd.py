@@ -10,7 +10,8 @@ Targets the v=3 (modern) decode path in diaggrok.parsers.diag_0x15bd:
 record_type_tag @4, header_tick u32 @5:9) followed by the fixed array of
 ten 28-byte sub-records (builders zero-pad a shorter list to ten, since a
 payload shorter than 285/289 B is truncated -> None), each a
-V3SubRecord (tick u32 @0, kind u8 @7, aux_u16 u16 @4, field_x u16 @12,
+V3SubRecord (tick u32 @0, gps_time_s u32 @4 -- whose bytes are aux_u16
+u16 @4, possibly_session_tag u8 @6 and kind u8 @7 --, field_x u16 @12,
 field_y i16 @16, field_z i16 @18, aux_byte u8 @26).
 """
 from public_corpus.support.synthetic import diag_frame, pack
@@ -26,14 +27,14 @@ _HEADER_TICK = 123_456         # u32 @5:9 -- log-emission tick
 # Fabricated single v3 sub-record values (not from any real capture).
 _SR_TICK = 1000                # u32 @0
 _SR_AUX_U16 = 0xC050           # u16 @4
-_SR_KIND = 0x57                # u8 @7 -- "kind A" tag
+_SR_KIND = 0x57                # u8 @7 -- top byte of gps_time_s (nonzero = kind A)
 _SR_FIELD_X = 27000            # u16 @12
 _SR_FIELD_Y = -870             # i16 @16
 _SR_FIELD_Z = 2160             # i16 @18
 _SR_AUX_BYTE = 5               # u8 @26
 
 
-_SR_SESSION_TAG = 0xAC         # u8 @6 -- per-capture constant, kind-A only
+_SR_SESSION_TAG = 0xAC         # u8 @6 -- bits 16..23 of gps_time_s, kind-A only
 _SR_END_TAG_B = 0x01           # u8 @25 -- sub-record class tag
 _SR_BYTE_27 = 0xE8             # u8 @27 -- live, unidentified, kind-A only
 _SR_FLAG_14 = 0                # u16 @14 -- 0 except RG520N-NA (==1)
@@ -42,6 +43,7 @@ _SR_FLAG_14 = 0                # u16 @14 -- 0 except RG520N-NA (==1)
 def _synthetic_subrecord(
     *,
     tick: int = _SR_TICK,
+    aux_u16: int = _SR_AUX_U16,
     kind: int = _SR_KIND,
     session_tag: int = _SR_SESSION_TAG,
     end_tag_b: int = _SR_END_TAG_B,
@@ -51,16 +53,16 @@ def _synthetic_subrecord(
 ) -> bytes:
     """Build one fabricated 28-byte V3SubRecord.
 
-    Byte [6] defaults to 0xAC, not 0x0F: the capture corpus shows 17
-    distinct values there, constant per capture, so 0x0F is not a format
-    constant. Byte [27] likewise defaults to a nonzero value -- it is live on
+    Byte [6] defaults to 0xAC, not 0x0F: it is bits 16..23 of the u32
+    gps_time_s at [4:8], so it takes every value over time and 0x0F is
+    not a format constant. Byte [27] likewise defaults to a nonzero value -- it is live on
     98.7% of kind-A sub-records, not a constant 1.
     """
     sr = (
         pack('<I', tick)           # [0:4]
-        + pack('<H', _SR_AUX_U16)  # [4:6]
-        + pack('<B', session_tag)  # [6] possibly_session_tag (kind-A only)
-        + pack('<B', kind)         # [7] kind_tag
+        + pack('<H', aux_u16)      # [4:6] gps_time_s bits 0..15
+        + pack('<B', session_tag)  # [6] gps_time_s bits 16..23
+        + pack('<B', kind)         # [7] gps_time_s bits 24..31
         + bytes(4)                 # [8:12] reserved
         + pack('<H', _SR_FIELD_X)  # [12:14]
         + pack('<H', flag_14)      # [14:16] flag_14
@@ -458,3 +460,49 @@ def test_15bd_truncated_payload_returns_none_5171():
         assert parse_0x15bd(1000, frame[:-1]) is None
         for n in range(len(frame)):
             assert parse_0x15bd(1000, frame[:n]) is None
+
+
+# ── kind-A [4:8] is one u32 of GPS seconds, gps_time_s ──────────
+
+def test_15bd_v3_gps_time_s_is_one_u32_over_bytes_4_to_8():
+    """[4:6] aux_u16, [6] possibly_session_tag and [7] kind are the three
+    byte groups of a single little-endian u32, gps_time_s."""
+    sr = parse_0x15bd(1000, _synthetic_15bd()).v3_sub_records[0]
+    assert sr.gps_time_s == _SR_AUX_U16 | (_SR_SESSION_TAG << 16) | (_SR_KIND << 24)
+    assert sr.gps_time_s == 0x57ACC050
+    assert sr.to_dict()['gps_time_s'] == sr.gps_time_s
+
+
+def test_15bd_gps_time_s_is_continuous_across_the_aux_u16_wrap():
+    """A real FN980 capture steps [6] by one exactly as [4:6] wraps
+    0xFFFF -> 0x0000, one second apart: one counter, not a 1 Hz counter
+    plus a per-capture tag. Fabricated values reproduce the shape."""
+    a = _synthetic_subrecord(tick=10_000, aux_u16=0xFFFF, session_tag=0x05)
+    b = _synthetic_subrecord(tick=11_000, aux_u16=0x0000, session_tag=0x06)
+    sa, sb = parse_0x15bd(1000, _synthetic_15bd_with([a, b])).v3_sub_records[:2]
+    assert sb.gps_time_s - sa.gps_time_s == 1
+    assert (sb.tick - sa.tick) == 1000 * (sb.gps_time_s - sa.gps_time_s)
+
+
+def test_15bd_top_byte_of_gps_time_s_is_not_gated():
+    """[7] the top byte of a GPS week-seconds timestamp advances over time
+    (0x56, 0x57, 0x58 are consecutive high-byte values), and 0x32 appears on a
+    1024-week-wrapped modem clock. Every one must decode, and no layer-2
+    invariant may pin any byte of the timestamp."""
+    from diaggrok.registry import parser_info
+    for top in (0x32, 0x56, 0x57, 0x58, 0xFF):
+        sub = _synthetic_subrecord(kind=top)
+        rec = parse_0x15bd(1000, _synthetic_15bd_with([sub]))
+        assert rec is not None, hex(top)
+        assert rec.v3_sub_records[0].kind == top
+        assert rec.v3_sub_records[0].gps_time_s >> 24 == top
+    inv = parser_info(0x15BD).field_invariants
+    for key in ('kind', 'possibly_session_tag', 'aux_u16', 'gps_time_s'):
+        assert key not in inv, key
+
+
+def test_15bd_kind_b_has_no_gps_time():
+    """Kind-B sub-records carry zeros at [4:8], so gps_time_s is 0."""
+    sub = _synthetic_subrecord(aux_u16=0, session_tag=0, kind=0, end_tag_b=0x0D, byte_27=0)
+    sr = parse_0x15bd(1000, _synthetic_15bd_with([sub])).v3_sub_records[0]
+    assert sr.gps_time_s == 0 and sr.kind == 0

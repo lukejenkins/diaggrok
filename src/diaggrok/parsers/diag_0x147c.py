@@ -239,14 +239,19 @@ _V0A_TOGGLE_OFFSETS: tuple[int, ...] = (488, 490, 502, 503, 506, 547, 548, 552, 
 #                           "NF: WLS result: FC=%u, FailCode=%u, altMode=%u"
 #                           print, co-emitted 1:1 with every record (v=0x06..
 #                           0x0D; see source_detail for per-version counts).
-#   [5:9]  u32 fcount_ref — a second FCount, a constant offset behind fcount
-#                           within a session (F3-silent → exposed raw).
+#   [5:9]  u32 fcount_ref — a second ms counter, a constant offset behind
+#                           fcount within a session. F3-GROUND on v=0x0A and
+#                           v=0x0B: equals q_TimeTickVal of the nf_sensors_api.c
+#                           "NF sensors: time info valid = %d, q_TimeTickVal = %d"
+#                           print (RM500Q-AE 220/220, SIM8202G-M2 103/103, Inseego
+#                           M3100 368/368). Other builds do not emit that print;
+#                           the name stays generic.
 #
 # Whenever the WLS fix SUCCEEDS (F3 FailCode=0) the record carries a GNSS
 # time + position block at a per-version base W. Its layout, relative to W, is
 # identical on every version that has one:
 #
-#   W+0  u16 gps_week     W+2  u32 gps_msec (ms of week)   W+6  f32 (raw)
+#   W+0  u16 gps_week     W+2  u32 gps_msec (ms of week)   W+6  f32 (GPS time unc, ms)
 #   W+10 u8  glo_n4       W+11 u16 glo_nt   W+13 u32 glo_msec (ms of day)  W+17 f32
 #   W+21 u16 bds_week     W+23 u32 bds_msec                W+27 f32
 #   W+31 u16 gal_week     W+33 u32 gal_msec                W+37 f32
@@ -254,7 +259,11 @@ _V0A_TOGGLE_OFFSETS: tuple[int, ...] = (488, 490, 502, 503, 506, 547, 548, 552, 
 #   W+51 u8  leap_sec     (GPS-UTC; 18)
 #   W+52 u8  leap_aux     (0 on most builds, 14 on CFW-3212 / T99W373 — equal to
 #                         GPS-BDT seconds, but F3-silent → raw CANDIDATE)
-#   W+53 u16 report_seq   (+1 per record; = `state_x` on v=0x0A)
+#   W+53 u16 report_seq   (+1 per record; = `state_x` on v=0x0A). Co-steps with
+#                         the mc_tick.c "RCVR ON: Total %lu s" F3 counter:
+#                         equal on EG25-G (351/351) and SIM8202G-M2 (72/75),
+#                         a steady ~100 s offset on RM500Q-AE — corroborating,
+#                         not an identity.
 #   W+57 f64 lat (rad)    W+65 f64 lon (rad)    W+77 f32 alt_hae_m
 #
 # That is the NavIC-capable layout (v=0x0A SDX55, v=0x0B Inseego M3100, v=0x0D
@@ -313,7 +322,10 @@ class GnssFixBlock:
     gal_msec: int
     navic_week: int | None       # None on the pre-NavIC layout
     navic_msec: int | None
-    const_f32: tuple[float, ...]  # raw f32 after each constellation's msec
+    const_f32: tuple[float, ...]  # f32 after each constellation's msec; [0] =
+                                  # GPS time uncertainty in ms (F3 'LEAP_SEC:
+                                  # UtcTimeUncSec(x1e6)' / 1000 on SDX55 builds);
+                                  # the GLO/BDS/GAL/NavIC entries stay raw
     leap_sec: int
     leap_aux: int        # raw u8 after leap_sec (0 or 14; candidate GPS-BDT s)
     report_seq: int
@@ -465,7 +477,7 @@ class Diag0x147C:
     # Packed-header FCounts (every version) + the GNSS time /
     # position block (versions with a known base, only when the fix succeeded).
     fcount: int | None = None        # u32 LE [1:5] — F3 "WLS result: FC="
-    fcount_ref: int | None = None    # u32 LE [5:9] — raw
+    fcount_ref: int | None = None    # u32 LE [5:9] — F3 'q_TimeTickVal' (v0A/v0B)
     wls_fail_code: int | None = None  # u8 at W-1 — F3 "WLS result: FailCode="
     fix: GnssFixBlock | None = None
 
@@ -610,14 +622,24 @@ def _parse_v0a_body(
         "256/256 (MDM9250), v=0x07 354/354 (EG25-G), v=0x0B 5/5 + 443/461 "
         "(Inseego M3100), v=0x0C 179/179 (T99W373); v=0x06 (EM7455) co-emits "
         "nf_navsolution.c 'Clock Adj: FC=' 155/155. [5:9] `fcount_ref` is a "
-        "second FCount at a constant per-session offset (F3-silent, raw). "
+        "second ms counter at a constant per-session offset; on v=0x0A and "
+        "v=0x0B it equals q_TimeTickVal of the nf_sensors_api.c 'NF sensors: "
+        "time info valid = %d, q_TimeTickVal = %d' print (RM500Q-AE 220/220, "
+        "SIM8202G-M2 103/103, Inseego M3100 368/368; the print is absent on "
+        "the other builds). "
         "Byte W-1 == F3 FailCode on 1,127/1,127 joined records; when it is 0 "
         "the GNSS time + position block at W (v=0x06/07/08/0A/0B: 24, "
         "v=0x0C/0D: 32) is populated: GPS week/msec (= F3 'UpdEnvDetector "
         "GpsMsec' and 'Clock Adj: To PE GPS ms' 163/163), GLONASS N4/NT/msec, "
         "BDS, GAL, NavIC (SDX55+ only; pre-NavIC versions shift the tail up "
         "10 B), leap_sec u8 (18) + a raw u8 leap_aux (14 on CFW-3212/T99W373 "
-        "builds), a +1 report_seq, lat/lon f64 radians and f32 HAE. On a "
+        "builds), a +1 report_seq, lat/lon f64 radians and f32 HAE. The f32 "
+        "after gps_msec (`const_f32[0]`) is the GPS time uncertainty in ms: "
+        "x1000 it equals 'LEAP_SEC: UtcTimeUncSec(x1e6)' (cd_glosvcalc.c) on "
+        "v=0x0A, 72/72 RM500Q-AE + 75/75 SIM8202G-M2, tracking 15.0 -> 0.03 "
+        "ms. report_seq co-steps with mc_tick.c 'RCVR ON: Total %lu s' (equal "
+        "351/351 EG25-G and 72/75 SIM8202G-M2; a constant ~100 s offset on "
+        "RM500Q-AE). On a "
         "failed fix the block holds the 0x4912620F unset-float fill. "
         "Position vs independent truth: v=0x0A RM500Q-AE moving drive capture "
         "vs its NMEA GGA, 1,253 joined, median 1.4 m N / 1.7 m E, HAE 0.08 m; "

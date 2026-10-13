@@ -125,6 +125,8 @@ record against the same rate at record time ±5 s:
   MDM9x50 captures with no F3. Only 2 v0xa0 records are on F3-bearing captures
   (M3100, RM520N-GL; neither is the canonical word, the parser rejects both).
   Both co-fire with RF FEM/ELNA configuration prints. n = 2 grounds nothing.
+
+Log name: RFLM XPT IQ Processing Results
 """
 from __future__ import annotations
 

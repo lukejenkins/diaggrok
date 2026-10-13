@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import textwrap
+import threading
 import typing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -813,6 +814,14 @@ class ParserEntry:
     log_version: int | None = None
     parser_version: int = 1
     version_field: str = "u8"
+    # Layout axes: the sub-discriminators INSIDE a log version that pick
+    # the body layout — e.g. 0xB193's per-cell ``subpacket_version`` (byte 0 is
+    # 0x01 on every record) or 0xB061's two subpackets, each versioned on its
+    # own. ``{axis_name: to_dict_field}``; a record carries one layout token
+    # ``<axis>.v<value>`` per axis whose field is populated (see
+    # :func:`layout_tokens`). The F3 sweep counts and credits each
+    # ``(code, version, layout)`` separately. Empty = the version IS the layout.
+    layout_axes: dict[str, str] = field(default_factory=dict)
 
     # Recipe queries live on GroundTruthStore, not here. Use
     # GroundTruthStore.recipes_for(entry.log_code[, version]) and filter on the
@@ -1035,7 +1044,8 @@ def _check_field_invariants_schema(
         to_dict_keys = _extract_to_dict_keys_via_ast(cand)
         if to_dict_keys is None:
             continue
-        invariant_keys = set(field_invariants.keys())
+        # A list key "<list>[].<field>" needs <list> emitted.
+        invariant_keys = {k.partition("[].")[0] for k in field_invariants}
         orphan = invariant_keys - to_dict_keys
         if orphan:
             msg = (
@@ -1050,6 +1060,132 @@ def _check_field_invariants_schema(
                 raise ValueError(msg)
             logger.warning(msg)
         return
+
+
+#: A layout axis name: lower-case, starts with a letter. It is the left half of
+#: the ``<axis>.v<N>`` token an ``F3-VERDICT`` marker binds, so it must
+#: never look like a hex version (``v0x…``) or a code (``0x…``).
+_LAYOUT_AXIS_RE = re.compile(r"^[a-z][a-z0-9_]{0,15}$")
+
+#: The LIST-path form of a layout-axis field:
+#: ``"<list_field>[<id_field>].<version_field>"``, e.g.
+#: ``"subpackets[subpacket_id].subpacket_version"``. For parsers that keep their
+#: subpackets in a list (0xB063 / 0xB064) rather than one top-level field per
+#: subpacket. Each list element yields its own token, ``<axis><id:02x>.v<ver>``
+#: (``sp08.v2``), so one record can carry one token per subpacket id. The id is
+#: lower-case two-digit HEX (subpacket ids are written 0x07 / 0x08 / 0x1b), the
+#: version DECIMAL, as for the scalar form.
+_LAYOUT_LIST_PATH_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*)\[([A-Za-z_][A-Za-z0-9_]*)\]\.([A-Za-z_][A-Za-z0-9_]*)$")
+
+
+def layout_list_path(fld: str) -> tuple[str, str, str] | None:
+    """``(list_field, id_field, version_field)`` for a list-path axis field, or
+    None for a plain to_dict() field name."""
+    m = _LAYOUT_LIST_PATH_RE.match(fld) if isinstance(fld, str) else None
+    return (m.group(1), m.group(2), m.group(3)) if m else None
+
+
+def _validate_layout_axes(
+    log_code: int, layout_axes: dict[str, str] | None,
+) -> dict[str, str]:
+    """Normalise + validate ``register(layout_axes=...)``; list-path form."""
+    if not layout_axes:
+        return {}
+    out: dict[str, str] = {}
+    for axis, fld in layout_axes.items():
+        if not isinstance(axis, str) or not _LAYOUT_AXIS_RE.match(axis) \
+                or axis.startswith("v0x"):
+            raise ValueError(
+                f"layout_axes axis {axis!r} for log_code 0x{log_code:04X} must "
+                f"match {_LAYOUT_AXIS_RE.pattern} (it becomes the '<axis>.vN' "
+                f"token in F3-VERDICT markers)")
+        listed = layout_list_path(fld)
+        if listed and len(axis) > 14:
+            # '<axis><id:02x>' must still fit the 16-char token axis grammar.
+            raise ValueError(
+                f"layout_axes axis {axis!r} for log_code 0x{log_code:04X}: a "
+                f"list-path axis gets a 2-hex-digit id suffix, so it may be at "
+                f"most 14 characters")
+        if not listed and (not isinstance(fld, str) or not fld.isidentifier()):
+            raise ValueError(
+                f"layout_axes[{axis!r}] for log_code 0x{log_code:04X} must name "
+                f"a to_dict() field or a '<list>[<id>].<version>' path, got {fld!r}")
+        out[axis] = fld
+    return out
+
+
+def _check_layout_axes_schema(
+    parser_func: ParserFunc, log_code: int, layout_axes: dict[str, str],
+) -> None:
+    """Every layout-axis field must be a key the parser's ``to_dict()`` emits —
+    else the corpus peek reads ``None`` on every record and the axis silently
+    counts nothing. Strict (raises): the attribute is new, so no legacy offender
+    needs the warn-only grace ``_check_field_invariants_schema`` keeps."""
+    if not layout_axes:
+        return
+    try:
+        hints = typing.get_type_hints(parser_func)
+    except Exception:
+        return
+    return_type = hints.get("return")
+    if return_type is None:
+        return
+    args = typing.get_args(return_type)
+    for cand in ([a for a in args if a is not type(None)] if args else [return_type]):
+        if not dataclasses.is_dataclass(cand):
+            continue
+        keys = _extract_to_dict_keys_via_ast(cand)
+        if keys is None:
+            continue
+        # A list-path axis needs its LIST field emitted at top level.
+        wanted = {(layout_list_path(f) or (f,))[0] for f in layout_axes.values()}
+        orphan = sorted(wanted - keys)
+        if orphan:
+            raise ValueError(
+                f"layout_axes for log_code 0x{log_code:04X} names fields not "
+                f"emitted by {cand.__name__}.to_dict(): {orphan}")
+        return
+
+
+def layout_tokens(entry: "ParserEntry", result: Any) -> set[str]:
+    """The layout tokens one parsed record carries.
+
+    ``result`` is the parser's return value (a dataclass with ``to_dict()``, or
+    a dict). One token ``<axis>.v<value>`` per declared axis whose field is an
+    int (a ``None`` field — that subpacket is absent from this record — adds no
+    token). The value is DECIMAL (``sp.v59``, ``cfg.v4``): the sub-version
+    literature for 0xB193 is written ``v59``, and ``cfg.v0x04`` is accepted on
+    input by the verdict grammar and canonicalised to ``cfg.v4``.
+
+    A list-path axis (``"subpackets[subpacket_id].subpacket_version"``)
+    yields one ``<axis><id:02x>.v<ver>`` token per list element whose id and
+    version are both ints (``sp08.v2``)."""
+    if not entry.layout_axes or result is None:
+        return set()
+    d = result.to_dict() if hasattr(result, "to_dict") else result
+    if not isinstance(d, dict):
+        return set()
+    out = set()
+    for axis, fld in entry.layout_axes.items():
+        listed = layout_list_path(fld)
+        if listed:
+            lst, id_f, ver_f = listed
+            for el in d.get(lst) or ():
+                if not isinstance(el, dict):
+                    continue
+                sid, ver = el.get(id_f), el.get(ver_f)
+                if _is_int(sid) and _is_int(ver) and 0 <= sid <= 0xFF:
+                    out.add(f"{axis}{sid:02x}.v{ver}")
+            continue
+        val = d.get(fld)
+        if _is_int(val):
+            out.add(f"{axis}.v{val}")
+    return out
+
+
+def _is_int(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
 
 
 def _same_identity(a: ParserFunc, b: ParserFunc) -> bool:
@@ -1125,6 +1261,7 @@ def register(
     log_version: int | None = None,
     parser_version: int = 1,
     version_field: str = "u8",
+    layout_axes: dict[str, str] | None = None,
 ) -> Callable:
     """Decorator that registers a parser function with metadata.
 
@@ -1270,9 +1407,11 @@ def register(
     # Normalize domain: treat an empty string as unset (None), then validate.
     domain_norm: str | None = domain or None
     _validate_domain(domain_norm)
+    layout_axes_dict = _validate_layout_axes(log_code, layout_axes)
 
     def decorator(func: ParserFunc) -> ParserFunc:
         _check_field_invariants_schema(func, invariants_dict)
+        _check_layout_axes_schema(func, log_code, layout_axes_dict)
         _check_version_field_agreement(log_code, version_field)
         entry_name = name or func.__name__.replace("_", " ")
         entry = ParserEntry(
@@ -1301,6 +1440,7 @@ def register(
             log_version=log_version,
             parser_version=parser_version,
             version_field=version_field,
+            layout_axes=layout_axes_dict,
         )
         if log_version is None:
             ident = f"log_code 0x{log_code:04X} (catch-all)"
@@ -1317,6 +1457,22 @@ def register(
     return decorator
 
 
+def _ensure_loaded(log_code: int | None = None) -> None:
+    """In lazy mode, run the full parser sweep before a lookup could differ.
+
+    A no-op unless ``DIAGGROK_LAZY_PARSERS=1`` deferred the sweep. With
+    ``log_code``, the sweep runs only if that code has no registration yet.
+    Without it, as for an enumeration, it always runs.
+    """
+    import sys
+    pkg = sys.modules.get("diaggrok.parsers")
+    if pkg is None or not getattr(pkg, "_lazy_pending", False):
+        return
+    if log_code is not None and (log_code in _registry or log_code in _overrides):
+        return
+    pkg.load_all()
+
+
 def resolve(log_code: int, data: bytes) -> ParserEntry | None:
     """The ParserEntry parse() would dispatch to for this record, or None.
 
@@ -1326,6 +1482,7 @@ def resolve(log_code: int, data: bytes) -> ParserEntry | None:
     code actually has enumerated overrides, so catch-all-only codes (every
     built-in) never invoke it.
     """
+    _ensure_loaded(log_code)
     overrides = _overrides.get(log_code)
     if overrides:
         version_field = next(iter(overrides.values())).version_field
@@ -1350,7 +1507,20 @@ _UNHANDLED_WARN_SEEN: set[tuple[int, int | None]] = set()
 # line is a gauge nobody reads). It is populated independently of the WARN
 # rate-limit AND of DIAGGROK_QUIET_UNHANDLED: that env silences the *log line*,
 # not this *data channel*.
-_UNHANDLED_TALLY: dict[tuple[int, int | None], dict[str, Any]] = {}
+#
+# Keyed ``(code, version, via)``: ``via`` is the log code of the
+# container parser whose own ``parse()`` call re-dispatched this payload (0x1841's
+# ring-buffer sub-records, a DSDS mirror's base decode), or ``None`` for a
+# top-level record. A nested drop is a fragment the container carved out, not a
+# record of the inner code, so it must never read as a top-level gap of that code.
+_UNHANDLED_TALLY: dict[tuple[int, int | None, int | None], dict[str, Any]] = {}
+
+# Codes whose parser is running right now on this thread, outermost first
+#. parse() pushes around the parser call, so a container that calls
+# registry.parse() for an embedded sub-record makes that inner call see a
+# non-empty stack. Per-thread so a concurrent caller's dispatch cannot label
+# another thread's top-level record as nested.
+_DISPATCH = threading.local()
 
 
 def reset_unhandled_warn_cache() -> None:
@@ -1373,8 +1543,9 @@ def unhandled_seen() -> list[tuple[int, int | None]]:
     (``version=None`` sorts last within a code). Independent of
     ``DIAGGROK_QUIET_UNHANDLED`` — that env silences the log, not this tally.
     """
+    pairs = {(code, version) for code, version, _via in _UNHANDLED_TALLY}
     return sorted(
-        _UNHANDLED_TALLY,
+        pairs,
         key=lambda k: (k[0], k[1] is None, k[1] if k[1] is not None else -1),
     )
 
@@ -1383,32 +1554,39 @@ def unhandled_tally() -> list[dict[str, Any]]:
     """Rich rows for the unhandled collector — one per dropped ``(code, version)``.
 
     Each row carries ``code`` (int), ``version`` (int | None), ``length`` (a
-    representative dropped-payload length), ``count`` (total drops this run), and
-    ``module`` / ``func`` (the parser that dropped it). Ordered most-dropped
-    first so the loudest blind spot reads at the top of a sweep report.
+    representative dropped-payload length), ``count`` (total drops this run),
+    ``module`` / ``func`` (the parser that dropped it), and ``via``: the
+    container code whose parser re-dispatched the payload, or ``None`` for a
+    top-level drop. One ``(code, version)`` can appear twice, once per ``via``.
+    Ordered most-dropped first so the loudest blind spot reads at the top of a
+    sweep report.
     """
     rows = [
         {
             "code": code,
             "version": version,
+            "via": via,
             "length": rec["length"],
             "count": rec["count"],
             "module": rec["module"],
             "func": rec["func"],
         }
-        for (code, version), rec in _UNHANDLED_TALLY.items()
+        for (code, version, via), rec in _UNHANDLED_TALLY.items()
     ]
     rows.sort(
         key=lambda r: (
             -r["count"],
             r["code"],
             r["version"] if r["version"] is not None else -1,
+            r["via"] if r["via"] is not None else -1,
         )
     )
     return rows
 
 
-def _warn_unhandled(log_code: int, entry: "ParserEntry", data: bytes) -> None:
+def _warn_unhandled(
+    log_code: int, entry: "ParserEntry", data: bytes, via: int | None = None,
+) -> None:
     """Emit a structured, rate-limited WARN that a registered code produced no
     decode for this payload — a loud no-op replacing a silent ``None`` —
     and tally the drop for the harvest channel.
@@ -1420,10 +1598,11 @@ def _warn_unhandled(log_code: int, entry: "ParserEntry", data: bytes) -> None:
     populated first — before the opt-out and the rate-limit — so a sweep can run
     with ``DIAGGROK_QUIET_UNHANDLED=1`` to mute the log spam yet still harvest
     the full count. The WARN log line is rate-limited once per ``(log_code,
-    version)`` and suppressed entirely by ``DIAGGROK_QUIET_UNHANDLED=1``.
+    version, via)`` and suppressed entirely by ``DIAGGROK_QUIET_UNHANDLED=1``.
+    ``via`` is the container code for a nested drop, ``None`` at top level.
     """
     version = version_of(entry.version_field, data)
-    key = (log_code, version)
+    key = (log_code, version, via)
 
     # Tally every drop first — the programmatic collector. Cheap dict
     # bump; runs regardless of the WARN opt-out and rate-limit below.
@@ -1445,11 +1624,12 @@ def _warn_unhandled(log_code: int, entry: "ParserEntry", data: bytes) -> None:
         return
     _UNHANDLED_WARN_SEEN.add(key)
     vtxt = "None" if version is None else f"0x{version:02X}"
+    where = "" if via is None else f", nested via 0x{via:04X}"
     logger.warning(
-        "diaggrok: unhandled (code=0x%04X, version=%s, len=%d) — registered "
+        "diaggrok: unhandled (code=0x%04X, version=%s, len=%d%s) — registered "
         "parser %s.%s returned no block; dropping (rate-limited once per "
-        "(code, version))",
-        log_code, vtxt, len(data),
+        "(code, version, via))",
+        log_code, vtxt, len(data), where,
         entry.func.__module__, getattr(entry.func, "__name__", "?"),
     )
 
@@ -1458,6 +1638,7 @@ def declared_versions(log_code: int) -> frozenset[int]:
     """The versions a registered code's parser declares it implements:
     ``supported_versions`` ∪ ``field_invariants['version'].enum`` ∪ the
     enumerated per-version override keys. Empty for an unregistered code."""
+    _ensure_loaded(log_code)
     entry = _registry.get(log_code)
     if entry is None:
         return frozenset()
@@ -1485,6 +1666,7 @@ def version_contract(log_code: int) -> str:
     ``"reject_all"``   — declares no version, so implements none: every record
                          returns None (never-observed placeholders).
     """
+    _ensure_loaded(log_code)
     entry = _registry.get(log_code)
     if entry is None:
         raise KeyError(f"0x{log_code:04X} is not registered")
@@ -1502,13 +1684,25 @@ def parse(log_code: int, log_time: int, data: bytes) -> Any | None:
     blind spot surfaces in a corpus walk instead of hiding in it. An
     unregistered code stays silent: it is not a decode blind spot, since nothing
     ever claimed to decode it.
+
+    A call made from inside another parser (a container re-dispatching an
+    embedded sub-record) is tallied with ``via`` = that container's code, so the
+    harvest can tell a nested drop from a top-level one.
     """
     entry = resolve(log_code, data)
     if entry is None:
         return None
-    result = entry.func(log_time, data)
+    stack = getattr(_DISPATCH, "stack", None)
+    if stack is None:
+        stack = _DISPATCH.stack = []
+    via = stack[-1] if stack else None
+    stack.append(log_code)
+    try:
+        result = entry.func(log_time, data)
+    finally:
+        stack.pop()
     if result is None:
-        _warn_unhandled(log_code, entry, data)
+        _warn_unhandled(log_code, entry, data, via=via)
     elif entry.field_invariants:
         violations = check_invariants(entry, result)
         if violations:
@@ -1565,6 +1759,20 @@ def _warn_invariant(log_code: int, entry: "ParserEntry", data: bytes,
         )
 
 
+def _invariant_samples(as_dict: dict, field_name: str):
+    """``(present, observed)`` pairs one ``field_invariants`` key checks.
+
+    A plain key is one sample. A LIST key ``"<list>[].<field>"`` is one
+    sample per dict element of ``as_dict[<list>]`` -- so 0xB064 can pin
+    ``"subpackets[].subpacket_version"`` and an unseen subpacket version on ANY
+    element is as loud as an unseen top-level version."""
+    lst, sep, sub = field_name.partition("[].")
+    if not sep:
+        return [(field_name in as_dict, as_dict.get(field_name))]
+    return [(sub in el, el.get(sub)) for el in (as_dict.get(lst) or ())
+            if isinstance(el, dict)]
+
+
 def check_invariants(
     entry: ParserEntry, result: Any
 ) -> list[dict[str, Any]]:
@@ -1576,78 +1784,93 @@ def check_invariants(
     or all checks pass.
 
     Result is converted to a field map via:
-      1. ``result.to_dict()`` if available (the project convention), or
-      2. ``dataclasses.asdict(result)`` as a fallback.
+      1. ``result.to_dict()`` if available (the project convention),
+      2. the result itself when it is already a ``Mapping`` (e.g. the output
+         of ``to_dict()``), or
+      3. ``dataclasses.asdict(result)`` as a fallback.
+
+    Raises ``TypeError`` for any other result. It used to fall through to an
+    empty field map, so every check passed vacuously: passing ``rec.to_dict()``
+    made a 14,609-record corpus invariant check report 0 violations, caught
+    only by a mutation test.
     """
     if not entry.field_invariants or result is None:
         return []
+    from collections.abc import Mapping
+    from dataclasses import asdict, is_dataclass
     if hasattr(result, "to_dict") and callable(result.to_dict):
         as_dict = result.to_dict()
+    elif isinstance(result, Mapping):
+        as_dict = result
+    elif is_dataclass(result) and not isinstance(result, type):
+        as_dict = asdict(result)
     else:
-        try:
-            from dataclasses import asdict, is_dataclass
-            as_dict = asdict(result) if is_dataclass(result) else {}
-        except Exception:
-            return []
+        raise TypeError(
+            f"check_invariants: cannot read fields from a "
+            f"{type(result).__name__} result (want an object with to_dict(), "
+            f"a Mapping, or a dataclass instance); an empty field map would "
+            f"pass every invariant vacuously"
+        )
     violations: list[dict[str, Any]] = []
     for field_name, spec in entry.field_invariants.items():
-        present = field_name in as_dict
-        observed = as_dict.get(field_name)
-        if spec.get("required_populated") and (not present or observed is None):
-            violations.append({
-                "field": field_name,
-                "check": "required_populated",
-                "observed": None,
-                "spec": True,
-            })
-            continue
-        if not present or observed is None:
-            continue
-        if "range" in spec:
-            lo, hi = spec["range"]
-            try:
-                if not (lo <= observed <= hi):
+        for present, observed in _invariant_samples(as_dict, field_name):
+            if spec.get("required_populated") and (not present or observed is None):
+                violations.append({
+                    "field": field_name,
+                    "check": "required_populated",
+                    "observed": None,
+                    "spec": True,
+                })
+                continue
+            if not present or observed is None:
+                continue
+            if "range" in spec:
+                lo, hi = spec["range"]
+                try:
+                    if not (lo <= observed <= hi):
+                        violations.append({
+                            "field": field_name,
+                            "check": "range",
+                            "observed": observed,
+                            "spec": [lo, hi],
+                        })
+                except TypeError:
                     violations.append({
                         "field": field_name,
                         "check": "range",
-                        "observed": observed,
+                        "observed": repr(observed),
                         "spec": [lo, hi],
                     })
-            except TypeError:
-                violations.append({
-                    "field": field_name,
-                    "check": "range",
-                    "observed": repr(observed),
-                    "spec": [lo, hi],
-                })
-        if "enum" in spec:
-            allowed = spec["enum"]
-            if observed not in allowed:
-                violations.append({
-                    "field": field_name,
-                    "check": "enum",
-                    "observed": observed,
-                    "spec": list(allowed),
-                })
-        if "const" in spec:
-            expected = spec["const"]
-            if observed != expected:
-                violations.append({
-                    "field": field_name,
-                    "check": "const",
-                    "observed": observed,
-                    "spec": expected,
-                })
+            if "enum" in spec:
+                allowed = spec["enum"]
+                if observed not in allowed:
+                    violations.append({
+                        "field": field_name,
+                        "check": "enum",
+                        "observed": observed,
+                        "spec": list(allowed),
+                    })
+            if "const" in spec:
+                expected = spec["const"]
+                if observed != expected:
+                    violations.append({
+                        "field": field_name,
+                        "check": "const",
+                        "observed": observed,
+                        "spec": expected,
+                    })
     return violations
 
 
 def parser_info(log_code: int) -> ParserEntry | None:
     """Return the ParserEntry for a log code, or None if not registered."""
+    _ensure_loaded(log_code)
     return _registry.get(log_code)
 
 
 def all_parser_info() -> list[ParserEntry]:
     """Return all registered ParserEntry objects, sorted by log_code."""
+    _ensure_loaded()
     return sorted(_registry.values(), key=lambda e: e.log_code)
 
 
@@ -1656,6 +1879,7 @@ def entries_for(log_code: int) -> list[ParserEntry]:
     followed by each enumerated override's winner. For diagnostics and
     per-version checkout tooling."""
     out: list[ParserEntry] = []
+    _ensure_loaded(log_code)
     ca = _registry.get(log_code)
     if ca is not None:
         out.append(ca)
@@ -1666,6 +1890,7 @@ def entries_for(log_code: int) -> list[ParserEntry]:
 def registered_codes() -> list[int]:
     """Return a sorted list of all registered log codes (catch-all or
     enumerated-only)."""
+    _ensure_loaded()
     return sorted(set(_registry) | set(_overrides))
 
 

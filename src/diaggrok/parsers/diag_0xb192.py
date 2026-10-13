@@ -317,7 +317,17 @@ class Diag0xB192:
     # 0x01 (n=55521). Gated below per "size invariance != format invariance". The
     # INNER response subpacket version (id=27, ver ∈ {2,4,56}) is a separate field
     # the parser dispatches on — do NOT conflate it with the outer version enum.
-    field_invariants={"version": {"enum": [0x01]}},
+    field_invariants={
+        "version": {"enum": [0x01]},
+        # Response (id=27) subpacket version: 2 = MC7700/MDM9200 4 B carrier
+        # header, 4 / 56 = the modern 8 B header (byte-identical to each other;
+        # the number tracks firmware). Pinned so an unseen one is loud — the
+        # parse still decodes it as modern (forward-compat), it just WARNs.
+        "sp_version": {"enum": [2, 4, 56]},
+    },
+    # F3-sweep layout axis: byte 0 is 0x01 on every record, the
+    # response subpacket version picks the carrier header -> (0xB192, v0x01, sp.vN).
+    layout_axes={"sp": "sp_version"},
     issues=(),
     primary_issue=None,
     wigle_direct=True,

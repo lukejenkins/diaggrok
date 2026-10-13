@@ -60,13 +60,13 @@ _V28_COMBO_SIZE = _MAX_CCS * _V28_CC_SIZE  # 42 bytes per combo slot
 #   [0]    u8  version (0x29)
 #   [1]    u8  num_combos (count of *populated* slots; advisory)
 #   [2..]  100 slots, each: u8 cc_count, then cc_count × 7-byte CC
-# Per-CC 7-byte layout (field order follows uecapabilityparser's CA-combo
-# model, corroborated by the same value-domains observed on v0x28):
+# Per-CC 7-byte layout, grounded by a whole-combo comboCap join (see the
+# "comboCap whole-combo join" note below):
 #   [0:2] u16 band  [2] dl_bw_class  [3] ul_bw_class
 #   [4] mimo_dl_idx  [5] mimo_ul_idx  [6] modulation
-# The mimo/modulation bytes are surfaced as RAW indices: the indexed-MIMO
-# lookup (index → actual MIMO layer count) is not ported, so naming them
-# decoded values would be a plausible-but-wrong parse.
+# These are v0x28's fields with [3] and [4] swapped: v0x28 carries the DL
+# MIMO code at [3] and the UL class at [4]. The MIMO code is surfaced RAW:
+# comboCap pins three of its values, not the whole index → layers map.
 # Structural model confirmed by exact byte-consumption across 58 EM9291
 # SDX65 records (27 distinct sizes) and bands/bw-classes decoding to real
 # 3GPP values.
@@ -91,14 +91,13 @@ class ComponentCarrier:
     EM7511 captures, where it is constant 0x02, but it is not reserved: v0x20
     captures (232 records, including Telit LM960) carry value **4** on 5,514
     real-band CCs (B66/B2/B4, dl_bw_class A), so on v0x20 the byte is {2,4},
-    not a constant. On v0x28 (SDX55) the **same
-    byte position** carries a wider non-constant per-CC value ({2,3,6,8,12,15,20,
-    24}). Same conclusion across versions: this is a genuine per-CC capability
-    field (candidate: a bandwidth-combination-set / supported-MIMO capability
-    code), its semantics not yet pinned, so it is surfaced raw rather than
-    mis-named. ``cc_ext`` is the v0x28-only
-    trailing 7th byte (None on v0x20); it tracks UL presence (0 when DL-only,
-    2/5 when an UL carrier is configured).
+    not a constant. On v0x28 (SDX55) the same byte is the DL MIMO capability
+    code, grounded by the comboCap whole-combo join (see the parser notes) and
+    also surfaced as ``mimo_dl_idx``; v0x29 carries that code at CC+4. The v0x20
+    encoding is not grounded ({2,4} is not v0x28's class-A {2,3}), so v0x20
+    keeps only the raw ``reserved_0x02``. ``cc_ext`` is the 7th byte of
+    v0x28/v0x29 (None on v0x20); it tracks UL presence (0 when DL-only, 2/5
+    when an UL carrier is configured).
     """
     band: int
     dl_bw_class: int
@@ -108,9 +107,10 @@ class ComponentCarrier:
     ul_bw_class_name: str
     ul_enabled: bool
     cc_ext: int | None = None
-    # v0x29 (v41) only — raw indices; None on v0x20/v0x28. The indexed-MIMO
-    # lookup is not ported, so these are the on-wire index bytes, not decoded
-    # MIMO layer counts.
+    # Raw codes, not layer counts. mimo_dl_idx: v0x29 CC+4 / v0x28 CC+3 (None
+    # on v0x20). mimo_ul_idx / modulation: v0x29 CC+5 / CC+6 only; those two
+    # names are inherited labels that no F3 print grounds (modulation is the
+    # same byte as cc_ext).
     mimo_dl_idx: int | None = None
     mimo_ul_idx: int | None = None
     modulation: int | None = None
@@ -165,30 +165,41 @@ class Diag0xB0CD:
 # v0x20 is the MDM9650 profile emitted by the Sierra MC7411 + EM7511. The log
 # name LOG_LTE_RRC_SUPPORTED_CA_COMBOS agrees with the docstring title.
 #
-# MIMO / modulation index bytes. Besides uecapabilityparser's lookup table or
-# AT ground truth, the firmware's own plaintext F3 print is a third source
-# for the mimo_dl_idx/mimo_ul_idx/modulation semantics. RM520N-GL captures
-# with fully resolved QSR4 F3 co-bear 0xB0CD with:
+# comboCap whole-combo join (v0x28 + v0x29). The firmware's plaintext print
 #     DBG2 comboCap: band N, dl bw class N, dl_mimo_ant_cfg N, horxd_ant_cfg N,
 #                    ul bw class N, ul max ant N
-# It names the DL MIMO antenna config outright (observed B12->2, B2/B66->4 ant).
-# Caveat — this is not a drop-in lookup table: `dl_mimo_ant_cfg` is the
-# *active-scouting* antenna count (domain {2,4}), whereas the parser's
-# `mimo_dl_idx` is a per-combo *capability index* with the wider domain
-# {2,3,6,8,12,15,20,24,30} (same domain as v0x28's reserved_0x02 byte). F3
-# gives semantic confirmation and anchor points; a comboCap<->0xB0CD-CC
-# correlation (join by band+combo) across captures would be needed to
-# constrain index->layers. Raw indices remain the correct surfaced form.
+# fires in a sub-millisecond burst, one line per CC of ONE combo (a
+# multi-carrier entry, class >= B, prints once per carrier, e.g. "48C" twice
+# with dl_mimo_ant_cfg "4_4"). It fires only during RRC CA-capability
+# evaluation, so most F3-bearing captures carry none. Each burst is joined to
+# the 0xB0CD dump emitted ~50 ms earlier (a run of records that together list
+# the whole combo set) and matched CC for CC on (band, dl class, ul class).
+# Every burst matches exactly ONE combo:
+#     RM500Q (SDX55, v0x28)      66A+UL 66A 12A     -> 1 of 623 combos
+#     Wistron LV55 (v0x28)       66A 2A 13A+UL      -> 1 of 496
+#     RM520N-GL R03A04 (v0x29)   66A+UL 66A 2A 12A  -> 1 of 3,254
+#     RM520N-GL R03A03 (v0x29)   66A+UL 48C 2A      -> 3 of 3,254: the same
+#                                band combination listed once per MIMO variant
+# Lining up a CC both versions describe (B66 A, UL A, dl_mimo_ant_cfg 4):
+#     v0x28   42 00 | 01 dl | 03 MIMO | 01 ul   | 01 | 02
+#     v0x29   42 00 | 01 dl | 01 ul   | 03 MIMO | 01 | 02
+# so v0x29 is v0x28's CC with [3] and [4] swapped. Across the matches the
+# MIMO code follows dl_mimo_ant_cfg: class A 4 -> 3 and 2 -> 2 (8 CCs, three
+# builds, two vendors), class C 4_4 -> 8, which also picks the one R03A03
+# variant consistent with the class-A code. horxd_ant_cfg equals
+# dl_mimo_ant_cfg on every print, so it does not separate a second field.
 #
-# v0x29 F3 grounding: on an RM520N-GL F3 stream (1.20M records, fully
-# resolved), comboCap value-matches the parser's v0x29 decode: `band`
-# (66/2/12), `dl_bw_class` (=comboCap "dl bw class" 1) and `ul_bw_class`
-# (=comboCap "ul bw class" 0/1) agree exactly, so those three CC fields are
-# F3-grounded, not just structurally inferred. The antenna/mimo bytes do not
-# match (parser {2,3,...} vs comboCap active {2,4}), consistent with the
-# raw-index framing. `modulation` (byte[6]) is not covered by the comboCap
-# print, so it stays raw. The comboCap burst fires only during RRC
-# CA-capability evaluation, so many F3-bearing captures carry none.
+# The MIMO code is a per-dl-class family, identical on v0x28 and v0x29 over
+# the corpus: a class with n carriers takes n(n+1) .. n(n+2) (A {2,3},
+# B/C {6,8}, D {12,14,15}, E {20,24}, F {30,35}). comboCap pins three points
+# of it, not the whole code -> layers map, so the code stays RAW.
+#
+# CC+5 / CC+6 (v0x29 mimo_ul_idx / modulation, v0x28 ul_enabled / cc_ext):
+# the same two bytes in both versions, with the same domains ({0,1,4} and
+# {0,1,2,5}) and the same pairing ((0,0) (1,1) (1,2) (4,5)); CC+6 is 0 on
+# DL-only CCs. comboCap's "ul max ant" is 0 on every UL CC, so no F3 print
+# names them: `mimo_ul_idx` and `modulation` are inherited labels, kept for
+# compatibility, and CC+6 is also surfaced as `cc_ext` on v0x29.
 #
 # Exact byte-consumption is the layout proof for the variable-size v0x29
 # format: a wrong stride desyncs and fails the `off != len(data)` gate. The
@@ -202,12 +213,8 @@ class Diag0xB0CD:
 # CA-combo list, corroborating that the device emits the CA-capability data
 # that 0xB0CD mirrors.
 #
-# Fields kept raw: `mimo_dl_idx` (domain {2,3,6,8,12,15,20,24,30}),
-# `mimo_ul_idx` ({0,1,4}) and `modulation` ({0,1,2,5}) are on-wire capability
-# indices, not decoded layer counts — the index→layers lookup is not ported,
-# and comboCap's `dl_mimo_ant_cfg` ({2,4}) anchors but does not equal the
-# wider index domain. `ul_enabled` is derived (UL present iff ul_bw_class
-# set), not an on-wire field.
+# `ul_enabled` on v0x29 is derived (UL present iff ul_bw_class set); on
+# v0x20/v0x28 it is bool(CC+5), which folds that byte's {1,4} together.
 #
 # v0x20 F3 grounding: the silicon that emits v0x20 (Sierra / Telit LM960,
 # MDM9x50/SDX20) has no per-CC comboCap print. Instead an EM7565 F3 capture
@@ -235,15 +242,11 @@ class Diag0xB0CD:
 # 0xB0CD v0x28 records co-emitted in the same capture (comboCap bursts fall
 # inside the 0xB0CD emission window): B66/dl1/ul1, B66/dl1/ul0, B12/dl1/ul0 all
 # appear byte-exact in the decode. So `band`, `dl_bw_class` and `ul_bw_class` are
-# F3-grounded on v0x28 (not merely structurally inferred). The two v0x28-only
-# bytes stay raw: CC+3 (`reserved_0x02`) tracks
-# `dl_bw_class` ({2,3} for dl1, {6,8} for dl2/dl3, {12,14} for dl4) — it is NOT
-# comboCap's `dl_mimo_ant_cfg` (domain {2,4}), so it is a distinct per-CC
-# capability field (candidate bandwidth-combination-set), semantics unpinned;
-# CC+6 (`cc_ext`) tracks UL presence/class (0=DL-only, 2=ul-class-A/B, 5 on
-# wider UL). comboCap's `dl_mimo_ant_cfg`/`ul max ant` are the active-scouting
-# antenna counts — they anchor but do not equal the raw index bytes, so no
-# index→layers lookup is claimed, same as v0x29. QCSuper produces a
+# F3-grounded on v0x28 (not merely structurally inferred). CC+3
+# (`reserved_0x02`, also `mimo_dl_idx`) is the DL MIMO code: its domain is not
+# comboCap's {2,4}, but the whole-combo join above shows it follows
+# dl_mimo_ant_cfg as an encoded value. CC+6 (`cc_ext`) tracks UL
+# presence/class (0=DL-only, 2=ul-class-A/B, 5 on wider UL). QCSuper produces a
 # populated RRC PCAP for the same capture; SCAT does not decode 0xB0CD (it is
 # an internal CA-combos log, not an OTA message), so the in-capture 0x79
 # comboCap print is the operative oracle. The capture's 0x60
@@ -259,7 +262,7 @@ class Diag0xB0CD:
         "each; emitted on LTE attach and periodically; active profile depends on "
         "serving band (primary band of combo[0] changes per camped cell)"
     ),
-    version=5,
+    version=6,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -277,9 +280,13 @@ class Diag0xB0CD:
         "band/dl_bw_class/ul_bw_class value-match, and decoded 252/252 "
         "records (0 misses) across RM520N-GL SDX62 and EM9291 SDX65, 55 "
         "distinct sizes, 31 real 3GPP bands; exact byte-consumption is the "
-        "variable-size layout proof. uecapabilityparser + QCSuper oracles "
-        "corroborate. MIMO/modulation bytes stay raw indices. Log code name "
-        "matches fgsect/scat."
+        "variable-size layout proof. A comboCap whole-combo join (each F3 "
+        "burst matches exactly one combo, 4 captures, v0x28 + v0x29) grounds "
+        "the v0x29 field order (v0x28's CC with bytes 3/4 swapped) and the "
+        "DL MIMO code (class A 2/3 = 2/4 ant, class C 8 = 4_4), surfaced raw "
+        "as mimo_dl_idx on v0x28 and v0x29. CC+5/CC+6 are the same bytes in "
+        "both versions and no F3 print names them. uecapabilityparser + "
+        "QCSuper output corroborate. Log code name matches fgsect/scat."
     ),
     source_url="",
     field_invariants={"version": {"enum": [0x20, 0x28, 0x29]}},
@@ -343,6 +350,10 @@ def parse_0xb0cd(log_time: int, data: bytes) -> Diag0xB0CD | None:
                 ul_bw_class_name=_BW_CLASS_NAMES.get(ul_bw_class, f"?{ul_bw_class}"),
                 ul_enabled=ul_enabled,
                 cc_ext=cc_ext,
+                # v0x28 CC+3 is the comboCap-grounded DL MIMO code (v0x29
+                # CC+4). Not claimed on v0x20: no comboCap there, and its
+                # {2,4} domain is not v0x28's class-A {2,3}.
+                mimo_dl_idx=reserved_0x02 if cc_size == _V28_CC_SIZE else None,
             ))
         if carriers:
             combos.append(CaCombo(carriers=carriers))
@@ -395,7 +406,7 @@ def _parse_v29(log_time: int, data: bytes) -> Diag0xB0CD | None:
                 ul_bw_class=ul_bw_class,
                 ul_bw_class_name=_BW_CLASS_NAMES.get(ul_bw_class, f"?{ul_bw_class}"),
                 ul_enabled=bool(ul_bw_class),  # UL present iff a UL bw class is set
-                cc_ext=None,
+                cc_ext=modulation,  # same byte as v0x28 cc_ext (CC+6)
                 mimo_dl_idx=mimo_dl_idx,
                 mimo_ul_idx=mimo_ul_idx,
                 modulation=modulation,

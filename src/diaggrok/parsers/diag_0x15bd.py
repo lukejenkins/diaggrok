@@ -26,15 +26,18 @@ class V3SubRecord:
 
     ## Sub-record classes — byte [25] is the real discriminator
 
-    ``kind_tag`` (byte [7]) == 0x57 ("kind A") vs 0x00 ("kind B") is only a
-    coarse split. A 72,590-sub-record walk (73 captures / 45 chipsets) shows
-    only **five** (kind_tag, end_tag_b, byte6≠0, byte27≠0) combinations
-    exist, and byte [25] (``end_tag_b``) splits "kind B" in half:
+    "Kind A" is a sub-record that carries ``gps_time_s`` at [4:8]; "kind B"
+    carries zeros there. Byte [7] (``kind``) is only the TOP BYTE of that
+    timestamp, so it reads 0x56, 0x57 or 0x58 depending on the date (see the
+    [4:8] row below): test ``kind != 0``, never ``kind == 0x57``. That split
+    is coarse. A 72,590-sub-record walk (73 captures / 45 chipsets, all in the
+    0x57 era) shows only **five** (kind, end_tag_b, byte6≠0, byte27≠0)
+    combinations exist, and byte [25] (``end_tag_b``) splits "kind B" in half:
 
     | ``kind`` [7] | ``end_tag_b`` [25] | [6]≠0 | [27]≠0 | count  |
     |--------------|--------------------|-------|--------|-------:|
-    | 0x57         | 0x01               | yes   | yes    |  6,326 |
-    | 0x57         | 0x01               | yes   | no     |     82 |
+    | ≠0 (0x57)    | 0x01               | yes   | yes    |  6,326 |
+    | ≠0 (0x57)    | 0x01               | yes   | no     |     82 |
     | 0x00         | 0x0D               | no    | no     | 33,120 |
     | 0x00         | 0x11               | no    | no     | 32,995 |
     | 0x00         | 0x04               | no    | no     |     67 |
@@ -133,30 +136,52 @@ class V3SubRecord:
                                        discriminating.
                                        Full u32 (it can look 24-bit on
                                        short-uptime captures).
-     4..5  u16LE  aux_u16             kind A only; 0 otherwise. 1 Hz COUNTER:
-                                       +1 per kind-A sub-record, and kind-A
-                                       sub-records are emitted at exactly
-                                       1000 ms of ``tick``. ``tick -
-                                       1000*aux_u16`` is stable to ~±12 ms
-                                       within a capture (12 distinct offsets
-                                       over 287 samples) — a free-running 1 Hz
-                                       counter loosely aligned to tick, NOT an
-                                       exact function of it.
-     6     u8     possibly_session_tag  kind A only; 0 otherwise. Not a
-                                       constant — 17 distinct
-                                       values corpus-wide (1, 5, 15, 19, 24,
-                                       28, 34, 35, 38, 44, 53, 66, 93, 161,
-                                       162, 172, 173), and **constant within a
-                                       capture in 19/19 captures that carry
-                                       kind-A records**. Two captures of one
-                                       wistron 81UMV91M21 differ by exactly 1
-                                       (161/162), which is why the name says
-                                       *possibly*: a boot/session counter is
-                                       the natural reading (cf. 0x1509
-                                       ``fw_tag`` stepping 0x7f→0x80 on the
-                                       same bench) but is NOT grounded.
-     7     u8     kind_tag            0x57 or 0x00. Coarse discriminator; see
-                                       the class table above — [25] is finer.
+     4..7  u32LE  gps_time_s          kind A only; 0 otherwise. GPS TIME in
+                                       whole SECONDS since 1980-01-06 (GPS
+                                       scale, i.e. UTC + 18 s), floored, at
+                                       the sub-record's sampling instant.
+                                       GROUNDED against the
+                                       F3-grounded 0x1509 GPS week + ms
+                                       in the same capture: 11/11 captures,
+                                       11 modem models, all three DIAG-clock
+                                       regimes (UTC, GPS, since-boot). With
+                                       each code's offset to ts64 removed,
+                                       gps_time_s − 0x1509 GPS s lies in
+                                       (−1, 0] s (medians −0.39..−0.92), the
+                                       signature of a whole-second floor.
+                                       ONE u32, not three fields: on an FN980
+                                       capture [6] steps 5→6 exactly as [4:6]
+                                       wraps 0xFFFF→0x0000 (+1 s while tick
+                                       moves +1.0 s), and an RM520N-GL
+                                       capture jumps 0x3241_xxxx →
+                                       0x572B_xxxx (+619,315,201 s = 1024 GPS
+                                       weeks + 1 s) when its clock leaves the
+                                       10-bit week wrap. Locked to ``tick``:
+                                       gps_time_s − tick/1000 is constant to
+                                       ≤0.9 s within each of 7 captures.
+                                       Its bytes stay exposed under the older
+                                       names, for API stability:
+     4..5  u16LE  aux_u16             low 16 bits of gps_time_s — the "1 Hz
+                                       counter" (+1 per kind-A sub-record;
+                                       ``tick - 1000*aux_u16`` is stable to
+                                       ~±12 ms within a capture).
+     6     u8     possibly_session_tag  bits 16..23 of gps_time_s. NOT a
+                                       session or boot counter: it steps
+                                       every 2^16 s = 18.2 h, on every modem
+                                       at once — 80 distinct values over 307
+                                       v=3 captures, Spearman vs capture date
+                                       0.87, wrapping 255→0 each 2^24 s.
+                                       It looked "constant within a capture"
+                                       only because most captures are shorter
+                                       than 18.2 h (2 of 307 straddle a
+                                       step). Name kept for API stability.
+     7     u8     kind                bits 24..31 of gps_time_s — NOT a type
+                                       tag. It advances 0x56 -> 0x57 -> 0x58 as
+                                       GPS week-seconds cross each 2^24 s
+                                       boundary (0x57 is the present era);
+                                       0x32 on a 1024-week-wrapped clock. A
+                                       consumer matching ``kind == 0x57`` stops
+                                       seeing kind A once it rolls to 0x58.
      8..11 4B     reserved_zeros      always 0 (72,590/72,590)
     12..13 u16LE  field_x             SLOW-CLOCK-domain quantity — MIRRORS the
                                        SCFB coupling of field_y/z (rank ρ vs F3
@@ -269,7 +294,7 @@ class V3SubRecord:
     grounding, in either capture regime.
     """
     tick: int
-    kind: int         # byte [7]: 0x00 or 0x57 — see end_tag_b for the finer class
+    kind: int         # byte [7]: top byte of gps_time_s (0 on kind B) — not a type tag
     aux_u16: int
     field_x: int
     field_y: int
@@ -279,10 +304,12 @@ class V3SubRecord:
     end_tag_b: int = 0              # byte [25] — real sub-record class tag
     byte_27: int = 0                # byte [27] — live, unidentified
     flag_14: int = 0                # bytes [14:16] — 0 except RG520N-NA (==1)
+    gps_time_s: int = 0             # bytes [4:8] u32 — GPS seconds; 0 on kind B
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'tick': self.tick,
+            'gps_time_s': self.gps_time_s,
             'kind': self.kind,
             'aux_u16': self.aux_u16,
             'field_x': self.field_x,
@@ -314,6 +341,14 @@ class V2SubRecord:
     | [4:6]   | ``aux_u16``            | kind-A only; ``== time_s & 0xFFFF`` in 130/142, ±1 in 12 |
     | [6]     | ``possibly_session_tag`` | kind-A only; 34 in 142/142 (one capture) |
     | [7]     | ``kind``               | 0x57 (kind A, 142) / 0x00 (2,288)          |
+
+    On v=3, kind-A [4:8] is one u32, ``gps_time_s``; see
+    :class:`V3SubRecord`, and [6]/[7] are its bits 16..31, not a session tag
+    and a type tag. The v=2 numbers above fit the same reading ([4:6] tracks
+    ``time_s`` and 0x57 is ``time_s``'s own top byte), but v=2 [4:8] was NOT
+    re-measured for the gps_time_s reading: the one kind-A v=2 capture
+    was not among the 8 v=2 captures the gps_time_s discovery returned. So v=2
+    exposes no ``gps_time_s``.
     | [8:12]  | zeros                  | 0 in 2,430/2,430                           |
     | [12:14] | ``field_x``            | u16, as v=3                                |
     | [14:16] | ``flag_14``            | 0 in 2,430/2,430                           |
@@ -424,7 +459,7 @@ class V2SubRecord:
     time_s: int = 0        # u32 [0:4] — system-clock SECONDS (time_stamp_local)
     aux_u16: int = 0       # u16 [4:6] — kind A only; time_s & 0xFFFF
     possibly_session_tag: int = 0  # u8 [6] — kind A only
-    kind: int = 0          # u8 [7] — 0x57 kind A / 0x00
+    kind: int = 0          # u8 [7] — nonzero (0x57) on kind A / 0x00; see the v=3 [4:8] note
     flag_14: int = 0       # u16 [14:16] — 0 corpus-wide on v=2
     aux_byte: int = 0      # u8 [26]
     byte_27: int = 0       # u8 [27]
@@ -760,6 +795,9 @@ def _decode_v3_sub_records(body: bytes) -> list[V3SubRecord]:
             end_tag_b=s[25],
             byte_27=s[27],
             flag_14=unpack_from('<H', s, 14)[0],
+            # One u32 over [4:8]: aux_u16 / possibly_session_tag / kind above
+            # are its bytes, kept under their older names.
+            gps_time_s=unpack_from('<I', s, 4)[0],
         ))
     return sub_records
 
@@ -789,12 +827,14 @@ def _decode_v3_sub_records(body: bytes) -> list[V3SubRecord]:
         "(time_s, aux_u16, possibly_session_tag, kind, field_x, field_y, "
         "field_z, flag_14, end_tag_b, aux_byte, byte_27; slot_id/tag_a are "
         "the low bytes of time_s) and "
-        "V3SubRecord on v=3 (tick, kind, aux_u16, field_x, field_y, field_z, "
-        "aux_byte, possibly_session_tag, end_tag_b, byte_27, flag_14). "
+        "V3SubRecord on v=3 (tick, gps_time_s, kind, aux_u16, field_x, "
+        "field_y, field_z, aux_byte, possibly_session_tag, end_tag_b, "
+        "byte_27, flag_14; kind/possibly_session_tag/aux_u16 are the bytes "
+        "of the u32 gps_time_s at [4:8]). "
         "Back-compat: param_a/param_b/param_c/param_d on the record and "
         "tick/field_a/field_b on V2SubRecord are @property aliases."
     ),
-    version=8,
+    version=9,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -817,26 +857,32 @@ def _decode_v3_sub_records(body: bytes) -> list[V3SubRecord]:
         "shift controls 0 hits), paired with GPS week [9:11] + GPS "
         "ms-of-week [11:15]. v=2 [0:4] time_s is whole SECONDS of the system "
         "clock (== floor(DIAG ts64 s) 243/243 over 11 captures; named "
-        "time_stamp_local by F3 gpstask.c:957, 155/155). Byte [25] is the "
+        "time_stamp_local by F3 gpstask.c:957, 155/155). v=3 kind-A [4:8] "
+        "is gps_time_s, a u32 of whole GPS seconds (floor): it matches the "
+        "F3-grounded 0x1509 GPS time to (-1, 0] s on 11/11 captures across "
+        "UTC, GPS and since-boot DIAG clocks; its top byte ([7], formerly "
+        "read as a 0x57 kind tag) rolls to 0x58 as GPS week-seconds advance. Byte [25] is the "
         "per-sub-record class tag (0x01/0x0D/0x11/0x04). field_x/y/z co-vary "
         "with F3 SCFB (detrended rank rho ~0.71..0.83) but no F3 site prints "
         "them; their meaning, byte_27 and the [25] class meaning remain open. "
         "A payload shorter than the fixed header + 10 x 28 B array returns None."
     ),
     source_url="",
-    # v=2 and v=3: 7 header + 110 sub-record fields (11 × 10 sub-records) =
-    #   117 named. On v=2, slot_id/tag_a are folded into time_s (they are its
-    #   bytes [0]/[1] and are not counted twice).
+    # v=3: 7 header + 120 sub-record fields (12 × 10 sub-records) = 127
+    #   named, counting gps_time_s beside the three byte fields it spans
+    #   (kind, possibly_session_tag, aux_u16 — kept for API stability, as
+    #   0x14A6 kept fw_tag/sub_type beside gps_week). v=2: 117 (11 × 10 + 7).
+    #   On v=2, slot_id/tag_a are folded into time_s (they are its bytes
+    #   [0]/[1] and are not counted twice).
     # These two counters mean "fields the record is known to HAVE" and
     # "fields the parser EXTRACTS" — coverage is parsed/identified, so they
     # are equal here: everything known is decoded. Semantic confidence is
     # tracked separately: `byte_27` is extracted but its MEANING is still
-    # open, and `possibly_session_tag` carries the `possibly_` prefix because
-    # only its scope is measured (kind-A only, constant per capture), not its
-    # meaning. Invariant bytes and reserved zeros account for the residue in
-    # both variants.
-    fields_parsed=117,
-    fields_identified=117,
+    # open. `possibly_session_tag` keeps its old name for API stability only;
+    # it is bits 16..23 of gps_time_s. Invariant bytes and reserved
+    # zeros account for the residue in both variants.
+    fields_parsed=127,
+    fields_identified=127,
     # Layer-2 plausibility. Derived from a corpus-wide walk over
     # 8,877 records / 229 captures (offsets 0, 1, 4):
     #

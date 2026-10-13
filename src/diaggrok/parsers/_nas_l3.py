@@ -1641,13 +1641,32 @@ def _walk_esm_optional(
 # ePCO are tabled at their true wire shape (TLV / TLV-E) — if left untabled, the
 # walker's bit-8-clear fall-through mis-reads the 2-octet ePCO length as a
 # 1-octet TLV length and desyncs the rest of the walk.
-_ESM_C1_OPTIONAL_TABLE: dict[int, IeSpec] = {
-    _IEI_ESM_APN_AMBR: IeSpec(IeFormat.TLV),
-    _IEI_ESM_CAUSE: IeSpec(IeFormat.TV, length=1),
-    _IEI_ESM_LLC_SAPI: IeSpec(IeFormat.TV, length=1),
-    _IEI_ESM_PCO: IeSpec(IeFormat.TLV),
-    _IEI_ESM_EPCO: IeSpec(IeFormat.TLV_E),
-}
+#
+# Activate default EPS bearer context request (0xC1): every optional IE of TS
+# 24.301 Table 8.3.6.1, in the order the message carries them. Type-1 IEIs are
+# keyed by their high nibble. The order is what finds the end of the message
+# when bytes follow it (see esm_activate_default_bearer_length).
+_ESM_C1_OPTIONAL_ORDER: tuple[tuple[int, IeSpec], ...] = (
+    (0x5D, IeSpec(IeFormat.TLV)),            # Transaction identifier
+    (0x30, IeSpec(IeFormat.TLV)),            # Negotiated QoS
+    (_IEI_ESM_LLC_SAPI, IeSpec(IeFormat.TV, length=1)),
+    (0x8, IeSpec(IeFormat.TV_SHORT)),        # Radio priority
+    (0x34, IeSpec(IeFormat.TLV)),            # Packet flow identifier
+    (_IEI_ESM_APN_AMBR, IeSpec(IeFormat.TLV)),
+    (_IEI_ESM_CAUSE, IeSpec(IeFormat.TV, length=1)),
+    (_IEI_ESM_PCO, IeSpec(IeFormat.TLV)),
+    (0xB, IeSpec(IeFormat.TV_SHORT)),        # Connectivity type
+    (0xC, IeSpec(IeFormat.TV_SHORT)),        # WLAN offload indication
+    (0x33, IeSpec(IeFormat.TLV)),            # NBIFOM container
+    (0x66, IeSpec(IeFormat.TLV)),            # Header compression configuration
+    (0x9, IeSpec(IeFormat.TV_SHORT)),        # Control plane only indication
+    (_IEI_ESM_EPCO, IeSpec(IeFormat.TLV_E)),
+    (0x6E, IeSpec(IeFormat.TLV)),            # Serving PLMN rate control
+    (0x5F, IeSpec(IeFormat.TLV)),            # Extended APN-AMBR
+)
+_ESM_C1_OPTIONAL_TABLE: dict[int, IeSpec] = dict(_ESM_C1_OPTIONAL_ORDER)
+_ESM_C1_OPTIONAL_RANK: dict[int, int] = {
+    iei: rank for rank, (iei, _) in enumerate(_ESM_C1_OPTIONAL_ORDER)}
 _ESM_D0_OPTIONAL_TABLE: dict[int, IeSpec] = {
     _IEI_ESM_APN: IeSpec(IeFormat.TLV),
     _IEI_ESM_INFO_XFER_FLAG: IeSpec(IeFormat.TV_SHORT),
@@ -1683,11 +1702,94 @@ _PDN_TYPE_NAMES: dict[int, str] = {
 }
 
 
+def _esm_c1_optional_end(body: bytes, pos: int) -> int:
+    """End offset of the 0xC1 optional IEs that start at ``body[pos]``.
+
+    The optional IEs of Table 8.3.6.1 appear in table order, so the message
+    ends at the first IEI that is not a 0xC1 IEI or that does not come after
+    the previous one. That second rule matters because several Attach Accept
+    IEIs reuse ESM numbers: 0x34 (emergency number list vs packet flow
+    identifier), 0x5E (T3412 extended vs APN-AMBR), 0x66 and 0x6E. An IE whose
+    declared length runs past the end is left to the walker, which stops
+    cleanly on it.
+    """
+    n = len(body)
+    last_rank = -1
+    while pos < n:
+        octet = body[pos]
+        key = octet
+        spec = _ESM_C1_OPTIONAL_TABLE.get(octet)
+        if spec is not None and spec.fmt is IeFormat.TV_SHORT:
+            spec = None             # a nibble key is not a full-octet IEI
+        if spec is None and octet & 0x80:
+            key = (octet >> 4) & 0x0F
+            spec = _ESM_C1_OPTIONAL_TABLE.get(key)
+            if spec is not None and spec.fmt is not IeFormat.TV_SHORT:
+                spec = None
+        if spec is None or _ESM_C1_OPTIONAL_RANK[key] <= last_rank:
+            return pos
+        last_rank = _ESM_C1_OPTIONAL_RANK[key]
+        if spec.fmt is IeFormat.TV_SHORT:
+            pos += 1
+        elif spec.fmt is IeFormat.TV:
+            pos += 1 + (spec.length or 0)
+        elif spec.fmt is IeFormat.TLV_E:
+            if pos + 3 > n:
+                return n
+            pos += 3 + ((body[pos + 1] << 8) | body[pos + 2])
+        else:
+            if pos + 2 > n:
+                return n
+            pos += 2 + body[pos + 1]
+    return min(pos, n)
+
+
+def _esm_c1_mandatory_end(body: bytes) -> int | None:
+    """Offset just past the 0xC1 mandatory part, or None if it is truncated."""
+    pos = 0
+    try:
+        for _ in range(3):          # EPS QoS, APN, PDN address — all LV
+            _, pos = read_lv(body, pos)
+    except NasL3Error:
+        return None
+    return pos
+
+
+def esm_activate_default_bearer_length(pdu: bytes) -> int | None:
+    """Length of the Activate default EPS bearer context request at ``pdu[0]``.
+
+    ``pdu`` starts at the 3-octet ESM header. Returns the octet count of the
+    header, the mandatory part and the optional IEs that belong to the
+    message, which is less than ``len(pdu)`` when other bytes follow it.
+
+    Those bytes are real: when the default bearer is activated inside an
+    Attach Accept, the 0xB0E2 record runs from the start of the ESM message
+    container to the end of the Attach Accept rather than to the container's
+    LV-E length, so the Attach Accept's own optional IEs (GUTI, LAI, MS
+    identity, T3402, ...) follow the ESM message. Byte-for-byte against the
+    paired 0xB0EC Attach Accept, the length returned here equals the
+    container length on SDX20, SDX55 and SDX62 captures.
+
+    Returns ``None`` when ``pdu`` is not an ESM 0xC1 message or its mandatory
+    part is truncated.
+    """
+    if (len(pdu) < 3 or pdu[0] & 0x0F != _ESM_PROTOCOL_DISCRIMINATOR
+            or pdu[2] != 0xC1):
+        return None
+    body = pdu[3:]
+    pos = _esm_c1_mandatory_end(body)
+    if pos is None:
+        return None
+    return 3 + _esm_c1_optional_end(body, pos)
+
+
 def _decode_activate_default_bearer_request(body: bytes) -> dict[str, Any]:
-    """Body of Activate default EPS bearer context request (0xC1, §8.3.1).
+    """Body of Activate default EPS bearer context request (0xC1, §8.3.6).
 
     Mandatory wire order (no IEIs): EPS QoS (LV) → APN (LV) → PDN address (LV).
-    Then optional IEs (APN-AMBR, ESM cause, PCO/ePCO) via the shared walker.
+    Then the optional IEs of Table 8.3.6.1 via the shared walker, decoding
+    APN-AMBR, ESM cause and PCO/ePCO. Bytes after the last in-order optional IE
+    are not part of the message; their count surfaces as ``trailing_octets``.
     """
     out: dict[str, Any] = {}
     pos = 0
@@ -1706,7 +1808,10 @@ def _decode_activate_default_bearer_request(body: bytes) -> dict[str, Any]:
             out["pdn_address"] = pdn
     except NasL3Error:
         return out  # truncated mandatory part — surface whatever decoded
-    opt, unrecognized = _walk_esm_optional(body[pos:], _ESM_C1_OPTIONAL_TABLE)
+    end = _esm_c1_optional_end(body, pos)
+    if end < len(body):
+        out["trailing_octets"] = len(body) - end
+    opt, unrecognized = _walk_esm_optional(body[pos:end], _ESM_C1_OPTIONAL_TABLE)
     out.update(opt)
     if unrecognized:
         out["unrecognized_ieis"] = [f"0x{i:02X}" for i in unrecognized]

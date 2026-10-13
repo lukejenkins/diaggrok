@@ -524,6 +524,10 @@ _OBSERVED_SUBTYPES = (0x01, 0x02, 0x03)  # legacy (v5/v7/v9); v6 uses _V6_SUBTYP
         # emitting, so this net stays sound while admitting v6's subtype 0x00.
         "subtype": {"enum": sorted(set(_OBSERVED_SUBTYPES) | set(_V6_SUBTYPES))},
     },
+    # F3-sweep layout axis: byte 1 (subtype) picks the body within a
+    # version — 2 measurement, 3 timing reference, 1 v9 slot array, 0/1 v6
+    # C-V2X — so the unit of F3 work is (0x18AB, v0xNN, st.vN).
+    layout_axes={"st": "subtype"},
     wigle_direct=False,
     wigle_roles=("pci-earfcn-bridge", "rat-context"),
 )

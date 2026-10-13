@@ -1,4 +1,4 @@
-"""0x15B2 — LOG_GNSS_PDSM_EXT_STATUS_BEST_AVAILABLE_INFO, 352B v=0x08.
+"""0x15B2 — LOG_GNSS_PDSM_EXT_STATUS_BEST_AVAILABLE_INFO, 352B v=0x01 / v=0x08.
 
 The **response** half of the PDSM "best available position" query: the request
 is logged as sibling **0x15B1** (``pdsm_pd_get_best_avail_pos()``) and
@@ -8,7 +8,7 @@ request→response pairs in the corpus). ``[1:9]`` is byte-identical to 0x15B1's
 Name: ``LOG_GNSS_PDSM_EXT_STATUS_BEST_AVAILABLE_INFO`` (from a community
 log-name table).
 
-## Layout (v=0x08, 352 bytes)
+## Layout (v=0x08 and v=0x01, 352 bytes — one struct, see § v0x01)
 
 After a 10-byte head the body is a **packed ``(valid u8, value)`` list** — the
 shape of a QMI-IDL C struct (``uint8_t foo_valid; T foo;``, pack(1)). 32 valid
@@ -16,7 +16,7 @@ bytes, at [10 19 28 33 38 43 48 50 55 60 65 70 75 80 82 87 92 97 102 107 112 117
 122 127 132 141 143 148 153 162 327 329]. A field whose valid byte is 0 decodes
 to ``None``; the raw 32 bytes are kept as ``valid_flags``.
 
-  [  0]      version                        u8   = 0x08 (Layer-1 gate)
+  [  0]      version                        u8   = 0x01 | 0x08 (Layer-1 gate)
   [  1:  5]  client_id                      u32  PDSM client (3491) — GROUND via 0x15B1
   [  5:  9]  cand_client_data_ptr           u32  CANDIDATE (mirrors 0x15B1 [5:9])
   [  9]      raw_09                         u8   0 on every record
@@ -37,8 +37,8 @@ to ``None``; the raw 32 bytes are kept as ``valid_flags``.
   [ 83: 87]  cand_vert_reliability          u32  CANDIDATE
   [ 88: 92]  vert_speed_mps                 f32  GROUND  (0x1476 vel_u)
   [ 93: 97]  unk_93_f32                     f32  raw — == [76:80] on 4/4
-  [ 98:102]  heading_deg                    f32  GROUND  (0x1476 heading_deg)
-  [103:107]  heading_unc_deg                f32  GROUND  (0x1476 heading_unc_deg)
+  [ 98:102]  heading_deg                    f32  GROUND  (0x1476 heading_deg) — RADIANS on v=0x01
+  [103:107]  heading_unc_deg                f32  GROUND  (0x1476 heading_unc_deg) — RADIANS on v=0x01
   [108:112]  cand_magnetic_deviation_deg    f32  CANDIDATE (0 on all 4)
   [113:117]  cand_technology_mask           u32  CANDIDATE (1 GNSS fix / 2 cell seed)
   [118:122]  pdop                           f32  GROUND  (0x1476 pdop)
@@ -93,9 +93,12 @@ qcsuper/SCAT do not decode 0x15B2 (absent). The MC7411 capture has no F3.
 
 ## Open / CANDIDATE
 
-* **Every valid byte is 1 on every record** — even the LM960's heading, which
-  holds −57238.5° and which RRC itself treats as absent (``hor_velocity_valid
-  0``). The flag is kept for fidelity but is not evidence of a field's validity.
+* **Every v8 valid byte is 1 on every record** — even the LM960's heading,
+  which RRC itself treats as absent (``hor_velocity_valid 0``). That heading,
+  −57238.484375, is bit-exactly ``f32(degrees(-999.0))``: the engine's
+  −999 rad "unknown heading" sentinel run through the v8 rad→deg conversion.
+  Its heading_unc 103.92 is ``degrees(π/√3)``, the σ of a heading uniform on
+  ±π. The v1 DB seed carries the same pair unconverted (see § v0x01).
 * ``cand_vert_unc_m``: the LM960 F3 match is one record (14 vs 14.43), and the
   MC7411 values (0.24–0.90 m) disagree with that session's AT ``LocUncVe 8.0``.
   ``unk_93_f32`` equals it on 4/4.
@@ -107,19 +110,81 @@ qcsuper/SCAT do not decode 0x15B2 (absent). The MC7411 capture has no F3.
 * The 0x15B2 struct is not the QMI-LOC indication itself: ``loc_task.c``
   allocates 448 bytes for that alongside the log.
 
+## v0x01 (MDM9240) — same struct, GROUND
+
+Quectel EP06A ``EP06ALAR02A08M4G_01.009.01.009`` (MDM9240 silicon, MDM9640.LE
+firmware) emits the record
+with ``version = 0x01`` at the same 352 bytes. It is the **same layout**, not
+a size coincidence:
+
+* **Structural fingerprint, 202/202.** Each of the 32 v8 valid-byte offsets
+  holds 0 or 1, and ``client_id`` is 3491 again. ``[1:9]`` is byte-identical
+  to the preceding 0x15B1 v1 request (202/202, lag ≤ 2.5 ms).
+* **0x1476 co-emission, 202/202.** Every record has a 0x1476 v8 (2229 B)
+  within 3 ms (166 on the same tick, 36 one or two ticks earlier). They are
+  bit-exact on lat/lon (Δ ≤ 2.4e-13°, the f64 rad→deg ulp), altitude, P/H/VDOP
+  (0), speed and vel_u (0), and the used-SV count and list (0, []). 0x1476
+  reports ``pos_source 4`` (DB) on all 202.
+* **F3, 180/186 in the two F3-armed captures.** The legacy-QSR (0x92) site
+  ``tm_core.c:12760``, bound to the exact build index, fires at dt 0 ms with
+  arg0 = 547132 = int(``hor_unc_circular_m`` 547132.8125). This is the same
+  ``PUNC`` print that matched the LM960 v8 record. Plaintext
+  ``loc_pd.c:2657 loc_pd_event_cb … client_id=3491`` confirms the client.
+* **Internal identities, 202/202.** ``unc_cir = hypot(maj, min)``
+  (√2 · 386881.31), and the +500 m altitude twin.
+
+What v1 adds is the **time group flagged invalid**: the valid bytes at
+[132] (UTC ms), [141] (unk_142), [143] (time_unc), [148] (time_src) and
+[329] (GPS week/TOW) are 0 on all 202 records. The other 27 are 1. The engine
+had no GPS time: plaintext ``mc_gnssmeasreport.c:3534`` prints ``Wk 65535``
+in the same windows, the search strategy is ``BLIND_SEARCH``, and
+``tm_core.c:8753`` carries 65535 as an argument. The values behind those flags
+are zero, except ``[142]``, which varies (0, 2, 18, 32…) and is uninitialised
+stack. This is the first corpus evidence that the valid flags carry meaning
+(v8 set all 32).
+
+The 202 records are byte-identical apart from ``[142]``: one cached DB seed,
+returned on each request.
+
+**Unit change: v1 heading is in radians.** On-wire ``[98:102]`` = −999.0 and
+``[103:107]`` = 1.8137994 = π/√3. They equal 0x1476's ``heading_rad`` /
+``heading_unc_rad`` bit-exactly on 202/202. On v8 the same slots equal
+``degrees()`` of those 0x1476 fields (MC7411 fresh fix). The LM960 v8 seed's
+−57238.484375 / 103.923050 are ``f32(degrees())`` of exactly this v1 pair.
+So the version bump marks the unit, and the parser normalises: on v1,
+``heading_deg`` / ``heading_unc_deg`` are ``degrees(raw)``. The on-wire
+floats are kept as ``heading_raw`` / ``heading_unc_raw``, with
+``heading_raw_unit`` ``'rad'`` (v1) or ``'deg'`` (v8). After normalisation
+both seeds read −57238.48° / 103.92°, the "unknown" pair. Caveat: on v1 the
+radian reading rests on a single distinct value (the cached seed) plus the
+cross-version identity. A v1 record with a real heading would confirm it.
+The two other angle slots (orientation, magnetic deviation) are 0 on v1, so
+their unit is undetermined there and they are left unconverted.
+
+``cand_vert_unc_m`` = ``unk_93_f32`` = 14.4337568 = **25/√3** (the σ of a
+uniform ±25 m), the same default as the LM960's F3 ``unc_altitude 14``. The confidence bytes are 63/68/39,
+``hor_reliability`` 3 and ``cand_technology_mask`` 2, all as on the LM960
+cell seed. Still open on v1: orientation (0), ``unk_56_f32`` (0), and the
+time fields, which are invalid here.
+
 ## Corpus
 
-4 records / 2 sessions, all 352 B, all v=0x08:
+206 records / 10 captures, all 352 B:
 
-  * Sierra MC7411 (MDM9x50), a GNSS comparison capture — 3 (6-SV GPS fix)
-  * Telit LM960A18 (SDX20), a drive capture — 1 (cell seed)
+  * v=0x08 — Sierra MC7411 (MDM9x50), a GNSS comparison capture — 3 (6-SV GPS fix)
+  * v=0x08 — Telit LM960A18 (SDX20), a drive capture — 1 (cell seed)
+  * v=0x01 — Quectel EP06A (MDM9240), 8 captures (two F3-armed DPL
+    captures, 186; six cellular edge-case captures, 16) — 202 (DB seed)
 
 Size-invariance ≠ format-invariance: the Layer-1 ``version`` gate rejects a
 future layout at the same length rather than mis-decoding it. PII: lat/lon are
 the device's real position — decoded in full; fixtures carry a 0.0/0.0 sentinel.
+
+Log name: LOG_GNSS_PDSM_EXT_STATUS_BEST_AVAILABLE_INFO
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, fields
 from struct import unpack_from
 from typing import Any
@@ -128,7 +193,7 @@ from diaggrok.codes import LOG_GNSS_PDSM_EXT_STATUS_BEST_AVAILABLE_INFO
 from diaggrok.registry import register
 
 _SIZE = 352
-_VERSION = 0x08
+_VERSIONS = (0x01, 0x08)   # one struct; see § v0x01
 _SV_LIST_OFF = 167
 _SV_LIST_MAX = 80
 
@@ -174,7 +239,7 @@ _VALID_OFFSETS = tuple(sorted(
 
 @dataclass
 class Diag0x15B2:
-    """PDSM best-available-position response (0x15B2) — 352B v=0x08."""
+    """PDSM best-available-position response (0x15B2) — 352B v=0x01 / v=0x08."""
     log_time: int
     version: int
     client_id: int
@@ -200,6 +265,9 @@ class Diag0x15B2:
     unk_93_f32: float | None
     heading_deg: float | None
     heading_unc_deg: float | None
+    heading_raw: float | None
+    heading_unc_raw: float | None
+    heading_raw_unit: str
     cand_magnetic_deviation_deg: float | None
     cand_technology_mask: int | None
     pdop: float | None
@@ -230,12 +298,12 @@ class Diag0x15B2:
     LOG_GNSS_PDSM_EXT_STATUS_BEST_AVAILABLE_INFO, domain="gnss",
     name="0x15B2",
     description=(
-        "LOG_GNSS_PDSM_EXT_STATUS_BEST_AVAILABLE_INFO (0x15B2) — 352B v=0x08; "
+        "LOG_GNSS_PDSM_EXT_STATUS_BEST_AVAILABLE_INFO (0x15B2) — 352B v=0x01/0x08; "
         "the best-available-position response (lat/lon, unc ellipse, "
         "altitude, velocity, DOP, UTC + GPS time, used-SV list), "
-        "F3-grounded (SDX20) + 0x1476 bit-exact (MDM9x50)"
+        "F3-grounded (SDX20, MDM9240) + 0x1476 bit-exact (MDM9x50, MDM9240)"
     ),
-    version=1,
+    version=2,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -244,25 +312,36 @@ class Diag0x15B2:
         "SDX20 ×1). F3-grounded by LM960 lte_rrc_loc_services.c:1765-"
         "1801 prints of the same response (rel/lat/lon/alt/unc_cir/semi-axes/"
         "unc_altitude/tod_ms) + MC7411 same-tick 0x1476 bit-exact on 3/3 "
-        "(lat/lon/alt/heading/speed/vel_u/DOP/week/tow/SV list)."
+        "(lat/lon/alt/heading/speed/vel_u/DOP/week/tow/SV list). v0x01: "
+        "EP06A MDM9240 ×202, same struct, 0x1476 bit-exact 202/202 + F3 "
+        "tm_core.c:12760 PUNC 180/186; heading/heading_unc in radians on v1 "
+        "(== 0x1476 *_rad bit-exact), normalised to degrees."
     ),
     issues=(),
-    fields_identified=38,
-    fields_parsed=38,
+    fields_identified=41,
+    fields_parsed=41,
     field_invariants={
-        "version": {"enum": [_VERSION]},
+        "version": {"enum": list(_VERSIONS)},
         "payload_size": {"enum": [_SIZE]},
     },
 )
 def parse_0x15b2(log_time: int, data: bytes) -> Diag0x15B2 | None:
     if len(data) != _SIZE:
         return None
-    if data[0] != _VERSION:
+    if data[0] not in _VERSIONS:
         return None
     client_id, cdptr = unpack_from('<II', data, 1)
     vals: dict[str, Any] = {}
     for name, voff, fmt in _VALUED:
         vals[name] = unpack_from(fmt, data, voff + 1)[0] if data[voff] else None
+
+    # v1 carries heading/heading_unc in radians; v8 in degrees (§ v0x01).
+    heading_raw, heading_unc_raw = vals['heading_deg'], vals['heading_unc_deg']
+    unit = 'rad' if data[0] == 0x01 else 'deg'
+    if unit == 'rad':
+        for k in ('heading_deg', 'heading_unc_deg'):
+            if vals[k] is not None:
+                vals[k] = math.degrees(vals[k])
 
     sensor = bytes(data[154:162]) if data[_SENSOR_USAGE_VALID] else None
     if data[_SV_LIST_VALID]:
@@ -288,6 +367,9 @@ def parse_0x15b2(log_time: int, data: bytes) -> Diag0x15B2 | None:
         sv_used_list=sv_list,
         gps_week=week,
         gps_tow_ms=tow,
+        heading_raw=heading_raw,
+        heading_unc_raw=heading_unc_raw,
+        heading_raw_unit=unit,
         tail_raw=bytes(data[336:_SIZE]),
         payload_size=len(data),
         **vals,

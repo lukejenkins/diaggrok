@@ -158,8 +158,8 @@ preserved. A shared size does not imply a shared format, so layout is
 dispatched on byte-0 (the version) and size is gated to the per-version length
 as corroboration.
 
-Log name: LOG_NR5G_RRC_SERVING_CELL_INFO
-Also known as: NR5G RRC Serving Cell Info
+Log name: NR5G RRC Serving Cell Info
+Also known as: LOG_NR5G_RRC_SERVING_CELL_INFO
 """
 from __future__ import annotations
 

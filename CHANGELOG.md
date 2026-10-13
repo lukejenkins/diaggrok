@@ -7,6 +7,68 @@ re-typed fields are listed here, even when the new decode is more correct.
 Releases are tagged `vYYYY.MM.DD`. Releases before this file existed
 (`v2026.08.05`, `v2026.08.23`) carry no entries.
 
+## v2026.10.12
+
+Same 187 log codes as `v2026.10.04`; no parser was added or removed.
+
+### Added: opt-in lazy parser import
+
+`import diaggrok` imports every parser module up front (about 1.2 s). Set
+`DIAGGROK_LAZY_PARSERS=1` before the first import to skip that sweep: only the
+parser modules you import yourself are registered. The first lookup of a code
+that is not registered, and any listing (`registered_codes()`,
+`all_parser_info()`), runs the full sweep then, so results are the same, only
+slower on that call. `diaggrok.parsers.load_all()` runs the sweep explicitly.
+⚠️ One gap: a per-version override registered in a module you did not import
+is not seen, so import every module that registers the codes you decode.
+Without the variable nothing changes.
+
+### ⚠️ Breaking: record-shape changes in 2 parsers
+
+Measured by comparing the dataclass fields of each parser as published in
+`v2026.10.04` with this release.
+
+| code | parser | removed | new |
+|---|---|---|---|
+| `0x13C7` | v4 → v5 | `col_peak_value`, `col_peak_value_echo`, `col_peak_energy`, `grid_word12` | `rtc_dwell_ms`, `rtc_dwell_ms_echo`, `code_phase_cx1024`, `doppler_nco_word`, `code_hyp_count`, `noncoh_count`, `threshold`, `cno_x100`, `sv`, `srch_mode`, `grid_cells`, `grid_peak_energy` |
+| `0xB821` | v28 → v29 | `slot` | `subframe`, `sfn_stamped` |
+
+`0x13C7`: the old `col_peak_value` / `col_peak_energy` are a dwell RTC in ms and
+a Cx1024 code phase, now named `rtc_dwell_ms` / `code_phase_cx1024`. `0xB821`:
+the SFN / subframe bit packing was re-derived per payload version against the
+DIAG timestamp; the old `sfn << 4 | slot` reading was wrong on every version, so
+`sfn` values change too.
+
+### Additive field changes
+
+New fields only; no existing field was removed or re-typed.
+
+| code / type | parser | new |
+|---|---|---|
+| `0x1526` | v7 → v8 | `aux_b2_raw`, `aux_b8_23_raw` |
+| `0x15B2` | v1 → v2 | `heading_raw`, `heading_unc_raw`, `heading_raw_unit` |
+| `0x15BD` | v8 → v9 | `V3SubRecord.gps_time_s` |
+| `0xB061` | v3 → v4 | `rach_reason_name` |
+| `0xB062` | v4 → v5 | `preamble_index`, `preamble_target_power_dbm`, `tc_rnti`, `msg3_grant_bytes`, `msg3_mac_pdu`, `msg3_c_rnti`, `msg3_ccch` |
+| `0xB17F` | v12 → v13 | `rsrq_avg` |
+| `0xB195` | v6 → v8 | `sp_version`, `num_cells_word`, `sf_counter`; `LteMl1ConnectedNeighborEntry.pci_flags` |
+| LTE NAS OTA (`0xB0E2` and siblings) | `0xB0E2` v7 → v8 | `LteNasOtaMsg.esm_message_len`, `attach_accept_tail` |
+| LTE RRC SIB2 decode | — | `Sib2AccessParams.ra_response_window_sf`, `max_harq_msg3_tx`, `prach_high_speed_flag`, `prach_zero_correlation_zone_config`, `prach_freq_offset` |
+
+`0xB195`: `num_cells` is now `word & 0x7F` on every layout, replacing a
+body-size heuristic, so its value can change on records the old rule misread.
+
+### Decode changes with no shape change
+
+- `0x1476` (v24 → v25): payload versions `0x04` (1151 B) and `0x0B` (2244 B)
+  now decode on the compact-header path. They were dropped before.
+- `0x14E1` (v5 → v6), `0xB0CD` (v5 → v6): field grounding; same fields.
+- `0xB0C0` (v32 → v34): the payload-version `0x07` channel enum is complete.
+- `0xB193` (v31 → v32): subpacket version 60 decodes on the v59 layout.
+- `registry.check_invariants` uses a `Mapping` result (e.g. `to_dict()`
+  output) as the field map. Before, a plain dict passed every invariant
+  vacuously. A non-`None` result it cannot convert now raises `TypeError`.
+
 ## v2026.10.04
 
 ### Added: 124 log codes

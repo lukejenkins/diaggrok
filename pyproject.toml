@@ -1,6 +1,9 @@
 [project]
 name = "diaggrok"
-version = "2026.10.4"
+# Single-sourced from src/diaggrok/_version.py: two hand-bumped copies
+# drifted (pyproject 2026.8.5 shipped under public tag v2026.08.23). _version.py
+# is also what the carve stamps into EXTRACT_MANIFEST upstream.diaggrok_version.
+dynamic = ["version"]
 description = "Qualcomm DIAG log code parser library"
 license = "Apache-2.0"
 requires-python = ">=3.11"
@@ -9,6 +12,9 @@ dependencies = []
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "diaggrok._version.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

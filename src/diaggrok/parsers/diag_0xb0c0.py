@@ -195,6 +195,28 @@ _NONV20_CHANNEL_NAMES_BY_VERSION: dict[int, dict[int, str]] = {
     # observed in idle windows; other channels await a connected-mode v13
     # capture and render as hex.
     13: {4: "PCCH"},
+    # Foxconn T77W595 (MDM9625, F0.0.0.6.5.VZ.017): v7 (0x07), 93 records / 7
+    # captures, all ct=4, idle-camped on two Band-4 cells. The v<8 narrow header
+    # (pci u16@4, earfcn u16@6, sfn_subfn@8, ct@10, sib_mask@11, msg_length@15,
+    # PDU@17; len-17 == msg_length 93/93). QCSuper byte-join 93/93 positional, all
+    # GSMTAP sub_type=6 (PCCH); SCAT 92/93 byte-identical; stock tshark 93/93
+    # clean Paging. The firmware's own F3 lte_rrc_osys_asn1util.c "pdu_num = 4,
+    # decoded_length = N" fires for every record (pdu_num == ct 93/93), followed
+    # by LTE_MAC_RRC_PCCH_DL_DATA_IND 93/93. Only PCCH is observed in the idle
+    # windows; other v7 channels await a connected-mode capture and render as hex.
+    # A SIM-in capture through a full LTE attach
+    # (QMI UIM power-cycle → RRCConnectionRequest/Setup/SetupComplete+Attach
+    # request → auth → SMC → Reconfiguration → Release) completes the enum,
+    # 84 records / 2 captures, three oracles agreeing with no contradiction:
+    # qcsuper byte-join 84/84 positional (ct 2/4/5/6/7/8 → GSMTAP sub_type
+    # 5/6/0/1/2/3), stock tshark message content per channel, and the firmware's
+    # own same-tick 0x60 EVENT_LTE_RRC_DL_MSG/UL_MSG channel byte (ct 2→1 BCCH
+    # 12/15 (the rest are same-SI repeats logged without a second event), 4→2
+    # PCCH 45/46, 5→3 DL-CCCH 2/2, 6→4 DL-DCCH 11/11, 7→5 UL-CCCH 2/2, 8→6
+    # UL-DCCH 8/8). F3 "pdu_num" (downlink decodes only) == ct 44/44 on ct
+    # 2/4/5/6. UL records carry sfn_subfn = 0.
+    7: {2: "BCCH-DL-SCH", 4: "PCCH", 5: "DL-CCCH", 6: "DL-DCCH",
+        7: "UL-CCCH", 8: "UL-DCCH"},
     # MikroTik R11e-LTE-US (MDM9207-class LTE Cat-4): 18 records, all ct=5, from
     # a single serving-cell capture on one unit. A QCSuper byte-join on that
     # capture emits 18 GSMTAP LTE-RRC frames, all sub_type=6 (PCCH), each RRC PDU
@@ -577,19 +599,19 @@ class Diag0xB0C0:
 # EM120R-GL/EM160R-GL SDX24; 206 records / 10 captures, see the v24 channel
 # map). Any other version returns None so the registry dispatch warning fires
 # instead of a silent record.
-_VERSIONS_B0C0_4918: tuple[int, ...] = (0x02, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x14, 0x18, 0x1A, 0x1B, 0x1E)
+_VERSIONS_B0C0_4918: tuple[int, ...] = (0x02, 0x07, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x14, 0x18, 0x1A, 0x1B, 0x1E)
 
 
 @register(LOG_LTE_RRC_OTA_MSG, domain="rrc",
     name="0xB0C0",
     description="Standard LTE RRC Over-The-Air message with ASN.1 PER-encoded content",
-    version=32,
+    version=34,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Reverse-engineered from captures across eleven wire versions (0x02, "
-        "0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x14, 0x18, 0x1A, 0x1B, 0x1E) on MDM9600, "
+        "Reverse-engineered from captures across twelve wire versions (0x02, 0x07, "
+        "0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x14, 0x18, 0x1A, 0x1B, 0x1E) on MDM9600, MDM9625, "
         "MDM9230, MDM9207, MDM9x40, MDM9x50, MDM9607, SDX20, SDX24, SDX55, SDX62 "
         "and SDX72 modules, cross-referenced with the QCSuper and SCAT parsers. "
         "Every header byte is accounted for: version, rrc_release, "
@@ -621,7 +643,7 @@ _VERSIONS_B0C0_4918: tuple[int, ...] = (0x02, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x14
         "and deep-decoded in-band (SIB1-9/16/24, NAS tunnel, measConfig, "
         "MeasurementReport). Known gaps: v20 channel values 1/3/4 (incl. "
         "BCCH-BCH) and rare v12 byte[12] values 12-15 are unobserved or "
-        "unconfirmed and render as hex; v13, v14 and v30 have only idle-mode "
+        "unconfirmed and render as hex; v7, v13, v14 and v30 have only idle-mode "
         "channels pinned; on v15 byte[3] shows the radio-bearer partition but "
         "is still reported as rrc_ver_minor."
     ),
@@ -644,7 +666,7 @@ _VERSIONS_B0C0_4918: tuple[int, ...] = (0x02, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x14
     # measConfig, MeasurementReport).
     fields_identified=20,
     fields_parsed=20,
-    field_invariants={"version": {"enum": [0x02, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x14, 0x18, 0x1A, 0x1B, 0x1E]}},
+    field_invariants={"version": {"enum": [0x02, 0x07, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x14, 0x18, 0x1A, 0x1B, 0x1E]}},
 )
 def parse_0xb0c0(log_time: int, data: bytes) -> Diag0xB0C0 | None:
     """Parse 0xB0C0 - LTE RRC OTA Message.
@@ -652,7 +674,7 @@ def parse_0xb0c0(log_time: int, data: bytes) -> Diag0xB0C0 | None:
     Version 20 (primary, SDX20/MDM9607/SDX55):
         Fixed 19-byte header with u32 EARFCN at offset 6.
 
-    Other versions (2, 9, 12, 13, 14, 15, 24, 26, 27, 30):
+    Other versions (2, 7, 9, 12, 13, 14, 15, 24, 26, 27, 30):
         Variable header with version-dependent EARFCN width and SIB mask.
         Based on QCSuper's multi-version approach.
     """
@@ -740,7 +762,10 @@ def parse_0xb0c0(log_time: int, data: bytes) -> Diag0xB0C0 | None:
         # Complete, SetupComplete, Release - TS 36.331 sends these on SRB1 only),
         # 2 only on a ciphered DL/ULInformationTransfer (NAS on SRB2). v15 shows
         # the same partition, but there rrc_ver_minor is still reported as-is.
-        if version == 24:
+        # v7 (T77W595 / MDM9625) has the same byte[3] partition, 84/84 records:
+        # 0 on BCCH/PCCH/CCCH, 1 on every SRB1-only message,
+        # 2 only on a ciphered DLInformationTransfer.
+        if version in (7, 24):
             radio_bearer_id = data[3]
 
     if ext_offset + 5 > len(data):

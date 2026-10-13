@@ -480,6 +480,13 @@ class LteNasOtaMsg:
     # records and for ESM msg_types with no dedicated body decoder (the typed
     # header still surfaces inside esm_body for those).
     esm_body: dict[str, Any] | None = None
+    # Attach-time 0xC1: the record runs on past the ESM message to the
+    # end of the enclosing Attach Accept. ``esm_message_len`` is where the ESM
+    # message ends in ``nas_pdu`` (esm_body covers only that part) and
+    # ``attach_accept_tail`` decodes the Attach Accept optional IEs after it.
+    # Both None when nothing follows the ESM message.
+    esm_message_len: int | None = None
+    attach_accept_tail: dict[str, Any] | None = None
     # ID-only ``type`` string set by per-code parser.
     type_name: str = "LteNasOtaMsg"
 
@@ -514,6 +521,9 @@ class LteNasOtaMsg:
             d['emm_body'] = self.emm_body
         if self.esm_body is not None:
             d['esm_body'] = self.esm_body
+        if self.attach_accept_tail is not None:
+            d['esm_message_len'] = self.esm_message_len
+            d['attach_accept_tail'] = self.attach_accept_tail
         return d
 
 
@@ -614,9 +624,24 @@ def _parse_nas_ota(
     # decoder the 0xB0EC/0xB0ED Attach-Accept ESM *container* already uses, now
     # wired for the standalone 0xB0E2/0xB0E3 ESM-OTA codes.
     esm_body: dict[str, Any] | None = None
+    esm_message_len: int | None = None
+    attach_accept_tail: dict[str, Any] | None = None
     if prot_disc == 2:
-        from diaggrok.parsers._nas_l3 import decode_esm_message
-        esm_body = decode_esm_message(nas_pdu)
+        from diaggrok.parsers._nas_l3 import (
+            decode_esm_message,
+            esm_activate_default_bearer_length,
+        )
+        esm_pdu = nas_pdu
+        # An attach-time Activate default EPS bearer context request is logged
+        # with the rest of its Attach Accept after it: decode the ESM
+        # message alone and the Attach Accept optional IEs separately.
+        c1_len = esm_activate_default_bearer_length(nas_pdu)
+        if c1_len is not None and c1_len < len(nas_pdu):
+            from diaggrok.parsers.lte_nas_emm import decode_attach_accept_optional
+            esm_pdu = nas_pdu[:c1_len]
+            esm_message_len = c1_len
+            attach_accept_tail = decode_attach_accept_optional(nas_pdu[c1_len:])
+        esm_body = decode_esm_message(esm_pdu)
 
     return LteNasOtaMsg(
         log_time=log_time,
@@ -641,5 +666,7 @@ def _parse_nas_ota(
         payload_size=len(data),
         emm_body=emm_body,
         esm_body=esm_body,
+        esm_message_len=esm_message_len,
+        attach_accept_tail=attach_accept_tail,
         type_name=type_name,
     )

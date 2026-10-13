@@ -51,6 +51,7 @@ _RA_PREAMBLES = [4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64]
 _POWER_RAMPING_STEP_DB = [0, 2, 4, 6]
 _PREAMBLE_INIT_POWER_DBM = list(range(-120, -88, 2))  # dBm-120..dBm-90, 16 vals
 _PREAMBLE_TRANS_MAX = [3, 4, 5, 6, 7, 8, 10, 20, 50, 100, 200]
+_RA_RESPONSE_WINDOW_SF = [2, 3, 4, 5, 6, 7, 8, 10]
 _AC_BARRING_FACTOR_PCT = [0, 5, 10, 15, 20, 25, 30, 40,
                           50, 60, 70, 75, 80, 85, 90, 95]
 _AC_BARRING_TIME_S = [4, 8, 16, 32, 64, 128, 256, 512]
@@ -82,8 +83,13 @@ class Sib2AccessParams:
     power_ramping_step_db: int | None = None
     preamble_initial_target_power_dbm: int | None = None
     preamble_trans_max: int | None = None
+    ra_response_window_sf: int | None = None
+    max_harq_msg3_tx: int | None = None
     prach_root_sequence_index: int | None = None
     prach_config_index: int | None = None
+    prach_high_speed_flag: bool | None = None
+    prach_zero_correlation_zone_config: int | None = None
+    prach_freq_offset: int | None = None
     reference_signal_power_dbm: int | None = None
     ul_carrier_freq: int | None = None          # ARFCN-ValueEUTRA (TDD: absent)
     ul_bandwidth_rb: int | None = None
@@ -106,7 +112,10 @@ class Sib2AccessParams:
                   'ac_barring_mo_data_time_s',
                   'number_of_ra_preambles', 'power_ramping_step_db',
                   'preamble_initial_target_power_dbm', 'preamble_trans_max',
+                  'ra_response_window_sf', 'max_harq_msg3_tx',
                   'prach_root_sequence_index', 'prach_config_index',
+                  'prach_high_speed_flag', 'prach_zero_correlation_zone_config',
+                  'prach_freq_offset',
                   'reference_signal_power_dbm', 'ul_carrier_freq',
                   'ul_bandwidth_rb', 'additional_spectrum_emission',
                   't300_ms', 't301_ms', 't310_ms', 'n310', 't311_ms', 'n311'):
@@ -278,7 +287,7 @@ def _skip_rach_config_common(r: UperReader, out: Sib2AccessParams) -> None:
     if pi_opt & 1:  # preamblesGroupAConfig (extensible)
         pga_ext = r.read_bool()
         r.read_enum(15)   # sizeOfRA-PreamblesGroupA: 15 values
-        r.read_enum(8)    # messageSizeGroupA: ENUMERATED (4 values → b56, b144, b208, b256)
+        r.read_enum(4)    # messageSizeGroupA: ENUMERATED {b56, b144, b208, b256} = 2 bits
         r.read_enum(8)    # messagePowerOffsetGroupB: ENUMERATED (8 values)
         if pga_ext:
             skip_extension_additions(r)
@@ -290,10 +299,10 @@ def _skip_rach_config_common(r: UperReader, out: Sib2AccessParams) -> None:
 
     # ra-SupervisionInfo (not extensible)
     out.preamble_trans_max = _lut(_PREAMBLE_TRANS_MAX, r.read_enum(11))
-    r.read_enum(8)    # ra-ResponseWindowSize: 8 values
+    out.ra_response_window_sf = _lut(_RA_RESPONSE_WINDOW_SF, r.read_enum(8))
     r.read_enum(8)    # mac-ContentionResolutionTimer: 8 values
 
-    r.read_constrained_int(1, 8)  # maxHARQ-Msg3Tx
+    out.max_harq_msg3_tx = r.read_constrained_int(1, 8)
 
     if rach_ext:
         skip_extension_additions(r)
@@ -332,9 +341,9 @@ def _skip_prach_config(r: UperReader, out: Sib2AccessParams) -> None:
     out.prach_root_sequence_index = r.read_constrained_int(0, 837)
     # PRACH-ConfigInfo (not extensible)
     out.prach_config_index = r.read_constrained_int(0, 63)
-    r.read_bool()                     # highSpeedFlag
-    r.read_constrained_int(0, 15)    # zeroCorrelationZoneConfig
-    r.read_constrained_int(0, 94)    # prach-FreqOffset
+    out.prach_high_speed_flag = r.read_bool()
+    out.prach_zero_correlation_zone_config = r.read_constrained_int(0, 15)
+    out.prach_freq_offset = r.read_constrained_int(0, 94)
 
 
 def _skip_pdsch_config_common(r: UperReader, out: Sib2AccessParams) -> None:
