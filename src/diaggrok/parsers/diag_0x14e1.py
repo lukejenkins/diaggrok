@@ -14,16 +14,43 @@ Provenance:
 - Observed on Sierra EM7511 (SWI9X50C), Telit LM960, Quectel EP06,
   EG18-NA (SDX20 V2), EG12-GT (SDX20) and EG25-G (MDM9607), and FN980m
   (SDX55). Every record is v=0x02, fixed 259 B.
-- No F3 grounding is available for this code. Across all 20
-  0x14E1-bearing captures (1,136 records) none carries usable F3: the
-  OEM-DRE-enabled builds that emit it (EM7511, LM960, EP06, EG18-NA) emit
-  no plaintext 0x79 and have no build-matched message database for their
-  0x99 QSR4 stream. The 0x79-plaintext candidates an F3 extractor finds on
-  the EM7511 and LM960 captures (69 and 60 frames) have no printable site
-  or format string — they are false positives on binary payload, not real
-  F3. Grounding the deep SV-poly fields against F3 needs an OEM-DRE GNSS
-  capture from a build whose F3 resolves. The fields are instead grounded
-  against independent survey-grade geometry (see the class docstring).
+- **F3-grounded (v0x02).** An earlier note said no
+  F3 was available: across the first 20 bearing captures none had usable F3.
+  That no longer holds. Three builds now carry 0x14E1 next to resolvable F3:
+  EG18-NA SDX20 V2 and EG25-G MDM9607 A0.301 (plaintext 0x79), and the
+  Wistron/WNC 81UMV91M21 (MDM9150) build v00.02.00.02 (0x99 resolved by qdb
+  ``d2116626``). The 81UMV91M21 data comes from two sessions of the **same
+  81UMV91M21 modem**, the same physical unit: the bench/OTA captures and
+  the Kapsch RIS-9260 RSU that hosts it (``cross_device_for_logcodes:
+  false``). It is one modem and one build, not two. The firmware's
+  SV-poly pipeline prints three sites around every record:
+
+  - ``lm_mgp.c`` "=LM TASK= Received SV POLY REPORT from MGP" fires exactly
+    once per record in the same diag tick: 283/283, 16/16 and 35/35, with
+    0 hits on a +3 s control. On the EG18-NA the per-tick print count
+    equals the per-tick record count on 60/65 ticks (shifted control 2/65).
+  - ``mgp_pe_common.c`` "CD: SV Poly Post: <sv>, Flg:<f>" (GPS only) names
+    ``sv_id`` and **``flags``**. ``<f>`` equals the record's flags byte on
+    **557/557** posted GPS records over 3 builds: EG18-NA 206, EG25-G
+    287+36, 81UMV91M21 18 (bench session) + 10 (RIS-9260 session).
+  - ``cd_svcalc.c`` / ``cd_glosvcalc.c`` "Sat Pos from <Eph|Almanac|Xtra3>
+    data. SV %u SVPolyFlags 0x%d" is the compute-time print. It names the
+    SV, the flags (printed in DECIMAL behind a ``0x``: ``0x15`` is 0x0F and
+    ``0x79`` is 0x4F) and the orbit source. GLONASS uses the record's own
+    65..96 ``sv_id`` encoding. The record ``sv_id`` stream aligns in order
+    to this SV stream on 282/283, 16/16 and 35/35 records (control, SVs
+    rotated within each tick: 100/283, 12/16, 16/35). Diag ticks are
+    batch-quantized and a record can trail its print by one 1.25 ms tick,
+    so per-record time windows cannot pair SVs. Every aligned source was
+    ``Eph``.
+
+  Caveats, measured: on 4/75 EG18-NA GLONASS records the compute print reads
+  flags 0 while the record carries 0x4F. These are repeated intermediate
+  recomputes at an ephemeris boundary (one "Compute polynomial", then
+  repeated flags-0 prints), and the posted record is finalized later. In
+  the RIS-9260 session of the same 81UMV91M21 modem the compute-time flags
+  are 0x2F/0x6F but the posted flags and the record are 0x0F/0x4F (10/10,
+  6/6), so post-time processing clears bit 5 in that session. ``0x60`` events are silent: no SV-poly event exists in ``event_defs.h``.
 - The ``other`` SV-clock-polynomial grounding (r=-1.0000 on EG25-G MDM9607)
   holds on a third chipset family, Quectel EG18-NA SDX20 V2, from an
   extended capture (283 SVPOLY + 5,406 0x14DE records, same-antenna
@@ -142,6 +169,20 @@ class Diag0x14E1:
       Galileo 0/3) — the frequency-slot-valid flag for the only FDMA
       constellation (the 4 GLONASS records with bit6 clear are SVs whose
       freq slot isn't yet resolved).
+    - ``flags`` is **F3-labelled** as the firmware's SV-poly flags word. It
+      equals the ``CD: SV Poly Post ... Flg:`` value on 557/557 posted
+      records across 3 builds (see the module docstring).
+    - ``flags`` bit 5 (0x20) is **unnamed, kept raw**. On Wistron 81UMV91M21
+      firmware v00.02.00.02 the compute-time ``SVPolyFlags`` carries it on
+      every SV (0x2F GPS, 0x6F GLONASS). Whether it is posted depends on the
+      **session**, not on the device. The bench/OTA sessions post it
+      (records 0x2F/0x6F, 113/125). The RIS-9260 sessions of the same
+      81UMV91M21 modem (same physical unit) clear it before posting
+      (records 0x0F/0x4F). So it reflects runtime state or configuration.
+      No qdb print names the bit.
+    - The low nibble is **not quite universal**: LM960 (32.01.1X0) emits 4
+      records with ``flags`` 0x09 (bits 1 and 2 clear). No F3 is available
+      on that build, so these are left raw.
     - ``flags`` bit 4 (0x10) is a **predicted/extrapolated-orbit
       indicator, emitted only by the Sierra EM7511 (MDM9650/SDX20-X16)
       OEM-DRE — NEVER by the MDM9607/MDM9x40 firmware.** An exhaustive
@@ -325,11 +366,11 @@ class Diag0x14E1:
 @register(LOG_GNSS_OEMDRE_SVPOLY_REPORT,
     name="0x14E1",
     description="Full polynomial orbit, iono/SBAS iono/tropo delays, elevation dynamics, velocity coefficients, and SV clock-correction polynomial (ms) per SV; validated on EG18-NA SDX20 V2; other[]=SV clock poly grounded r=-1.0000 vs LG290P geometry",
-    version=5,
+    version=6,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
-    source_detail="Clean-room RE: the 259-byte SV-poly struct layout is established from GNSS DIAG captures (constellation-derived SV identity check, MEO orbital geometry), not from third-party decoder source, and validated on EG18-NA SDX20 V2. The 'other' 4-float group is the SV clock-correction polynomial in ms, grounded by non-circular pseudorange geometry on an EG25-G MDM9607 with an LG290P survey-grade reference (0x14DE PR − geometric range to the survey fix, SV pos from this record's xyz0+xyzN poly, correlates with other[0] at r=-1.0000, slope exactly -c×1e-3 m/ms, n=2610, post-clock residual 15.7 m RMS) and reproduced on EG18-NA SDX20 V2 for GPS and GLONASS; other[1]=drift ≡ GPS af1; sv_clock_bias_ms is derived. xyz0 and elevation agree with LG290P-referenced geometry (0.000° self-consistency, <1° mean vs co-temporal 0x14DE az/el). No F3 is available for the emitting builds. Payloads shorter than the fixed 259 B struct return None (registry WARN).",
+    source_detail="Clean-room RE: the 259-byte SV-poly struct layout is established from GNSS DIAG captures (constellation-derived SV identity check, MEO orbital geometry), not from third-party decoder source, and validated on EG18-NA SDX20 V2. The 'other' 4-float group is the SV clock-correction polynomial in ms, grounded by non-circular pseudorange geometry on an EG25-G MDM9607 with an LG290P survey-grade reference (0x14DE PR − geometric range to the survey fix, SV pos from this record's xyz0+xyzN poly, correlates with other[0] at r=-1.0000, slope exactly -c×1e-3 m/ms, n=2610, post-clock residual 15.7 m RMS) and reproduced on EG18-NA SDX20 V2 for GPS and GLONASS; other[1]=drift ≡ GPS af1; sv_clock_bias_ms is derived. xyz0 and elevation agree with LG290P-referenced geometry (0.000° self-consistency, <1° mean vs co-temporal 0x14DE az/el). F3-grounded v0x02: the record's flags byte equals the firmware's 'CD: SV Poly Post ... Flg:' print on 557/557 posted records across 3 builds (EG18-NA, EG25-G A0.301, 81UMV91M21 v00.02.00.02; its bench and RIS-9260 sessions are the same 81UMV91M21 modem). Exactly one 'Received SV POLY REPORT from MGP' print accompanies each record in the same tick, and the sv_id stream aligns in order with the 'Sat Pos from Eph data. SV %u SVPolyFlags' prints. Payloads shorter than the fixed 259 B struct return None (registry WARN).",
     issues=(),
     primary_issue=None,
     # 43 binary fields per _SVPOLY_FIELDS (5 header + 1 t0 + 3 xyz0 + 9 xyzN
@@ -340,8 +381,9 @@ class Diag0x14E1:
     fields_identified=43,
     fields_parsed=43,
     supported_versions=[0x02],
-    # Corpus-wide byte+0 invariant (1,191 records, all
-    # version=0x02). Defensive gate against future polynomial-struct
+    # Corpus-wide byte+0 invariant (2,719 records walked over 48 captures and
+    # 10 builds, all version=0x02 and 259 B; the manifest gives
+    # 7,216 records over 86 captures). Defensive gate against future polynomial-struct
     # drift under a new version byte.
     field_invariants={'version': {'enum': [0x02]}},
 )

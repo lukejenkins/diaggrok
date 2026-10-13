@@ -66,6 +66,8 @@ a future firmware shipping a new layout at the same length under a new version
 byte; the Layer-1 ``version`` gate rejects that rather than mis-decoding it.
 The body [5:21] has never been observed populated — no populated fixture exists,
 so no body byte is pinned.
+
+Log name: LOG_GNSS_PDSM_BEST_AVAILABLE_INFO
 """
 from __future__ import annotations
 

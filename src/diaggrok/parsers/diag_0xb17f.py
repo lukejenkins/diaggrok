@@ -26,20 +26,21 @@ from typing import Any
 
 from diaggrok.registry import register
 
-# byte-0 version/layout discriminator — both values observed at
-# size>4: 0x05 (size 40, 49,990 records) and 0x03 (size 32, 612 records). byte-0
-# co-varies with payload size, so it is the de-facto version/sub-layout field.
-_B17F_VERSIONS_OBSERVED = (0x03, 0x05)
+# byte-0 version/layout discriminator, co-varying with payload size:
+# 0x05 (40 B, 156,836 records), 0x03 (32 B, 794 records, MDM9200) and
+# 0x04 (36 B, 423 records, MDM9625 T77W595).
+_B17F_VERSIONS_OBSERVED = (0x03, 0x04, 0x05)
 
-# byte-0 co-varies with payload size: 0x05 -> 40 B, 0x03 -> 32 B. The two
-# layouts carry the SAME semantic record with different field widths — v0x03
-# (older MDM9200 / Sierra MC7700 packing) uses 16-bit identity fields where
-# v0x05 uses 32-bit, so everything after byte 4 shifts down 4 bytes and v0x05's
-# trailing @36 word is absent (40 - 4 - 4 = 32). Each layout is decoded by its
-# own branch in parse_0xb17f(); applying one layout's offsets to the other
-# emits garbage.
+# The three layouts carry the SAME semantic record with different field
+# widths. v0x03 (MDM9200 / Sierra MC7700) and v0x04 (MDM9625 / Foxconn T77W595)
+# use 16-bit identity fields where v0x05 uses 32-bit, so everything after byte
+# 4 sits 4 bytes lower. v0x04 is v0x05 minus those 4 bytes (36 B); v0x03
+# also lacks the final trailing word (32 B).
+# Applying v0x05's offsets to a narrow-identity frame emits garbage.
 _B17F_V05_SIZE = 40
+_B17F_V04_SIZE = 36
 _B17F_V03_SIZE = 32
+_B17F_SIZES = {0x03: _B17F_V03_SIZE, 0x04: _B17F_V04_SIZE, 0x05: _B17F_V05_SIZE}
 
 
 @dataclass
@@ -48,8 +49,6 @@ class Diag0xB17F:
 
     `earfcn` is the u32-LE at byte-offset 4. DIAG×AT correlation against
     serving-cell EARFCN sets confirms this is the cell-attribution field.
-    For payloads < 8B the byte-1 fallback applies; for < 2B
-    the slot is 0 — match the `_simple_parser` factory's parse contract.
 
     `pci` is the low 9 bits of the u32-LE at byte-offset 8 = the cell's
     PhysCellID; 0 on payloads < 12 B. Together `(earfcn, pci)`
@@ -60,19 +59,39 @@ class Diag0xB17F:
     The measurement block uses 12-bit fixed-point subfields of a
     u32 — the same convention as sibling 0xB193:
 
-        rsrp = (u32@12       & 0xFFF) / 16 - 180   dBm
-        rsrq = ((u32@20>>20) & 0xFFF) / 16 -  30   dB
-        rssi = ((u32@24>>10) & 0xFFF) / 16 - 110   dBm
+        rsrp     = (u32@12       & 0xFFF) / 16 - 180   dBm
+        rsrq     = (u32@20       & 0x3FF) / 16 -  30   dB
+        rsrq_avg = ((u32@20>>20) & 0x3FF) / 16 -  30   dB
+        rssi     = ((u32@24>>10) & 0xFFF) / 16 - 110   dBm
 
-    v0x03 carries the SAME fields at DIFFERENT offsets — a 32 B layout with
-    16-bit identity fields (older MDM9200 / Sierra MC7700 packing), everything
-    after byte 4 shifted down 4 bytes:
+    v0x03 (32 B, MDM9200 / Sierra MC7700) and v0x04 (36 B, MDM9625 / Foxconn
+    T77W595) carry the SAME fields with 16-bit identity, so everything after
+    byte 4 sits 4 bytes lower:
 
-        earfcn = u16@4
-        pci    = u16@6 & 0x1FF
-        rsrp   = (u32@8        & 0xFFF) / 16 - 180   dBm
-        rsrq   = ((u32@16>>20) & 0xFFF) / 16 -  30   dB
-        rssi   = ((u32@20>>10) & 0xFFF) / 16 - 110   dBm
+        earfcn   = u16@4
+        pci      = u16@6 & 0x1FF
+        rsrp     = (u32@8        & 0xFFF) / 16 - 180   dBm
+        rsrq     = (u32@16       & 0x3FF) / 16 -  30   dB
+        rsrq_avg = ((u32@16>>20) & 0x3FF) / 16 -  30   dB
+        rssi     = ((u32@20>>10) & 0xFFF) / 16 - 110   dBm
+
+    **`rsrp` is the best rx branch.** On the T77W595 v0x04 records the
+    co-emitted 0xB196 cell carries rsrp_rx0 / rsrp_rx1 / rsrp, and 0xB17F
+    `rsrp` == max(rx0, rx1) on 235/235 (== rx1 on 183 of them). F3
+    `lte_ml1_common_ant_switch.c:2766` "ML1 ASDiv: Filtered RSRP0" == 0xB196
+    rsrp_rx0 within 1/32 dB on 232/232, so it matches 0xB17F `rsrp` only on the
+    cell where rx0 is the stronger branch (46/46 on PCI 221).
+
+    **RSRQ.** The rsrq word is three 10-bit fields. Bits 0..9 (==
+    bits 10..19) are the rsrq that 0xB196 carries: 235/235 on v0x04, vs 60/235
+    for bits 20..29. Bits 20..29 is `rsrq_avg`, a slower tap: same mean, about
+    half the step variance and a higher lag-1 autocorrelation (v0x04 PCI 242:
+    var(Δ) 3.2-3.6 vs 7.4-7.6, autocorr 0.42-0.53 vs 0.16-0.23). On memcpy
+    chipsets the two are equal. Parser <= v12 read bits 20..29 as `rsrq`.
+
+    v0x04 (MDM9625) separates both tap pairs only in some regimes: rsrp/rsrp_avg
+    and rsrq/rsrq_avg are equal on 235/235 records of a 1.28 s DRX camp (PCI
+    221) and differ on 104/188 and 175/188 records at 640 ms DRX (PCI 242).
 
     Each layout is decoded by its own version branch; a payload too short for
     its layout is truncated and the parser returns None. Applying the
@@ -114,6 +133,7 @@ class Diag0xB17F:
     rsrp: float | None
     rsrp_avg: float | None
     rsrq: float | None
+    rsrq_avg: float | None
     rssi: float | None
     data_density: float
     payload_size: int
@@ -129,6 +149,7 @@ class Diag0xB17F:
             "rsrp": self.rsrp,
             "rsrp_avg": self.rsrp_avg,
             "rsrq": self.rsrq,
+            "rsrq_avg": self.rsrq_avg,
             "rssi": self.rssi,
             "data_density": self.data_density,
             "payload_size": self.payload_size,
@@ -143,13 +164,14 @@ class Diag0xB17F:
     name="0xB17F",
     wigle_direct=True,
     wigle_roles=("signal", "pci-earfcn-bridge", "rat-context"),
-    description="0xB17F — LTE ML1 per-cell measurement record (fixed 40B; earfcn+pci identity + rsrp/rsrp_avg/rsrq/rssi; canonical name contested, see docstring; legacy mislabel LtePdcpB17F)",
-    version=12,
+    description="0xB17F — LTE ML1 per-cell measurement record (fixed 32/36/40 B by version; earfcn+pci identity + rsrp/rsrp_avg/rsrq/rsrq_avg/rssi; canonical name contested, see docstring; legacy mislabel LtePdcpB17F)",
+    version=13,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Two fixed layouts keyed on byte 0: v0x05 (40 B) and v0x03 (32 B, the "
+        "Three fixed layouts keyed on byte 0: v0x05 (40 B), v0x04 (36 B, "
+        "MDM9625 / Foxconn T77W595, 16-bit identity like v0x03) and v0x03 (32 B, the "
         "older MDM9200 / Sierra MC7700 packing with 16-bit identity fields and "
         "everything after byte 4 shifted down 4 bytes). earfcn = u32@4 (v0x05) "
         "/ u16@4 (v0x03), first attributed by LM960A18 DIAG×AT correlation; "
@@ -181,22 +203,32 @@ class Diag0xB17F:
         "Separation is chipset-dependent: FN980/SDX55 and CFW-3212/SDX62 write "
         "two distinct taps; RM520N-GL/RM500Q-AE, LM960/SDX20 and MDM9200 v0x03 "
         "copy one value into both. Neither tap is the ML1 rsrp_inst (F3 ~1 dB "
-        "above both), and the words are not an rx0/rx1 split. Payloads shorter "
+        "above both), and the words are not an rx0/rx1 split. v0x04 (423 records, "
+        "7 T77W595 captures): earfcn/pci == 0xB196 and the 0xB0C0-grounded cells "
+        "(2050, 221) / (2300, 242) 423/423; rsrp == max(0xB196 rsrp_rx0, rsrp_rx1) "
+        "235/235 and rssi == 0xB196 rssi 235/235; F3 ant_switch.c:2766 'Filtered "
+        "RSRP0' == rsrp_rx0 within 1/32 dB on 232/232. rsrq = bits 0..9 of the rsrq "
+        "word (== 0xB196 rsrq 235/235); bits 20..29 = rsrq_avg, a slower "
+        "tap (about half the step variance). Payloads shorter "
         "than the fixed layout return None (registry warning)."
     ),
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=7,
-    fields_parsed=7,
+    fields_identified=8,
+    fields_parsed=8,
     field_invariants={
         "version": {"enum": list(_B17F_VERSIONS_OBSERVED)},
         "earfcn": {"range": (0, 262143)},
         "pci": {"range": (0, 511)},
-        "rsrp": {"range": (-140.0, -30.0)},
-        "rsrp_avg": {"range": (-140.0, -30.0)},
+        # -160: TS 36.133 reports RSRP down to -156 dBm; 39 real RM500Q cells
+        # sit at -141.x (RSRQ ~-28). rssi 0: FN980 wardrive reaches -15 dBm
+        # next to a tower (RSRP -45).
+        "rsrp": {"range": (-160.0, -30.0)},
+        "rsrp_avg": {"range": (-160.0, -30.0)},
         "rsrq": {"range": (-40.0, 0.0)},
-        "rssi": {"range": (-130.0, -20.0)},
+        "rsrq_avg": {"range": (-40.0, 0.0)},
+        "rssi": {"range": (-130.0, 0.0)},
     },
 )
 def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
@@ -209,57 +241,39 @@ def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
     # Each version is a fixed layout (v0x03 32 B, v0x05 40 B); a shorter
     # payload is truncated -> None (registry warning) instead of a record
     # with the measurement block silently None.
-    if len(data) < (_B17F_V03_SIZE if version == 0x03 else _B17F_V05_SIZE):
+    if len(data) < _B17F_SIZES[version]:
         return None
-    rsrp = rsrp_avg = rsrq = rssi = None
-    if version == 0x03:
-        # v0x03 — older MDM9200 (Sierra MC7700) packing: 16-bit identity
-        # fields where v0x05 uses 32-bit. Reading v0x05's u32@4 earfcn /
-        # u32@8 pci out of a v0x03 frame gives a 9-digit garbage channel
-        # number on 794/794 corpus records.
-        # Every field is v0x05's shifted down 4 bytes (identity halved u32->u16):
-        #   earfcn u16@4, pci u16@6, rsrp u32@8 (doubled @12), rsrq u32@16,
-        #   rssi u32@20 — 32 B total (v0x05's trailing @36 word is absent).
-        if len(data) >= 6:
-            earfcn = unpack_from('<H', data, 4)[0]
-        elif len(data) >= 2:
-            earfcn = data[1]
-        else:
-            earfcn = 0
-        pci = (unpack_from('<H', data, 6)[0] & 0x1FF) if len(data) >= 8 else 0
-        if len(data) >= _B17F_V03_SIZE:
-            rsrp = (unpack_from('<I', data, 8)[0] & 0xFFF) / 16 - 180
-            # rsrp_avg — the slower/averaged filter tap. In v0x03's
-            # shifted layout it is u32@12 (the doubled RSRP word after rsrp@8);
-            # MDM9200 memcpies it so rsrp_avg == rsrp on all 794 v0x03 records.
-            rsrp_avg = (unpack_from('<I', data, 12)[0] & 0xFFF) / 16 - 180
-            rsrq = ((unpack_from('<I', data, 16)[0] >> 20) & 0xFFF) / 16 - 30
-            rssi = ((unpack_from('<I', data, 20)[0] >> 10) & 0xFFF) / 16 - 110
+    rsrp = rsrp_avg = rsrq = rsrq_avg = rssi = None
+    # v0x03 and v0x04 share the 16-bit identity packing; v0x05 widens it to u32
+    # and moves the measurement block down 4 bytes.
+    if version in (0x03, 0x04):
+        # Reading v0x05's u32@4 earfcn / u32@8 pci out of a v0x03 frame gives a
+        # 9-digit garbage channel number on 794/794 corpus records.
+        earfcn = unpack_from('<H', data, 4)[0]
+        pci = unpack_from('<H', data, 6)[0] & 0x1FF
+        base = 8
     else:
-        # v0x05 — 32-bit identity fields.
-        if len(data) >= 8:
-            earfcn = unpack_from('<I', data, 4)[0]
-        elif len(data) >= 2:
-            earfcn = data[1]
-        else:
-            earfcn = 0
+        earfcn = unpack_from('<I', data, 4)[0]
         # pci = low 9 bits of the u32-LE @8. The upper bits carry an
         # unidentified field (observed {0, 2, 3, 4, 6}) — masking them off is what
         # keeps this in-range; the raw u16@8 reads 3308 on EG25-G/CFW-3212 where
-        # the AT-attested serving PCI is 236. Absent on any payload < 12 B.
-        pci = (unpack_from('<I', data, 8)[0] & 0x1FF) if len(data) >= 12 else 0
-        # Measurement block — 12-bit subfields of a u32, the same
-        # fixed-point convention as sibling 0xB193. Gated to the v0x05 /
-        # 40 B layout: v0x03's measurements live at different offsets (see above).
-        if version == 0x05 and len(data) >= _B17F_V05_SIZE:
-            rsrp = (unpack_from('<I', data, 12)[0] & 0xFFF) / 16 - 180
-            # rsrp_avg — the slower/averaged filter tap. u32@16 is a
-            # second filtered serving-RSRP word: on separating chipsets (FN980
-            # SDX55, CFW-3212 SDX62) it lags `rsrp` under motion (r≈+0.65 vs the
-            # RSRP slope on 3 FN980 drives); on memcpy chipsets it equals `rsrp`.
-            rsrp_avg = (unpack_from('<I', data, 16)[0] & 0xFFF) / 16 - 180
-            rsrq = ((unpack_from('<I', data, 20)[0] >> 20) & 0xFFF) / 16 - 30
-            rssi = ((unpack_from('<I', data, 24)[0] >> 10) & 0xFFF) / 16 - 110
+        # the AT-attested serving PCI is 236.
+        pci = unpack_from('<I', data, 8)[0] & 0x1FF
+        base = 12
+    # Measurement block — subfields of u32 words at base, base+4, base+8,
+    # base+12, the same 1/16-LSB fixed-point convention as sibling 0xB193.
+    # rsrp = best rx branch (max(rx0, rx1), v0x04 0xB196 join);
+    # rsrp_avg = the slower filter tap (u32@base+4). On memcpy chipsets
+    # (MDM9200 v0x03, ...) rsrp_avg == rsrp. MDM9625 v0x04 writes two taps:
+    # equal 235/235 on a 1.28 s DRX camp, distinct on 104/188 at 640 ms DRX.
+    rsrp = (unpack_from('<I', data, base)[0] & 0xFFF) / 16 - 180
+    rsrp_avg = (unpack_from('<I', data, base + 4)[0] & 0xFFF) / 16 - 180
+    # The rsrq word holds three 10-bit fields: bits 0..9 == bits 10..19
+    # are the rsrq that 0xB196 carries; bits 20..29 is a slower tap.
+    rsrq_word = unpack_from('<I', data, base + 8)[0]
+    rsrq = (rsrq_word & 0x3FF) / 16 - 30
+    rsrq_avg = ((rsrq_word >> 20) & 0x3FF) / 16 - 30
+    rssi = ((unpack_from('<I', data, base + 12)[0] >> 10) & 0xFFF) / 16 - 110
     if len(data) > 2:
         nonzero = sum(1 for b in data[2:] if b != 0)
         total = max(len(data) - 2, 1)
@@ -274,6 +288,7 @@ def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
         rsrp=rsrp,
         rsrp_avg=rsrp_avg,
         rsrq=rsrq,
+        rsrq_avg=rsrq_avg,
         rssi=rssi,
         data_density=density,
         payload_size=len(data),

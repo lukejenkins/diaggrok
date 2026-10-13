@@ -28,8 +28,10 @@ from __future__ import annotations
 #: 0x14D8 is in this set and is EXPECTED to be permanently ``silent``. Its
 #: lat/lon/alt are hardcoded 0.0 in the reference parser, so it parses 100%
 #: and emits 0% -- 53 records on an RM520N-GL capture. That is the flag
-#: working, not a bug in it: 0x14D8 is a "backup" position source in the
-#: mask and contributes nothing, which is precisely the
+#: working, not a bug in it: 0x14D8 sits in the GNSS mask under its historical
+#: "ME Position Fix" name, but it is ``LOG_TEMPERATURE_MONITOR_LOG`` -- one
+#: thermal-sensor reading per record, no position bytes at all.
+#: It contributes nothing, which is precisely the
 #: state a census should make visible rather than average away into ``decoded``.
 EMIT_CONTRACT_CODES = frozenset({0xB192, 0xB193, 0xB195, 0xB0C0, 0xB97F,
                                  0x1476, 0x14D8})

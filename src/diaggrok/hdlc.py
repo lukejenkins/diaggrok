@@ -90,6 +90,10 @@ OPCODE_NAMES: dict[int, str] = {
 _MULTI_RADIO_WRAPPER_OFFSET: dict[int, int] = {
     0x98: 8,  # [0]=0x98, [1]=radio_id, [2:4]=pad, [4:8]=tx_mask, [8:]=inner 0x10 frame
 }
+#: Public name for the wrapper table: ``diagmunge.framefilter`` (and its
+#: C twin's test vectors) read the inner-frame offset from here so there is one
+#: source of truth. The underscore name stays for existing internal callers.
+MULTI_RADIO_WRAPPER_OFFSET = _MULTI_RADIO_WRAPPER_OFFSET
 
 # DIAG_SUBSYS_CMD_VER_2_F (0x80) wrapper layout — subsystem DIAG_SERV (0x12).
 #
@@ -1407,6 +1411,28 @@ def _is_len_desync(inner: bytes) -> bool:
 # included), so a repeat of them exactly at the seam is not a coincidence.
 _REPLAY_SEAM = 8192
 _REPLAY_PROBE = 16
+# The longest fragment seam recovery will consider. Measurement found fused chains
+# up to ~90 KB and no genuine T99W640 frame over 14,152 B, so 1 MiB keeps every
+# measured recovery. Recovery copies, unescapes and CRCs the fragment once per
+# candidate offset, so an unbounded fragment (a zero-padded capture with no 0x7E)
+# costs memory in proportion to its size at every recursion level: a 208 MB em9190
+# capture OOM-killed a recipe regen at 21.8 GiB.
+_REPLAY_MAX_FRAGMENT = 1 << 20
+
+
+def _is_seam_head(raw_frame: bytes) -> bool:
+    """True when ``raw_frame`` (still escaped) opens like a packet the seam splits.
+
+    Measurement found seams behind LOG_F heads (bare 0x10, or 0x98-wrapped) and 0x9E
+    secure-log heads only. A run of one byte value repeats its head at every
+    offset, so without this gate it reads as a seam everywhere and recovery
+    recurses into it once per candidate offset.
+    """
+    head = hdlc_unescape(raw_frame[:64])
+    if not head:
+        return False
+    off = _MULTI_RADIO_WRAPPER_OFFSET.get(head[0], 0)
+    return len(head) > off and head[off] in (0x10, 0x9E)
 
 
 def _recover_replay_tail(raw_frame: bytes) -> bytes | None:
@@ -1451,6 +1477,7 @@ def _recover_replay_tail(raw_frame: bytes) -> bytes | None:
         # its own CRC fails; accept it when ITS tail recovers.
         if (len(suffix) > _REPLAY_SEAM + _REPLAY_PROBE
                 and suffix[_REPLAY_SEAM:_REPLAY_SEAM + _REPLAY_PROBE] == suffix[:_REPLAY_PROBE]
+                and _is_seam_head(suffix)
                 and _recover_replay_tail(suffix) is not None):
             return suffix
     return None
@@ -1465,8 +1492,9 @@ def _replay_seam(raw_frame: bytes) -> tuple[bool, bytes | None]:
     every single-frame core, so the LOG walker and the outer-frame walker split
     identically.
     """
-    if not (len(raw_frame) > _REPLAY_SEAM + _REPLAY_PROBE
-            and raw_frame[_REPLAY_SEAM:_REPLAY_SEAM + _REPLAY_PROBE] == raw_frame[:_REPLAY_PROBE]):
+    if not (_REPLAY_SEAM + _REPLAY_PROBE < len(raw_frame) <= _REPLAY_MAX_FRAGMENT
+            and raw_frame[_REPLAY_SEAM:_REPLAY_SEAM + _REPLAY_PROBE] == raw_frame[:_REPLAY_PROBE]
+            and _is_seam_head(raw_frame)):
         return False, None
     whole = hdlc_unescape(raw_frame)
     if crc16_ccitt(whole[:-2]) == struct.unpack_from("<H", whole, len(whole) - 2)[0]:

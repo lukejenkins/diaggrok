@@ -95,8 +95,8 @@ rejects. That version is **not attested in this corpus** (all 7,470 records are
 v=0x02), so the enum is left strict rather than widened for a version only a
 reference decoder knows.
 
-Log name: LOG_LTE_ML1_SERVING_CELL_INFORMATION
-Also known as: LTE ML1
+Log name: LTE ML1 Serving Cell Information
+Also known as: LOG_LTE_ML1_SERVING_CELL_INFORMATION, LTE ML1
 """
 from __future__ import annotations
 

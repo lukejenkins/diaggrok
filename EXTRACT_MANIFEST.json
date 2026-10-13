@@ -515,7 +515,7 @@
     "modem": null,
     "modem_mode": "intersect"
   },
-  "footprint_bytes": 4499097,
+  "footprint_bytes": 4589229,
   "generated_by": "diaggrok-extract 0.1.0",
   "modules": [
     "diaggrok._version",
@@ -1134,6 +1134,6 @@
   ],
   "schema_version": 1,
   "upstream": {
-    "diaggrok_version": "2026.10.4"
+    "diaggrok_version": "2026.10.12"
   }
 }

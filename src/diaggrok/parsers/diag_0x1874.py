@@ -450,7 +450,8 @@ is extracted into a named field; the remaining gaps are corpus-zero reserved
 bytes (unasserted, except v=0x6b's bytes 4..51, which are checked via
 ``reserved_all_zero``).
 
-Log name: LOG_EVENTS_DS_GPRS_PAGE_RECEIVED
+Log name: MCPM General Session Power
+Also known as: LOG_EVENTS_DS_GPRS_PAGE_RECEIVED
 """
 from __future__ import annotations
 

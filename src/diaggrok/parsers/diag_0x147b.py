@@ -10,7 +10,7 @@ LOG_GNSS_CD_DB_REPORT. The backward-compat alias ``GpsSvHealth`` is kept
 in diaggpsd's ``gnss_packets`` module.
 
 Log name: LOG_GNSS_CD_DB_REPORT_C
-Also known as: LOG_GNSS_CD_DATABASE_REPORT
+Also known as: Technology SCL, LOG_GNSS_CD_DATABASE_REPORT
 """
 from __future__ import annotations
 

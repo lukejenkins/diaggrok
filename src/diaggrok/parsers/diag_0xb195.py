@@ -27,11 +27,17 @@ v3 request + v4 response, 100 bytes total):
 
     Subpacket 1 (id=31, ver=4, size=64) -- Response/Measurement:
         [0:4]    u32  EARFCN (low 18 bits)
-        [4:6]    u16  num_cells
-        [6:8]    u16  reserved
+        [4:6]    u16  num_cells_word: bits 0-6 = num_cells, bits 7-15 a
+                      separate, unresolved field (zero on sp.v4; live on
+                      sp.v40/56/57 — see "Layouts" below)
+        [6:8]    u16  sf_counter (CANDIDATE): zero on sp.v4; live on
+                      sp.v40 (max 639) and sp.v56/57 (0..5119, exactly the
+                      SFN*10+subframe range); absent on sp.v3
 
         Per-cell record (52 bytes each — byte-identical to 0xB192):
-            [0:4]    u32  PCI (low 9 bits)
+            [0:4]    u32  PCI (low 9 bits); bits 9-31 exposed as pci_flags
+                          (bit 25 set on ~46% of sp.v57 cells, never on
+                          v3/v4/v40/v56; semantics unresolved — not intra/inter)
             [4:8]    u32  energy0  (per-Rx integrated energy ~4-5e6)
             [8:12]   u32  energy1  (per-Rx integrated energy; RSRP-tracking)
             [12:16]  u32  energy2  (integrated energy; RSRP-tracking)
@@ -55,11 +61,42 @@ The per-cell record layout is byte-compatible with 0xB192's per-cell
 record at the PCI/RSRP/RSRQ field offsets, so this parser shares the
 extraction primitives with the idle-mode neighbor parser.
 
-**v40 variant (LV55 SDX55):** a Wistron LV55 (SDX55) capture (10 records,
-sizes 168/236) uses subpacket version **40**, where the num_cells field at
-offset 4 contains a different value. The parser computes the cell count from
-body size when num_cells_raw > 32. Cell record layout (PCI/RSRP/RSRQ offsets)
-is the same as v4.
+**Layouts (response subpacket version, the sp.vN layout axis).**
+Five response versions share ONE 52-byte cell. Four of them share one 8-byte
+carrier header; sp.v3 has a 4-byte one (earfcn u16 @0, num_cells u16 @2, the
+shape 0xB192 ver=2 has on the MDM9200):
+
+    sp.v3   MDM9625 (Foxconn T77W595)                          — request sp.v2
+            (request header 8 B, not 12)
+    sp.v4   MDM9207 / SDX24 / SDX55 (EG25-G, LM960, EM160R-GL) — request sp.v3
+    sp.v40  SDX20 / SDX55 (LV55, RM500Q)                       — request sp.v40
+    sp.v56  SDX55 (Inseego M3100)                              — request sp.v56
+    sp.v57  SDX62 (RM520N-GL)                                  — request sp.v56
+
+What was once read as "v40 puts num_cells elsewhere" (the old ``> 32 ->
+body-size`` heuristic) is the num_cells_word bitfield: ``word & 0x7F`` equals
+the body-derived cell count on 100% of records on all four layouts (v4 867, v40 213, v56 770, v57 2,843 records), and bits 7-15
+carry a different, unresolved value. The request subpacket (id=30, 12-byte
+header + 16 B/cell) echoes each response cell's PCI in order (853/853 v56,
+4,590/4,590 v57, 1,372/1,372 v4, 331/331 v40). Padding at cell +26/+32/+48 is
+zero and +40 == +44 on every cell of v4/v56/v57.
+
+Identity grounding per layout (F3):
+    sp.v3: every decoded (earfcn, pci) pair — 4 pairs, 67/67 entries — is
+        named by the firmware's own cell-database print, 0x79 plaintext F3
+        lte_ml1_cdb.c:1807 "CDB get status [ LTE: pci X fcn Y ]"
+        (a T77W595 attach capture, 49 records).
+    sp.v56: (earfcn, pci) ⊂ the RRC measObject carriers {975, 5230, 55342,
+        55540, 66536} decoded by the qcsuper black-box oracle, and PCI 221 is
+        the neighbour the UE names in its RRC MeasurementReports
+        (an M3100 survey capture, 770 records).
+    sp.v57: 4,566/4,590 entries (99.5%) contained in the co-captured
+        AT+QENG neighbour/serving lists; the 24 misses are 3 transient weak
+        cells (an RM520N-GL survey capture).
+    F3: lte_LL1_meas_ncell.c NB_MEAS max_SE/max_SNE prints co-emit but do not
+        byte-match any cell energy word (0/853 on v56) — the print is the
+        per-search pick, upstream of the accumulators. No F3 site names a
+        connected-mode neighbour PCI on these builds.
 
 A public field reference (Techplayon) lists these field names for the log;
 the energy-word decode above does not yet map onto them:
@@ -89,6 +126,10 @@ _RESPONSE_SP_ID = 31
 _RESPONSE_SP_VERSION = 4
 _CELL_RECORD_SIZE = 52
 _CARRIER_HEADER_SIZE = 8
+# sp.v3 (MDM9625 / T77W595) uses the 4-byte carrier header 0xB192 ver=2 has on
+# the MDM9200: earfcn u16 @0, num_cells u16 @2. The 52-byte cell is unchanged.
+_RESPONSE_SP_VERSION_SHORT_HDR = 3
+_CARRIER_HEADER_SIZE_SHORT = 4
 
 
 @dataclass
@@ -126,10 +167,14 @@ class LteMl1ConnectedNeighborEntry:
     aux0: int            # +36 u16 small field (semantics unresolved; not rsrq_rx0)
     aux1: int            # +38 u16 small field (semantics unresolved; not rsrq_rx1)
     timing: int          # +40 u32 request-echoed timing (+40 == +44 always)
+    # +0 u32 bits 9-31 (the word PCI is masked from). Bit 25 (0x10000 here) is
+    # set on ~46% of sp.v57 cells and never on v3/v4/v40/v56; unresolved.
+    pci_flags: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'pci': self.pci,
+            'pci_flags': self.pci_flags,
             'earfcn': self.earfcn,
             'rsrp': self.rsrp,
             'rsrq_rx0': self.rsrq_rx0,
@@ -155,14 +200,27 @@ class Diag0xB195:
     earfcn: int
     num_cells: int
     entries: list[LteMl1ConnectedNeighborEntry] = field(default_factory=list)
+    # Response (id=31) subpacket version — 4 (MDM9207) / 40 (SDX20/SDX55). It
+    # moves num_cells, a layout axis; exposed so the sweep can split on it.
+    sp_version: int | None = None
+    # Carrier header +4 u16 in full: bits 0-6 are num_cells, bits 7-15 an
+    # unresolved field (zero on sp.v4, live on v40/56/57).
+    num_cells_word: int | None = None
+    # Carrier header +6 u16. CANDIDATE subframe counter: 0 on sp.v4, live on
+    # sp.v40 (max 639) and sp.v56/57 (0..5119, the SFN*10+subframe range); None
+    # on sp.v3 (no such word). Not F3-labelled.
+    sf_counter: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'type': 'Diag0xB195',
             'log_time': self.log_time,
             'version': self.version,
+            'sp_version': self.sp_version,
             'earfcn': self.earfcn,
             'num_cells': self.num_cells,
+            'num_cells_word': self.num_cells_word,
+            'sf_counter': self.sf_counter,
             'entries': [e.to_dict() for e in self.entries],
         }
 
@@ -177,7 +235,7 @@ class Diag0xB195:
 @register(LOG_LTE_ML1_CONNECTED_NEIGHBOR_MEAS, domain="lte-signal",
     name="0xB195",
     description="Connected-mode neighbor cell meas 0xB195 — version-dispatched response sp31 {4,40}, full 52B cell record shared with 0xB192 (PCI/EARFCN + per-Rx energy/timing words); rsrp/rsrq None (energy, not dBm)",
-    version=6,
+    version=8,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -191,18 +249,36 @@ class Diag0xB195:
         "byte-identical to 0xB192's; PCI/EARFCN are verified by containment "
         "against QMI (LV55) and QENG (RM520N-GL) neighbour lists in their "
         "captures. The per-cell energy words are AGC-flattened accumulators, "
-        "not dBm, so rsrp/rsrq are None and the raw words are exposed."
+        "not dBm, so rsrp/rsrq are None and the raw words are exposed. "
+        "Response layouts sp.v4/v40/v56/v57 share the header and cell "
+        "(sp.v3, MDM9625, has a 4-byte header and the same cell); "
+        "num_cells = carrier word & 0x7F on 100% of records of all four, "
+        "and the request subpacket echoes every response PCI. sp.v56 "
+        "identity grounded against the qcsuper RRC measObject/"
+        "MeasurementReport set (M3100), sp.v57 against AT+QENG (99.5%, "
+        "RM520N-GL), sp.v3 against F3 lte_ml1_cdb.c cell-database prints "
+        "(67/67, T77W595)."
     ),
     source_url="",
     issues=(),
     primary_issue=None,
-    # Header: version, earfcn, num_cells (3) + per-cell pci + 11 raw energy/
-    # timing words (12) = 15 parsed; +3 identified-but-None signal fields
-    # (rsrp, rsrq_rx0, rsrq_rx1 — energy, not dBm) = 18 identified.
-    fields_identified=18, fields_parsed=15,
+    # Header: version, earfcn, num_cells, sp_version, num_cells_word,
+    # sf_counter (6) + per-cell pci, pci_flags + 11 raw energy/timing words
+    # (13) = 19 parsed; +3 identified-but-None signal fields (rsrp, rsrq_rx0,
+    # rsrq_rx1 — energy, not dBm) = 22 identified.
+    fields_identified=22, fields_parsed=19,
     field_invariants={
         "version": {"enum": [0x01]},
+        # Response subpacket version (layout axis): 3 = MDM9625 (4-byte
+        # carrier header), 4 = MDM9207/SDX24/SDX55,
+        # 40 = SDX20/SDX55, 56 = SDX55 (M3100), 57 = SDX62 (RM520N-GL). One
+        # header + cell layout across all four. Pinned so an unseen one is
+        # loud (the record is still returned).
+        "sp_version": {"enum": [3, 4, 40, 56, 57]},
     },
+    # F3-sweep layout axis: byte 0 is 0x01 on every record, the
+    # response subpacket version picks the carrier header -> (0xB195, v0x01, sp.vN).
+    layout_axes={"sp": "sp_version"},
     wigle_direct=True,
     wigle_roles=("signal", "pci-earfcn-bridge", "rat-context"),
 )
@@ -213,9 +289,8 @@ def parse_0xb195(
 
     Walks subpackets to find the response subpacket (id=31), extracts per-cell
     PCI, EARFCN, and the raw per-Rx energy/timing words (byte-identical to
-    0xB192). Both the v4 (MDM9207/EG25-G) and v40 (SDX20/SDX55) response
-    variants are handled — the cell layout is version-independent; only the
-    num_cells field location differs.
+    0xB192). The response versions 4/40/56/57 share one carrier header and
+    one cell layout.
 
     Returns ``None`` for malformed payloads.
     """
@@ -257,38 +332,44 @@ def _parse_response_subpacket(
 ) -> Diag0xB195 | None:
     """Parse the response subpacket data (id=31).
 
-    Handles both v4 (MDM9207/EG25-G) and v40 (SDX20/LV55) variants.
-    The cell record layout at PCI/RSRP/RSRQ offsets is the same across
-    versions — only the num_cells field location differs.
+    One layout for sp versions 4/40/56/57: num_cells is the low 7 bits of the
+    u16 at +4 (the high bits are a separate field), clamped to what the body
+    holds.
     """
-    if len(sp) < _CARRIER_HEADER_SIZE:
-        return None
-
-    earfcn_raw = unpack_from('<I', sp, 0)[0]
-    earfcn = earfcn_raw & 0x3FFFF
-    num_cells_raw = unpack_from('<H', sp, 4)[0]
+    if sp_ver == _RESPONSE_SP_VERSION_SHORT_HDR:
+        hdr = _CARRIER_HEADER_SIZE_SHORT
+        if len(sp) < hdr:
+            return None
+        earfcn, num_cells_word = unpack_from('<HH', sp, 0)
+        sf_counter = None
+    else:
+        hdr = _CARRIER_HEADER_SIZE
+        if len(sp) < hdr:
+            return None
+        earfcn = unpack_from('<I', sp, 0)[0] & 0x3FFFF
+        num_cells_word = unpack_from('<H', sp, 4)[0]
+        sf_counter = unpack_from('<H', sp, 6)[0]
 
     if earfcn > 262143:
         return None
 
-    # For v40 (SDX20/LV55), the num_cells field at offset 4 contains
-    # a different value. Compute num_cells from body size instead.
-    if num_cells_raw > 32:
-        body_size = len(sp) - _CARRIER_HEADER_SIZE
-        num_cells = body_size // _CELL_RECORD_SIZE
-    else:
-        num_cells = num_cells_raw
+    # Bits 0-6 are the cell count on every layout (== the body-derived count on
+    # 100% of corpus records, v4/v40/v56/v57); bits 7-15 are another field.
+    # Clamp to what the body actually holds so a short record cannot over-read.
+    body_cells = (len(sp) - hdr) // _CELL_RECORD_SIZE
+    num_cells = min(num_cells_word & 0x7F, body_cells)
 
     entries: list[LteMl1ConnectedNeighborEntry] = []
 
     for i in range(num_cells):
-        cell_offset = _CARRIER_HEADER_SIZE + i * _CELL_RECORD_SIZE
+        cell_offset = hdr + i * _CELL_RECORD_SIZE
         if cell_offset + _CELL_RECORD_SIZE > len(sp):
             break
 
         co = cell_offset
         # pci: low 9 bits of the u32 at cell +0 (byte-identical to 0xB192).
-        pci = unpack_from('<I', sp, co)[0] & 0x1FF
+        pci_word = unpack_from('<I', sp, co)[0]
+        pci = pci_word & 0x1FF
 
         # rsrp / rsrq_rx0 / rsrq_rx1 are None: the per-cell words are
         # AGC-flattened linear-energy accumulators with no capture-stable
@@ -310,6 +391,7 @@ def _parse_response_subpacket(
             aux0=unpack_from('<H', sp, co + 36)[0],
             aux1=unpack_from('<H', sp, co + 38)[0],
             timing=unpack_from('<I', sp, co + 40)[0],
+            pci_flags=pci_word >> 9,
         ))
 
     return Diag0xB195(
@@ -318,4 +400,7 @@ def _parse_response_subpacket(
         earfcn=earfcn,
         num_cells=num_cells,
         entries=entries,
+        sp_version=sp_ver,
+        num_cells_word=num_cells_word,
+        sf_counter=sf_counter,
     )

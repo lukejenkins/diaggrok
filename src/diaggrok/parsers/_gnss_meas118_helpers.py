@@ -5,13 +5,13 @@
 Skipped by ``parsers/__init__.py`` auto-discovery because of the leading
 underscore. Imported directly by the per-code parser modules
 (``diag_0x1ccb.py``, ``diag_0x1ccc.py``, ``diag_0x1ce1.py``,
-``diag_0x1cc6.py``).
+``diag_0x1cc6.py``, ``diag_0x1756.py`` v0x01).
 
 SUBJECT MATTER: these are **GNSS per-SV measurement reports**, NOT NR5G ML1
 codes, despite the log-code range. The same
 ``47 + 118 * N`` framing is carried by 0x1CC6
 (``LOG_GNSS_BDS_B1C_MEASUREMENT_REPORT``), which uses this module, and by
-0x1756 B1I on the EM9291 SDX62 (not yet ported); a public log-name table
+0x1756 B1I v0x01 on the EM9291 SDX62 (BDS week / ms too); a public log-name table
 puts 0x1CE0 (GAL E5b) beside it.
 
 The [20:22] week / [22:26] ms pair is the **signal's own system time**:

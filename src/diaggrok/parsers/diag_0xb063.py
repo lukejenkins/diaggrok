@@ -106,8 +106,8 @@ list.
 * **harq_id (v0x31/v0x32):** values 0-7 uniform; a process is reused after
   exactly 8 subframes (the FDD HARQ RTT) on 44,121 of the reuse events.
 
-Log name: subpkt 7 for carrier index
-Also known as: LOG_DL_TRANSPORT_BLOCK, LOG_LTE_MAC_DL_TRANSPORT_BLOCK, LTE MAC DL Transport Block
+Log name: LOG_DL_TRANSPORT_BLOCK
+Also known as: LOG_LTE_MAC_DL_TRANSPORT_BLOCK, LTE MAC DL Transport Block
 """
 from __future__ import annotations
 
@@ -419,7 +419,16 @@ def _parse_entries(data: bytes, base: int, n: int):
     fields_parsed=13,
     field_invariants={
         "version": {"enum": [0x01, 0x31, 0x32]},
+        # v0x01's body layout is picked PER SUBPACKET: the DL-TB
+        # subpacket 0x07 carries its own version, and v1 (10 B sample) / v2
+        # (12 B) / v4 (+2 B sub_id/cell_id prefix) are three sample layouts.
+        # Corpus-attested (346 captures): sver 1/2/4 = 381/4,915/8,717 records.
+        "subpackets[].subpacket_id": {"enum": [0x07]},
+        "subpackets[].subpacket_version": {"enum": [1, 2, 4]},
     },
+    # F3-sweep layout axis (list form): the unit of F3 work is
+    # (0xB063, v0x01, sp07.vN). v0x31/v0x32 carry no subpacket list.
+    layout_axes={"sp": "subpackets[subpacket_id].subpacket_version"},
 )
 def parse_0xb063(log_time: int, data: bytes) -> Diag0xB063 | None:
     if len(data) < 4:

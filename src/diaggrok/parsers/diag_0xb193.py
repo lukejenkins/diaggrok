@@ -28,7 +28,7 @@ Subpacket data (payload offset 8):
     [6:8]    u16  num_rx_antennas
 
 THE PER-CELL LAYOUT IS KEYED ON subpacket_version, WHICH TRACKS THE CHIPSET.
-Ten versions are corpus-observed (the share column is from a full walk of 807
+Eleven versions are corpus-observed (the share column is from a full walk of 807
 captures / 482 with records / 359,915 records, before v40 appeared). There is
 NO single per-cell layout — the table below is the map, and each version's
 constants block carries its evidence:
@@ -47,6 +47,8 @@ constants block carries its evidence:
     56   <0.1%  SDX62 RM520N-GL               v59 family             v59 scale ✓
     40   (893)  SDX24 EM120R-GL, EM160R-GL    PCI@cell+0, FIXED      RSRP x16 @+36,
                                               4x132 B cell array     RSRQ x16 @+48 b20
+    60  (1634)  SDX72 T99W640                 v59 family; sp+4 b3    v59 scale ✓
+                                              is a flag (count b0..2) (vs 0xB17F)
 
 An UNKNOWN version emits the carrier header and ZERO entries — never another
 version's offsets. Guessing fabricates a PCI and a dBm: v50 read under another
@@ -589,7 +591,28 @@ _V40_RSSI_WORD_OFF = 60         # u32 bits0..11,  raw/16 - 110 dBm (located, not
 # from vendor F3 (Quectel led_modem.c) or AT, not SDX55 ML1.
 _V50_SUBPACKET = 50
 _V56_SUBPACKET = 56
-_V59_FAMILY = frozenset({_V50_SUBPACKET, _V56_SUBPACKET, _V59_SUBPACKET})
+
+# v60 (SDX72 Foxconn T99W640) is the v59 family on a new chipset. All
+# 1,634 corpus records (23 sessions, 2 units, 9 cells) are 164 B = 16 + ONE
+# 148 B cell — v59's own 148 B stride — carrying the family signatures on every
+# record: cell+0 = 0x3, cell+4 = 0xffff0100, PCI@cell+8 with bit15 set.
+#   Identity: PCI@cell+8 + EARFCN@sp+0 == the nearest 0xB0C0 AND 0xB116 on
+#     1,623/1,634 (the 11 misses sit on reselection edges, where the nearest
+#     anchor is already the next cell). PCI 3 on 66786 is real: both anchors
+#     carry it too.
+#   Signal: v59's bit-exact offsets/scales (cell+44 b12..23, cell+56 b20..31)
+#     pair with same-tick, same-PCI 0xB17F on 1,628/1,634 — RSRP median delta
+#     0.00 dB (p5/p95 +-0.25, 1,302 within 1 LSB), RSRQ bit-exact p5..p95 —
+#     over -125.2..-94.9 dBm (30.3 dB): v40's grounding bar.
+# THE ONE GEOMETRY CHANGE: the u16 at sp+4 is NOT a plain cell count. It reads
+# 1 or 9 on a record that only fits one cell; bit3 is an unidentified flag
+# (set on 1,058 records; it tracks counter != 0 on 1,630/1,634 — close, not a
+# rule) and bits0..2 are the count (1 on every record). Read raw, the derived
+# stride would be 148 // 9 = 16 and fabricate garbage cells, so v60 masks it.
+_V60_SUBPACKET = 60
+_V60_NUM_CELLS_MASK = 0x7
+_V59_FAMILY = frozenset({_V50_SUBPACKET, _V56_SUBPACKET, _V59_SUBPACKET,
+                         _V60_SUBPACKET})
 
 # v48 per-cell RSRP: an x16 fixed-point per-Rx RSRP at payload+44 == in-cell +24,
 # scale -180 + raw/16, pinned against the modem's own F3 on a 218-record
@@ -640,7 +663,7 @@ _V48_SFN_OFF = 16
 _DECODED_SUBPACKET_VERSIONS = frozenset({
     _V3_SUBPACKET, _V18_SUBPACKET, _V22_SUBPACKET, _V35_SUBPACKET,
     _V36_SUBPACKET, _V40_SUBPACKET, _V48_SUBPACKET, _V50_SUBPACKET,
-    _V56_SUBPACKET, _V59_SUBPACKET,
+    _V56_SUBPACKET, _V59_SUBPACKET, _V60_SUBPACKET,
 })
 
 
@@ -652,8 +675,8 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
 
 @register(LOG_LTE_ML1_SERVING_CELL_MEAS_RSP, domain="lte-signal",
     name="0xB193",
-    description="Serving cell PCI, EARFCN, RSRP, RSRQ from the 0xB193 subpacket — outer v=1 corpus-wide; per-cell layout keyed on subpacket_version {3,18,22,35,36,40,48,50,56,59}. pci/earfcn grounded on every version; RSRP/RSRQ decoded only where an x16 fixed-point scale is grounded (v36, v40, v48 RSRP, v50/v56/v59), single-cell or serving-cell only.",
-    version=31,
+    description="Serving cell PCI, EARFCN, RSRP, RSRQ from the 0xB193 subpacket — outer v=1 corpus-wide; per-cell layout keyed on subpacket_version {3,18,22,35,36,40,48,50,56,59,60}. pci/earfcn grounded on every version; RSRP/RSRQ decoded only where an x16 fixed-point scale is grounded (v36, v40, v48 RSRP, v50/v56/v59/v60), single-cell or serving-cell only.",
+    version=32,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -667,13 +690,15 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
         "v3 MC7700 (2175/473), v18 EG25-G and EM7455 (inline serving cell), v22 "
         "EP06-A, v35 MC7411/EM7565, v36 LM960, v40 EM120R-GL/EM160R-GL, v48 "
         "RM500Q-AE/LV55 (12 B carrier header), v50 FN980, v56/v59 RM520N-GL and "
-        "CFW-3212. RSRP/RSRQ are x16 fixed-point (raw/16-180 dBm, raw/16-30 dB) "
+        "CFW-3212, v60 T99W640 (SDX72; 1,623/1,634 == 0xB0C0 AND 0xB116). RSRP/RSRQ are x16 fixed-point (raw/16-180 dBm, raw/16-30 dB) "
         "where decoded: v59 (cell+44 b12..23 / cell+56 b20..31, bit-slice RE "
         "against a 28,879-record QENG/QRSRP correlate capture, UE RRC "
         "MeasurementReport and weak-signal F3 -117.6 vs -117.1; serving cell "
         "only, median -0.38 dB vs QENG, neighbours read 3-8 dB low and are "
         "gated to None); v50/v56 (v59 layout; median -0.31/-0.25 dB vs AT#RFSTS "
-        "at every quantile); v36 (cell+20 / cell+36; 45 dB drive sweep, own-F3 "
+        "at every quantile); v60 (v59 layout, sp+4 bit3 masked off the count; "
+        "same-tick 0xB17F RSRP median 0.00 dB, RSRQ bit-exact, n=1,628 over "
+        "30.3 dB); v36 (cell+20 / cell+36; 45 dB drive sweep, own-F3 "
         "tick-paired max error 0.032 dB, AT#LAPS -0.31/+0.05 dB, TS 36.214 "
         "closure onto N_RB 100.0/50.1, reconfirmed on a newer firmware build); "
         "v40 (fixed 4x132 B array; cell+36 / cell+48 b20..31 within 1 LSB / "
@@ -725,8 +750,12 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
         # already degrades an unknown version to carrier-header-only; this
         # invariant makes the event VISIBLE instead of a silent partial decode.
         # + v40 (SDX24 EM120R-GL / EM160R-GL, 893 records).
-        "subpacket_version": {"enum": [3, 18, 22, 35, 36, 40, 48, 50, 56, 59]},
+        # + v60: SDX72 T99W640, 1,634 records, 164 B; v59 family.
+        "subpacket_version": {"enum": [3, 18, 22, 35, 36, 40, 48, 50, 56, 59, 60]},
     },
+    # F3-sweep layout axis: byte 0 is 0x01 on every record, so the
+    # unit of F3 work is (0xB193, v0x01, sp.vN) per subpacket_version.
+    layout_axes={"sp": "subpacket_version"},
     wigle_direct=True,
     wigle_roles=("signal", "pci-earfcn-bridge", "rat-context"),
 )
@@ -851,6 +880,9 @@ def parse_0xb193(
         )
 
     num_cells = unpack_from('<H', sp, 4)[0]
+    if subpacket_version == _V60_SUBPACKET:
+        # bit3 is a flag, not part of the count (see the _V60_* block).
+        num_cells &= _V60_NUM_CELLS_MASK
 
     entries: list[LteMl1ServingCellMeasEntry] = []
 
@@ -982,6 +1014,8 @@ def parse_0xb193(
                     rsrp = None
                     rsrq = None
             else:
+                # v60 rides this arm too: every corpus v60 record is single-cell
+                # (and sets bit15), grounded against same-tick 0xB17F.
                 # v50/v56: bit15 is NOT a serving flag here (v50's AT-matched
                 # serving cell has bit15=0 on all 1,408 grounded records), so the
                 # v59 neighbour gate must not be applied. Every corpus v50/v56

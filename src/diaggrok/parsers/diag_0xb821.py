@@ -16,7 +16,7 @@ Version 9 layout (SDX55 / RM500Q, Rel-15):
     [6]     u8   bearer_id                (SCAT: rbid)
     [7:9]   u16  physical_cell_id
     [9:13]  u32  nr_arfcn
-    [13:17] u32  sfn_subfn (LE u32; low 16 bits encode sfn<<4|slot)
+    [13:17] u32  sfn_subfn (LE u32; SFN in bits 16..25, subframe in 3..6)
     [17]    u8   pdu_id                   (channel discriminator)
     [18:22] u32  sib_mask
     [22:24] u16  msg_length
@@ -26,6 +26,22 @@ Version 12 / 14 layout (SDX55 EM9190, SDX62 RM520N v14):
     Same as v9 but sfn_subfn is 3 bytes ([13:16]) and pdu_id shifts to
     byte[16]. sib_mask at [17:21] (4 bytes), msg_length at [21:23],
     msg_data starts at offset 23.
+
+sfn_subfn bit packing (timestamp-proven per version):
+    3-byte versions (v12/v14/v17/v23/v26): SFN = bits 9..18,
+        subframe (1 ms) = bits 3..6. Bits 0..2 and 7..8 are zero on every
+        corpus record; bits 19..23 carry an unidentified value.
+    v9 (4-byte): SFN = bits 16..25, subframe = bits 3..6.
+    Proof: for two records on the same cell, SFN*10 + subframe must advance
+    by the diag-timestamp delta (1.25 ms / 65536 ticks). v12: 819/820
+    same-cell pairs within 1 ms, median error 24 us, across all 20 v12
+    captures; v9 85/85, v14 12/12, v17 114/118, v23 163/178 (the misses are
+    connected-mode DCCH records, logged 1-7 ms from their air slot). The old
+    reading, (low 16 bits >> 4, & 0xF), matched 0% on every version. v26
+    has 5 pairs: its SFN window fits, its subframe bits do not, so v26
+    subframe is None. A record whose SFN and subframe bits are all zero was
+    not stamped by the firmware (BCCH-BCH, standalone SIBs, some UL):
+    sfn_stamped is False there and sfn/subframe mean nothing.
 
 Version 17 layout (SDX62 RM520N, Rel-16):
     [0:4]   u32  version (17)
@@ -110,10 +126,17 @@ _MSG_LEN_OFFSET = {9: 22, 12: 21, 14: 21, 17: 29, 23: 29, 26: 29}
 # sfn_subfn to 3 bytes; v17+ insert NCGI before nr_arfcn and use a 3-byte
 # sfn_subfn.
 _PDU_ID_OFFSET = {9: 17, 12: 16, 14: 16, 17: 24, 23: 24, 26: 24}
-# Per-version offset of sfn_subfn (u16-LE for the low 16 bits → sfn<<4|slot).
+# Per-version offset of sfn_subfn (bit packing: _SFN_SHIFT / _SUBFRAME_*).
 _SFN_SUBFN_OFFSET = {9: 13, 12: 13, 14: 13, 17: 21, 23: 21, 26: 21}
 # Per-version offset of sib_mask u32 LE.
 _SIB_MASK_OFFSET = {9: 18, 12: 17, 14: 17, 17: 25, 23: 25, 26: 25}
+# sfn_subfn bit packing (module docstring): the 10-bit SFN starts at bit 16
+# on the 4-byte v9 field and at bit 9 on every 3-byte version; the 4-bit
+# subframe (1 ms) sits at bit 3 everywhere it is proven. v26 is left out of
+# _SUBFRAME_VERSIONS: 5 timing pairs fit its SFN window but not bits 3..6.
+_SFN_SHIFT = {9: 16, 12: 9, 14: 9, 17: 9, 23: 9, 26: 9}
+_SUBFRAME_SHIFT = 3
+_SUBFRAME_VERSIONS = frozenset({9, 12, 14, 17, 23})
 
 # SCAT's pdu_id → channel name maps, keyed by parser version. Five distinct
 # tables in SCAT (rrc_type_map for pkt_ver in 0x09/0x0c, 0x0e, 0x11/0x13,
@@ -126,6 +149,14 @@ _RRC_TYPE_MAP_PRE_MCCH = {
     5: 'PCCH', 6: 'UL-CCCH', 7: 'UL-CCCH1', 8: 'UL-DCCH',
     9: 'RRC-RECONF', 10: 'RRC-RECONF-COMPLETE',
 }
+# v12 adds pdu_id 25: the bare NR RadioBearerConfig of an EN-DC SCG add. On
+# the FT980M mmWave camp each of the 3 records equals, byte for byte and in
+# order, the nr-RadioBearerConfig2-r15 octet string of the LTE
+# RRCConnectionReconfiguration that carried it (qcsuper's lte-rrc decode),
+# next to the nr-SecondaryCellGroupConfig-r15 that equals the pdu_id 9
+# record logged just before it. Other versions are not proven, so they keep
+# 25 unmapped.
+_RRC_TYPE_MAP_V12 = {**_RRC_TYPE_MAP_PRE_MCCH, 25: 'RADIO-BEARER-CONFIG'}
 _RRC_TYPE_MAP_V26 = {
     1: 'BCCH-BCH', 2: 'BCCH-DL-SCH', 3: 'DL-CCCH', 4: 'DL-DCCH',
     5: 'MCCH', 6: 'PCCH', 7: 'UL-CCCH', 8: 'UL-CCCH1', 9: 'UL-DCCH',
@@ -150,7 +181,7 @@ _RRC_TYPE_MAP_MCCH_NOSHIFT = {
 _RRC_TYPE_MAPS = {
     7: _RRC_TYPE_MAP_PRE_MCCH,
     9: _RRC_TYPE_MAP_PRE_MCCH,
-    12: _RRC_TYPE_MAP_PRE_MCCH,
+    12: _RRC_TYPE_MAP_V12,
     14: _RRC_TYPE_MAP_PRE_MCCH,
     17: _RRC_TYPE_MAP_PRE_MCCH,
     23: _RRC_TYPE_MAP_MCCH_NOSHIFT,
@@ -344,12 +375,16 @@ class Diag0xB821:
     bearer_id: int                  # SCAT rbid
     pci: int
     arfcn: int
+    # System frame number (0..1023) and subframe (0..9, 1 ms) from
+    # sfn_subfn; packing per version in the module docstring. subframe is
+    # None on v26 (bits not proven). Both are meaningless when sfn_stamped
+    # is False: the firmware left the SFN and subframe bits zero.
     sfn: int
-    slot: int
-    # Full-width sfn_subfn field (4 bytes on v7/v9, 3 bytes on v12/v14/v17+).
-    # sfn/slot are the low 16 bits (sfn<<4|slot); the upper byte(s) are LIVE,
-    # not reserved (non-zero in 6/12 fixtures; SCAT derives subframe/slot
-    # from them). Exposed raw so no on-wire byte is discarded.
+    subframe: Optional[int]
+    sfn_stamped: bool
+    # Full-width sfn_subfn field (4 bytes on v7/v9, 3 bytes on v12/v14/v17+),
+    # exposed raw so no on-wire byte is discarded (bits 19..23 of the 3-byte
+    # field carry a value nothing names yet).
     sfn_subfn_raw: int
     pdu_id: int                     # actual channel discriminator
     sib_mask: int                   # 4-byte u32 sib_mask
@@ -579,7 +614,8 @@ class Diag0xB821:
             'earfcn': self.arfcn,
             'arfcn': self.arfcn,
             'sfn': self.sfn,
-            'slot': self.slot,
+            'subframe': self.subframe,
+            'sfn_stamped': self.sfn_stamped,
             'sfn_subfn_raw': self.sfn_subfn_raw,
             'pdu_id': self.pdu_id,
             'sib_mask': self.sib_mask,
@@ -778,7 +814,7 @@ def _decode_outer_choice(
 @register(LOG_NR5G_RRC_OTA_MSG, domain="rrc",
     name="0xB821",
     description="NR5G RRC Over-The-Air message with ASN.1 PER-encoded content",
-    version=28,
+    version=29,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -830,15 +866,22 @@ def _decode_outer_choice(
         "distinct). A whole-corpus A/B against stock tshark (20,623 records, "
         "every version) shows 0 mismatches on every decoded field. SIB9 "
         "timeInfoUTC is 10 ms units since 1900-01-01 UTC, confirmed against "
-        "tshark and wardrive host-clock session starts. Still unmapped: v9 "
-        "pdu_id 24/25, v12 25 and v17 29. Committed fixtures use synthetic "
-        "identities."
+        "tshark and wardrive host-clock session starts. sfn_subfn packing is "
+        "proven per version against the diag timestamp: SFN*10 + subframe "
+        "advances by the log_time delta on same-cell pairs (v12 819/820 within "
+        "1 ms, median 24 us; v9 85/85, v17 114/118, v23 163/178); v26 subframe "
+        "is unproven (None). Header PCI/ARFCN equal SCAT's GSMTAPv3 tags on "
+        "822/825 byte-joined v12 records (the 3 misses are ambiguous MIB "
+        "joins). v12 pdu_id 25 is a bare RadioBearerConfig, byte-equal to the "
+        "carrying LTE nr-RadioBearerConfig2-r15 on 3/3 records. Still "
+        "unmapped: v9 pdu_id 24/25 and v17 29. Committed fixtures use "
+        "synthetic identities."
     ),
     source_url="https://github.com/lukejenkins",
     issues=(),
     primary_issue=None,
-    fields_identified=66,
-    fields_parsed=66,
+    fields_identified=67,
+    fields_parsed=67,
     field_invariants={
         # Validated against 1,544 DLF records / 23 captures / 4 chipsets plus
         # 7 RG650V SDX72 v26 records.
@@ -904,18 +947,19 @@ def parse_0xb821(log_time: int, data: bytes) -> Diag0xB821 | None:
 
     arfcn = unpack_from('<I', data, arfcn_offset)[0]
 
-    # sfn_subfn: the field is 4 bytes on v7/v9 (u32) and 3 bytes on v12/v14/v17+
-    # (u24). The low 16 bits give sfn<<4|slot (validated vs 1,544 corpus records).
-    # The upper byte(s) are not reserved — they
-    # carry live, varying data (non-zero in 6/12 fixtures; SCAT derives
-    # subframe/slot from them), so the full-width value is read and exposed as
-    # sfn_subfn_raw rather than discarded. Width = pdu_id_offset - sfn_offset.
+    # sfn_subfn: 4 bytes on v7/v9 (u32), 3 bytes on v12/v14/v17+ (u24). Width
+    # = pdu_id_offset - sfn_offset. SFN and subframe bit positions are per
+    # version (_SFN_SHIFT; module docstring for the timestamp proof). The
+    # whole field is kept as sfn_subfn_raw.
     sfn_off = _SFN_SUBFN_OFFSET[version]
     sfn_width = _PDU_ID_OFFSET[version] - sfn_off      # 4 on v7/v9, 3 elsewhere
     sfn_subfn_raw = int.from_bytes(data[sfn_off:sfn_off + sfn_width], 'little')
-    sfn_slot = sfn_subfn_raw & 0xFFFF
-    sfn = sfn_slot >> 4
-    slot = sfn_slot & 0xF
+    sfn_shift = _SFN_SHIFT[version]
+    sfn = (sfn_subfn_raw >> sfn_shift) & 0x3FF
+    # Unstamped: every bit from 0 up to the top of the SFN is zero.
+    sfn_stamped = (sfn_subfn_raw & ((1 << (sfn_shift + 10)) - 1)) != 0
+    subframe = ((sfn_subfn_raw >> _SUBFRAME_SHIFT) & 0xF
+                if version in _SUBFRAME_VERSIONS else None)
 
     pdu_id = data[_PDU_ID_OFFSET[version]]
     sib_mask = unpack_from('<I', data, _SIB_MASK_OFFSET[version])[0]
@@ -940,7 +984,8 @@ def parse_0xb821(log_time: int, data: bytes) -> Diag0xB821 | None:
         pci=pci,
         arfcn=arfcn,
         sfn=sfn,
-        slot=slot,
+        subframe=subframe,
+        sfn_stamped=sfn_stamped,
         sfn_subfn_raw=sfn_subfn_raw,
         pdu_id=pdu_id,
         sib_mask=sib_mask,

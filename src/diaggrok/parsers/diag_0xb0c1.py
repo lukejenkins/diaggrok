@@ -64,8 +64,8 @@ Version enum: a black-box reference decoder also handles minor versions
 are v0x02 / 11 B). The enum stays {0x02}; any other version returns None
 (loud) rather than being decoded on a guessed layout.
 
-Log name: LOG_LTE_RRC_MIB_MESSAGE
-Also known as: LOG_MIB_MESSAGE, LOG_LTE_RRC_MIB_MESSAGE_LOG_PACKET, LTE RRC MIB Message Log Packet
+Log name: LTE RRC MIB Message Log
+Also known as: LOG_LTE_RRC_MIB_MESSAGE, LOG_MIB_MESSAGE, LOG_LTE_RRC_MIB_MESSAGE_LOG_PACKET, LTE RRC MIB Message Log Packet
 """
 from __future__ import annotations
 

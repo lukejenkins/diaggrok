@@ -91,10 +91,37 @@ GROUNDING —
     RRCConnectionRequest PDU logged in 0xB0C0 on every reason-0 record checked
     (7/7 across MC7455, EG25-G, LV55, FN980, EM9291, FM101), at the same tick
     (MDM9x07) or 1-2 ms after it (SDX).
-  * `rach_reason` values: 0 (CCCH Msg3, random preamble — connection
-    establishment, grounded above), 2 (random preamble, msg3_size 0) and 4
-    (dedicated preamble 59 / 0, msg3_size 0, same PCI — PDCCH-order-like).
-    Only 0's meaning is grounded; the enum is exposed as an int.
+  * `rach_reason` is the LOG's enum, which is NOT the MAC F3 enum.
+    `rach_reason_name` names the two grounded values:
+      0 CONNECTION_REQ — F3 "reason=0" / "access reason 0 (0-Conn:…)" on every
+        reason-0 record with MAC F3 (25, LM960 ×4 captures + EM7565).
+      4 HANDOVER — on 4/4 LM960 wardrive records the same RACH is printed
+        `lte_mac_ctrl.c:2206 Start Access Request for reason=2` and
+        `lte_mac_ctrl.c:1551 Got RACH Confirmation for access reason 2
+        (0-Conn:1-RLF:2-HO:3-ULD:4-DLD)`, so log 4 ⇔ F3 2 = HO.
+    The 0x60 event EVENT_LTE_RACH_ACCESS_START carries the LOG enum, not the F3
+    one: V1 (id 1501, MDM9x07) payload = [rach_reason, co_ra] — [00 01] ×5,
+    [04 01] ×1, same tick; V2 (id 2689, MDM9x50) 1 byte = co_ra<<3 | rach_reason
+    — 0x08 on 88 reason-0 records, 0x0c on the 4 HO records. Value 2 (random
+    preamble, msg3_size 0; RM500Q) and others stay unnamed (None).
+  * On HANDOVER records `ra_preamble_id` is NOT the F3 RAID: B061 reads 2 where
+    F3 prints RAID=255 and a UE-selected preamble (4/4), and `msg3_size` reads 0
+    where F3 later prints msg3_len=9 (the C-RNTI CE Msg3 is built after the
+    RAR grant). The record is taken at the trigger. `ra_preamble_id` and
+    `msg3_size` are grounded on reason 0 only.
+
+CONFIG-SUBPACKET F3 (cfg v0x04, MDM9x50 — LM960A18 ×4 captures incl. two
+wardrives + EM7565): `lte_mac_rach.c:691 rach_send_preamble … pwr_lvl=` on
+attempt 1 = `preamble_initial_power_dbm`; `lte_mac_rach.c:1060 … contn_res_tmr=`
+= `contention_resolution_timer_ms`; `lte_ml1_dlm_rach.c:750 MSG2 … Win size :`
+= `ra_response_window_sf`; `lte_ml1_prach.c:1970 … for prach index N` =
+`prach_config_index`. All 28 records with a valid config body match (24 carry
+the prach-index print), incl. prach index 3/5/20 changing between cells. One
+record with an all-zero (pre-SIB2) body still RACHes at −110/64/10/5, so the
+zero body is the log's own snapshot. The other layouts are F3-silent: the EG25-G MDM9x07 build prints no
+RACH values (cfg v0x02 / rsn v0x01), and none of the SDX55/62/65 captures checked
+(M3100, FT980M, RM520N ×5, EM9190, EM9291 ×2, SIM8202G, LV55, T99W175) has a
+MAC-RACH print. Their 0x60 stream has only RAID_MATCH_V3, no ACCESS_START.
 
 `msg3_ccch_sdu` is additionally decoded as RRCConnectionRequest-r8 (TS 36.331,
 UPER) when msg3_size == 6 and the first two bits are `01`: ue_identity_type
@@ -153,6 +180,13 @@ ESTABLISHMENT_CAUSES = {
     7: "spare1",
 }
 
+# The LOG's rach_reason enum (≠ the MAC F3 "0-Conn:1-RLF:2-HO:3-ULD:4-DLD"
+# numbering). Only the F3- and 0x60-grounded values are named.
+RACH_REASONS = {
+    0: "CONNECTION_REQ",
+    4: "HANDOVER",
+}
+
 
 @dataclass
 class Diag0xB061:
@@ -186,6 +220,7 @@ class Diag0xB061:
     # ── RACH reason subpacket (id 0x05) ──
     rsn_version: int | None
     rach_reason: int | None
+    rach_reason_name: str | None
     msg3_ccch_sdu: bytes | None
     co_ra: int | None
     rsn_field_1: int | None
@@ -235,6 +270,7 @@ class Diag0xB061:
             "cfg_trailer": self.cfg_trailer,
             "rsn_version": self.rsn_version,
             "rach_reason": self.rach_reason,
+            "rach_reason_name": self.rach_reason_name,
             "msg3_ccch_sdu": self.msg3_ccch_sdu,
             "co_ra": self.co_ra,
             "rsn_field_1": self.rsn_field_1,
@@ -264,7 +300,7 @@ _CFG_FIELDS = (
     "max_harq_msg3_tx", "ra_response_window_sf", "cfg_prefix", "cfg_trailer",
 )
 _RSN_FIELDS = (
-    "rach_reason", "msg3_ccch_sdu", "co_ra", "rsn_field_1", "ra_preamble_id",
+    "rach_reason", "rach_reason_name", "msg3_ccch_sdu", "co_ra", "rsn_field_1", "ra_preamble_id",
     "msg3_size", "ra_group", "dl_pathloss_db", "time_u16", "rsn_prefix", "rsn_trailer",
 )
 _RRC_FIELDS = (
@@ -317,6 +353,7 @@ def _decode_rach_reason(body: bytes, sp_version: int) -> dict[str, Any] | None:
         return None
     f: dict[str, Any] = {"rsn_prefix": body[:prefix_len]}
     f["rach_reason"] = body[o]
+    f["rach_reason_name"] = RACH_REASONS.get(body[o])
     f["msg3_ccch_sdu"] = body[o + 1:o + 7]
     f["co_ra"] = body[o + 7]
     f["rsn_field_1"] = body[o + 8]
@@ -370,7 +407,7 @@ def _decode_rrc_connection_request(sdu: bytes) -> dict[str, Any] | None:
         "0xB061 — LTE MAC RACH Trigger: SIB2 RACH/PRACH config subpacket + RACH "
         "reason subpacket (reason, RAID, Msg3 CCCH SDU / RRCConnectionRequest, pathloss)"
     ),
-    version=3,
+    version=4,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -383,16 +420,26 @@ def _decode_rrc_connection_request(sdu: bytes) -> dict[str, Any] | None:
         "fields grounded against co-emitted LM960 F3 (lte_mac_ctrl.c:2206 "
         "reason/RAID, lte_mac_rach.c:550 co_ra/ra_gp, lte_mac_rach.c:1060 "
         "msg3_len, lte_ml1_prach.c:3189 dl_pathloss); the Msg3 SDU equals the "
-        "UL-CCCH RRCConnectionRequest PDU in 0xB0C0 byte for byte."
+        "UL-CCCH RRCConnectionRequest PDU in 0xB0C0 byte for byte. cfg v0x04 "
+        "config also F3-grounded (pwr_lvl, contn_res_tmr, MSG2 Win size, prach "
+        "index; 28/28 MDM9x50 records); rach_reason 0/4 named from F3 + 0x60 "
+        "EVENT_LTE_RACH_ACCESS_START (log 4 = F3 '2-HO')."
     ),
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=35,
-    fields_parsed=35,
+    fields_identified=36,
+    fields_parsed=36,
     field_invariants={
         "version": {"enum": [_B061_VERSION_OBSERVED]},
+        # The body layout is chosen per SUBPACKET, not by byte 0: each
+        # subpacket carries its own version. Pinned so an unseen one is loud.
+        "cfg_version": {"enum": sorted(_CFG_LAYOUT)},
+        "rsn_version": {"enum": sorted(_RSN_LAYOUT)},
     },
+    # F3-sweep layout axes: the unit of F3 work is
+    # (0xB061, v0x01, cfg.vN) and (0xB061, v0x01, rsn.vN), not v0x01 alone.
+    layout_axes={"cfg": "cfg_version", "rsn": "rsn_version"},
 )
 def parse_0xb061(log_time: int, data: bytes) -> Diag0xB061 | None:
     if len(data) < 4:

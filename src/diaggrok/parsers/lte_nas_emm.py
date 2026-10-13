@@ -644,9 +644,22 @@ def decode_attach_accept(body: bytes) -> dict[str, Any] | None:
         else:                       # truncated container — nothing optional left
             return out
     # Optional IEs.
+    out.update(decode_attach_accept_optional(body[pos:]))
+    return out
+
+
+def decode_attach_accept_optional(tail: bytes) -> dict[str, Any]:
+    """Decode the optional IEs of an Attach Accept (TS 24.301 Table 8.2.1.1).
+
+    ``tail`` is everything after the ESM message container. Used by
+    :func:`decode_attach_accept` and for the Attach Accept bytes that follow
+    an attach-time 0xC1 in a 0xB0E2 record. Untabled IEIs surface in
+    ``unrecognized_ieis``.
+    """
+    out: dict[str, Any] = {}
     unrecognized: list[int] = []
     for iei, value, recognized in walk_optional_ies(
-            body[pos:], _ATTACH_ACCEPT_IE_TABLE):
+            tail, _ATTACH_ACCEPT_IE_TABLE):
         if not recognized:
             unrecognized.append(iei)
             continue

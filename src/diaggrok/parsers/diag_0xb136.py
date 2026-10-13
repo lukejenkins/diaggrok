@@ -16,7 +16,8 @@ F3-grounded against ``lte_ml1_dlm_ard_new.c`` — the
 Adaptive RX Diversity state machine, whose ``ARD STM[cc] sf_now:N RxMap:…``
 print carries the same (carrier, absolute subframe) key. See ``Diag0xB136``.
 
-Log name: LOG_LTE_LL1_RX_ON_TOGGLE_INFO
+Log name: LTE LL1 Rx On Toggle Info
+Also known as: LOG_LTE_LL1_RX_ON_TOGGLE_INFO
 """
 from __future__ import annotations
 

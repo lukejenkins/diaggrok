@@ -25,7 +25,7 @@ from diaggrok.registry import register
     LOG_LTE_NAS_ESM_PLAIN_OTA_IN_MSG, domain="nas",
     name="0xB0E2",
     description="LTE NAS ESM plain OTA incoming message — prot_disc, bearer_id, pti, msg_type",
-    version=7,
+    version=8,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -40,8 +40,15 @@ from diaggrok.registry import register
         "EMM/ESM message's own TS 24.301 structure (mandatory V/LV/LV-E part + "
         "known optional TV/TLV/TLV-E IEs); a PDU whose declared lengths overrun "
         "the record returns None (registry WARN) instead of a silently short "
-        "decode. Not detectable: a cut that removes a whole trailing 1-octet IE "
-        "or bytes past the message's known IEs."
+        "decode. Not detectable: a cut that removes a whole trailing 1-octet IE. "
+        "An Activate default EPS bearer context request sent inside an Attach "
+        "Accept is logged from the start of the ESM message container to the "
+        "end of the Attach Accept, so the Attach Accept optional IEs (GUTI, LAI, "
+        "MS identity, T3402, ...) follow the ESM message. The ESM message ends "
+        "at the first IEI that is not a TS 24.301 Table 8.3.6.1 IEI or is out of "
+        "table order; that split equals the paired 0xB0EC Attach Accept's "
+        "container length byte for byte on SDX20, SDX55 and SDX62 captures, and "
+        "the remainder decodes as attach_accept_tail."
     ),
     issues=(),
     primary_issue=None,
@@ -50,6 +57,8 @@ from diaggrok.registry import register
     # prot_disc, eps_bearer_id, pti, msg_type, nas_pdu_hex (ESM NAS PDU). All
     # surfaced. msg_type_name/prot_disc_name are derivations (excluded per
     # convention). is_uplink is derived from log_code (excluded likewise).
+    # esm_body / esm_message_len / attach_accept_tail decode regions of
+    # nas_pdu_hex, so they are derivations too.
     fields_identified=9,
     fields_parsed=9,
     field_invariants={"version": {"enum": [0x01]}},  # literal (== _NAS_OTA_VERSION_OBSERVED); AST audits don't resolve the cross-module import

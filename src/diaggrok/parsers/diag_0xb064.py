@@ -295,7 +295,16 @@ def _parse_subpackets(data: bytes) -> tuple[list[dict[str, Any]], int] | None:
     fields_parsed=14,
     field_invariants={
         "version": {"enum": [_B064_VERSION_OBSERVED]},
+        # The body layout is picked PER SUBPACKET: the UL-TB subpacket
+        # 0x08 is v1 (MDM9x07/9x30/9x50, 12 B sample), v2 (SDX20..SDX55) or v3
+        # (SDX62/SDX65), both +2 B sub_id/cell_id prefix. Pinned so an unseen
+        # subpacket version is loud.
+        "subpackets[].subpacket_id": {"enum": [0x08]},
+        "subpackets[].subpacket_version": {"enum": [1, 2, 3]},
     },
+    # F3-sweep layout axis (list form): the unit of F3 work is
+    # (0xB064, v0x01, sp08.vN).
+    layout_axes={"sp": "subpackets[subpacket_id].subpacket_version"},
 )
 def parse_0xb064(log_time: int, data: bytes) -> Diag0xB064 | None:
     if len(data) < 4:

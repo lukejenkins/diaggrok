@@ -73,7 +73,7 @@ def gps_time_is_valid(log_code, d):
     cleanly: 2429 on both correct captures, 0xFFFF on the bogus one.
 
     Scoped to 0x1476: 0x14D8 exposes no week field, and its own branch can never
-    emit a fix anyway (hardcoded 0.0 lat/lon)."""
+    emit a fix anyway (hardcoded 0.0 lat/lon -- it is a thermal-monitor code)."""
     if log_code != 0x1476:
         return True
     return d.get("gps_week") != _GPS_WEEK_UNKNOWN
