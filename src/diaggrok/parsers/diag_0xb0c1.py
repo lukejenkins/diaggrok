@@ -57,12 +57,41 @@ Grounding (v0x02), all on captured records:
   EM9291 and SCAT decodes the same bytes, but no OTA MIB exists for it; it is
   unexplained, not a layout error.
 
+**v0x01 (9 B, MDM9625).** The HP X5 / Foxconn T77W595 (Verizon) logs an
+older layout: the same fields, with a **u16** EARFCN (it predates the >65535
+Band-66 EARFCNs)::
+
+    0  u8   version (0x01)
+    1  u16  pci
+    3  u16  dl_earfcn
+    5  u16  sfn                 the PBCH TTI-start frame: MIB systemFrameNumber
+                                  x 4, always 4-aligned (NOT the full SFN of
+                                  v0x02)
+    7  u8   num_tx_antennas
+    8  u8   dl_bandwidth_rb
+
+Grounding (v0x01: 11 records, 3 captures, all with plaintext 0x79 F3):
+
+* **F3 emitter, 1:1**: every record is followed within 20k ticks by RRC's
+  ``lte_rrc_stm.c:533`` "(ML1_DLM -> LTE_RRC_SIB_SM) (ACTIVE/LTE_CPHY_MIB_IND)"
+  (11/11). Those transitions number 3+4+4 = 11 in the three captures, so there
+  is one record per RRC-consumed MIB, as on v0x02. 9/11 also follow
+  ``lte_ml1_dlm_sib.c:2162`` "MIB DECODE status 2" within 20k ticks.
+* **Black-box (SCAT)**: "LTE MIB Info: EARFCN, SFN, Bandwidth, TX antennas"
+  agrees on every line SCAT prints (7: 5035/{0,112,128,992}, 2300/{256,1020,0}).
+* **OTA MIB (SCAT pcap BCCH-BCH)**: ``sfn`` == systemFrameNumber x 4 on every
+  joinable record (112/0x1c, 128/0x20, 992/0xf8, 1020/0xff, 0/0x00, 256/0x40),
+  and dl-Bandwidth n25/n100 == 25/100 RB.
+* **Sibling 0xB183 v0x01** (ML1's decode of the same PBCH, within 70k ticks
+  before): (dl_earfcn, pci), dl_bandwidth_rb and ``sfn`` == its TTI-start SFN
+  agree 11/11. ``lte_ml1_mcvs.c:2420`` "MIB update, BW %d num_tx_ant %d"
+  labels the bandwidth enum and the 4 ports.
+
 Network-side identifiers only (no subscriber PII).
 
-Version enum: a black-box reference decoder also handles minor versions
-**1 and 17**, which are **not attested** in any capture (all 5,258 records
-are v0x02 / 11 B). The enum stays {0x02}; any other version returns None
-(loud) rather than being decoded on a guessed layout.
+Version enum: {0x01, 0x02}. A black-box reference decoder also handles minor
+version **17**, which is **not attested** in any capture. Any other version
+returns None rather than being decoded on a guessed layout.
 
 Log name: LTE RRC MIB Message Log
 Also known as: LOG_LTE_RRC_MIB_MESSAGE, LOG_MIB_MESSAGE, LOG_LTE_RRC_MIB_MESSAGE_LOG_PACKET, LTE RRC MIB Message Log Packet
@@ -78,7 +107,7 @@ from diaggrok.registry import register
 
 @dataclass
 class Diag0xB0C1:
-    """0xB0C1 — LTE RRC MIB message (v0x02, 11 B)."""
+    """0xB0C1 — LTE RRC MIB message (v0x01 9 B, v0x02 11 B)."""
     log_time: int
     version: int
     pci: int
@@ -107,13 +136,13 @@ class Diag0xB0C1:
         }
 
 
-# Every captured record is v0x02 / 11 B. Size invariance
-# != format invariance: another version at the same length is rejected, not
-# decoded on the v0x02 layout.
-_B0C1_VERSION_OBSERVED = 0x02
-_B0C1_PAYLOAD_SIZE_OBSERVED = 11
-_V2 = Struct("<BHIHBB")
-assert _V2.size == _B0C1_PAYLOAD_SIZE_OBSERVED
+# Per-version layout; each version has one fixed size. Size invariance
+# != format invariance: a record whose length does not match its version's
+# layout is rejected, not decoded on another version's layout.
+_V1 = Struct("<BHHHBB")   # v0x01, 9 B: u16 dl_earfcn (MDM9625)
+_V2 = Struct("<BHIHBB")   # v0x02, 11 B: u32 dl_earfcn
+_LAYOUTS = {0x01: _V1, 0x02: _V2}
+assert (_V1.size, _V2.size) == (9, 11)
 
 # 3GPP TS 36.331 MasterInformationBlock dl-Bandwidth, as RB → MHz.
 _RB_TO_MHZ = {6: 1.4, 15: 3.0, 25: 5.0, 50: 10.0, 75: 15.0, 100: 20.0}
@@ -125,8 +154,8 @@ _RB_TO_MHZ = {6: 1.4, 15: 3.0, 25: 5.0, 50: 10.0, 75: 15.0, 100: 20.0}
     domain="rrc",
     wigle_direct=False,
     wigle_roles=("pci-earfcn-bridge",),
-    description="0xB0C1 — LTE RRC MIB Message (fixed 11B v0x02; F3+SCAT+OTA-grounded pci, dl_earfcn, sfn, num_tx_antennas, dl_bandwidth_rb)",
-    version=3,
+    description="0xB0C1 — LTE RRC MIB Message (9B v0x01 / 11B v0x02; F3+SCAT+OTA-grounded pci, dl_earfcn, sfn, num_tx_antennas, dl_bandwidth_rb)",
+    version=4,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -135,7 +164,9 @@ _RB_TO_MHZ = {6: 1.4, 15: 3.0, 25: 5.0, 50: 10.0, 75: 15.0, 100: 20.0}
         "grounded per field against in-capture F3 (lte_rrc_sib.c 'MIB received' "
         "1:1 co-emission; lte_ml1_md.c 'PBCH decode resp'), SCAT's black-box "
         "decode of this code, and the SCAT-pcap MIB OTA decode. Version and "
-        "payload size are gated (v0x02, 11 B)."
+        "payload size are gated (v0x01 9 B, v0x02 11 B). v0x01 (MDM9625): "
+        "u16 dl_earfcn; sfn is the TTI-start frame (OTA systemFrameNumber x 4); "
+        "1:1 with RRC LTE_CPHY_MIB_IND F3 (11/11), SCAT- and OTA-matched."
     ),
     source_url="",
     issues=(),
@@ -143,7 +174,7 @@ _RB_TO_MHZ = {6: 1.4, 15: 3.0, 25: 5.0, 50: 10.0, 75: 15.0, 100: 20.0}
     fields_identified=6,
     fields_parsed=6,
     field_invariants={
-        "version": {"enum": [_B0C1_VERSION_OBSERVED]},
+        "version": {"enum": sorted(_LAYOUTS)},
         "pci": {"range": (0, 503)},
         "sfn": {"range": (0, 1023)},
         "num_tx_antennas": {"enum": [1, 2, 4]},
@@ -151,11 +182,10 @@ _RB_TO_MHZ = {6: 1.4, 15: 3.0, 25: 5.0, 50: 10.0, 75: 15.0, 100: 20.0}
     },
 )
 def parse_0xb0c1(log_time: int, data: bytes) -> Diag0xB0C1 | None:
-    if len(data) != _B0C1_PAYLOAD_SIZE_OBSERVED:
+    layout = _LAYOUTS.get(data[0]) if data else None
+    if layout is None or len(data) != layout.size:
         return None
-    if data[0] != _B0C1_VERSION_OBSERVED:
-        return None
-    version, pci, dl_earfcn, sfn, num_tx_antennas, dl_bandwidth_rb = _V2.unpack(data)
+    version, pci, dl_earfcn, sfn, num_tx_antennas, dl_bandwidth_rb = layout.unpack(data)
     return Diag0xB0C1(
         log_time=log_time,
         version=version,

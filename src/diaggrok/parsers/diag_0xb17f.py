@@ -125,6 +125,29 @@ class Diag0xB17F:
     equal. Neither word is the ML1 `rsrp_inst` (F3: ~1 dB above both) — both
     are filtered; `rsrp` is just the shorter tap. The two words are not an
     rx0/rx1 split; the measured-vs-averaged axis is a fast-tap/slow-tap axis.
+
+    **S-criterion evaluation (v14, the "and eval" half).** Three fields the
+    parser used to drop, each named by the firmware's own F3 in
+    `lte_ml1_mdb_idle.c` and joined record-for-record:
+
+        serving_priority = u32@8 >> 9             (u16@6 >> 9 on v0x03/v0x04)
+        srxlev = ((u32@28 >> 19) & 0x7F) - 50 dB  (u32@24 on v0x03/v0x04)
+        squal  = ((u32@36 >>  7) & 0x7F) - 35 dB  (u32@32 on v0x04; absent v0x03)
+
+    `serving_priority` is the bits the `pci` mask drops: every non-zero value
+    equals F3 "Serv cell (%d,%d) prio %d" for that cell (4 cells, EG25-G +
+    LM960). 0 also turns up on cells whose F3 priority is non-zero, so 0 can
+    mean "not yet known". The field is 4 bits wide: the corpus walk also finds
+    15, never 8..14 (EM7565, MC7455, SIM8202G, RM520N-GL; CBRS / band 42-43
+    cells among them). No oracle labels 15, so it stays the raw value (it is
+    not mapped to None or given a meaning). `srxlev` == trunc(F3 "S thresh check ... Srxlev")
+    on 320/320 joined records (EG25-G MDM9607, LM960 SDX20, and T77W595
+    MDM9625 by args alone). `squal` == trunc(F3 Squal) 179/179 on v0x05 and
+    round(F3 Squal) 47/47 on v0x04; when the cell sets no q-QualMin, F3 Squal
+    runs ~111..116, past the 7-bit range, and the field reads 0x7F on SDX20
+    (`squal` None) or an unrelated value on MDM9625. The v0x03 (MDM9200)
+    srxlev shares the layout but has no F3 to check against. `srxlev_raw` /
+    `squal_raw` keep the 7-bit fields as read.
     """
     log_time: int
     version: int
@@ -138,6 +161,12 @@ class Diag0xB17F:
     data_density: float
     payload_size: int
     body_raw: bytes
+    # v14 S-criterion fields; defaulted so pre-v14 keyword constructors still work.
+    serving_priority: int | None = None
+    srxlev: int | None = None
+    srxlev_raw: int | None = None
+    squal: int | None = None
+    squal_raw: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -151,6 +180,11 @@ class Diag0xB17F:
             "rsrq": self.rsrq,
             "rsrq_avg": self.rsrq_avg,
             "rssi": self.rssi,
+            "serving_priority": self.serving_priority,
+            "srxlev": self.srxlev,
+            "srxlev_raw": self.srxlev_raw,
+            "squal": self.squal,
+            "squal_raw": self.squal_raw,
             "data_density": self.data_density,
             "payload_size": self.payload_size,
             "body_raw": self.body_raw,
@@ -164,8 +198,8 @@ class Diag0xB17F:
     name="0xB17F",
     wigle_direct=True,
     wigle_roles=("signal", "pci-earfcn-bridge", "rat-context"),
-    description="0xB17F — LTE ML1 per-cell measurement record (fixed 32/36/40 B by version; earfcn+pci identity + rsrp/rsrp_avg/rsrq/rsrq_avg/rssi; canonical name contested, see docstring; legacy mislabel LtePdcpB17F)",
-    version=13,
+    description="0xB17F — LTE ML1 per-cell measurement record (fixed 32/36/40 B by version; earfcn+pci identity + rsrp/rsrp_avg/rsrq/rsrq_avg/rssi + S-criterion serving_priority/srxlev/squal; canonical name contested, see docstring; legacy mislabel LtePdcpB17F)",
+    version=14,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -182,7 +216,7 @@ class Diag0xB17F:
         "9-bit PCI is valid. "
         "Cross-chipset on 1,542 v0x05 records with zero out-of-range: EG25-G "
         "MDM9607 306/306 -> PCI <pci> == AT+QENG servingcell, CFW-3212 SDX62 "
-        "223/223 on-earfcn -> <pci> == AT+QENG, MC7411 SDX50M 135/136 on-earfcn "
+        "223/223 on-earfcn -> <pci> == AT+QENG, MC7411 MDM9250 135/136 on-earfcn "
         "-> <pci> == the surveyed serving PCI; the (earfcn, pci) tuple also "
         "reproduces 5 of 8 independently surveyed cells (serving + 4 "
         "neighbours) on the MC7411 capture. Measurement block: "
@@ -210,14 +244,20 @@ class Diag0xB17F:
         "235/235 and rssi == 0xB196 rssi 235/235; F3 ant_switch.c:2766 'Filtered "
         "RSRP0' == rsrp_rx0 within 1/32 dB on 232/232. rsrq = bits 0..9 of the rsrq "
         "word (== 0xB196 rsrq 235/235); bits 20..29 = rsrq_avg, a slower "
-        "tap (about half the step variance). Payloads shorter "
-        "than the fixed layout return None (registry warning)."
+        "tap (about half the step variance). S-criterion fields (v14): "
+        "serving_priority = u32@8>>9 (u16@6>>9 narrow) == F3 'Serv cell "
+        "(%d,%d) prio %d' on every non-zero value, 4 cells; srxlev = "
+        "((u32@28>>19)&0x7F)-50 (u32@24 narrow) == trunc(F3 'S thresh check' "
+        "Srxlev) 320/320 over MDM9607/SDX20/MDM9625; squal = "
+        "((u32@36>>7)&0x7F)-35 (u32@32 on v0x04, absent v0x03) == F3 Squal "
+        "179/179 v0x05 (trunc) + 47/47 v0x04 (round), 0x7F = saturated. "
+        "Payloads shorter than the fixed layout return None (registry warning)."
     ),
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=8,
-    fields_parsed=8,
+    fields_identified=11,
+    fields_parsed=11,
     field_invariants={
         "version": {"enum": list(_B17F_VERSIONS_OBSERVED)},
         "earfcn": {"range": (0, 262143)},
@@ -230,6 +270,10 @@ class Diag0xB17F:
         "rsrq": {"range": (-40.0, 0.0)},
         "rsrq_avg": {"range": (-40.0, 0.0)},
         "rssi": {"range": (-130.0, 0.0)},
+        # 3-bit cellReselectionPriority; the 7-bit S fields minus their offsets.
+        "serving_priority": {"range": (0, 15)},  # 0..7 + an unlabelled 15
+        "srxlev": {"range": (-50, 77)},
+        "squal": {"range": (-35, 91)},
     },
 )
 def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
@@ -251,16 +295,21 @@ def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
         # Reading v0x05's u32@4 earfcn / u32@8 pci out of a v0x03 frame gives a
         # 9-digit garbage channel number on 794/794 corpus records.
         earfcn = unpack_from('<H', data, 4)[0]
-        pci = unpack_from('<H', data, 6)[0] & 0x1FF
+        pci_word = unpack_from('<H', data, 6)[0]
         base = 8
     else:
         earfcn = unpack_from('<I', data, 4)[0]
-        # pci = low 9 bits of the u32-LE @8. The upper bits carry an
-        # unidentified field (observed {0, 2, 3, 4, 6}) — masking them off is what
+        # pci = low 9 bits of the u32-LE @8. The upper bits carry the
+        # serving priority (observed 0..7 and 15) — masking them off is what
         # keeps this in-range; the raw u16@8 reads a value > 503 on EG25-G/CFW-3212
         # where the AT-attested serving PCI is in range.
-        pci = unpack_from('<I', data, 8)[0] & 0x1FF
+        pci_word = unpack_from('<I', data, 8)[0]
         base = 12
+    pci = pci_word & 0x1FF
+    # The bits above the PhysCellID are the serving layer's reselection
+    # priority (F3 "Serv cell (%d,%d) prio %d"); 0 can also mean "not yet known",
+    # and 15 (4-bit all-ones, no oracle label) is kept raw.
+    serving_priority = pci_word >> 9
     # Measurement block — subfields of u32 words at base, base+4, base+8,
     # base+12, the same 1/16-LSB fixed-point convention as sibling 0xB193.
     # rsrp = best rx branch (max(rx0, rx1), v0x04 0xB196 join);
@@ -275,6 +324,15 @@ def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
     rsrq = (rsrq_word & 0x3FF) / 16 - 30
     rsrq_avg = ((rsrq_word >> 20) & 0x3FF) / 16 - 30
     rssi = ((unpack_from('<I', data, base + 12)[0] >> 10) & 0xFFF) / 16 - 110
+    # S-criterion evaluation, 7-bit offset fields (F3 lte_ml1_mdb_idle.c
+    # "S thresh check"). v0x03 ends before the squal word.
+    srxlev_raw = (unpack_from('<I', data, base + 16)[0] >> 19) & 0x7F
+    srxlev = srxlev_raw - 50
+    squal_raw = squal = None
+    if version != 0x03:
+        squal_raw = (unpack_from('<I', data, base + 24)[0] >> 7) & 0x7F
+        # 0x7F = saturated: Squal past the field's range (no q-QualMin).
+        squal = None if squal_raw == 0x7F else squal_raw - 35
     if len(data) > 2:
         nonzero = sum(1 for b in data[2:] if b != 0)
         total = max(len(data) - 2, 1)
@@ -291,6 +349,11 @@ def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
         rsrq=rsrq,
         rsrq_avg=rsrq_avg,
         rssi=rssi,
+        serving_priority=serving_priority,
+        srxlev=srxlev,
+        srxlev_raw=srxlev_raw,
+        squal=squal,
+        squal_raw=squal_raw,
         data_density=density,
         payload_size=len(data),
         body_raw=data[1:],

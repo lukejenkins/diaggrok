@@ -92,12 +92,13 @@ variable-length RRC OTA container (the legacy ``LteRrcReconfig192A`` name);
 the only named source is ``LOG_LTE_RF_FED_RX_AGC``.
 
 Version census: v0x02 is the only version. Every other byte0 (0x00, 0x04,
-0x24, 0x2C, 0x3C, 0x54, 0x84, 0x9C, 0xEC and ~35 more) is size-4 HDLC
-tail-fragment residue, with ONE exception: a 2247 B ``byte0=0x00`` record in
+0x24, 0x2C, 0x3C, 0x54, 0x84, 0x9C, 0xEC and ~35 more) is the 4 B short form,
+where byte 0 is data (an RF-teardown event record decoded by
+``_short_form_4b``), with ONE exception: a 2247 B ``byte0=0x00`` record in
 a stress-test capture, which is the tail of a 3036 B record whose first
 789 B were lost (aligned that way, its 71 non-zero bytes fall in the stale
 region and summary and none in the zero pad; the 3016 alignment puts 70 in
-the pad). It is why a version census reads "v0x00 x442" (441 residue + 1):
+the pad). It is why a version census reads "v0x00 x442" (441 short form + 1):
 that byte0 is a padding zero, not a version. ``classify_misframe`` reports it
 as ``head_truncated_3036``.
 
@@ -111,6 +112,7 @@ from dataclasses import dataclass, field
 from struct import unpack_from
 from typing import Any
 
+from diaggrok.parsers._short_form_4b import ShortForm4B, parse_short_form_4b
 from diaggrok.registry import register
 
 logger = logging.getLogger(__name__)
@@ -130,7 +132,7 @@ _SUMMARY_SIZE = 10
 _N_CHAINS = 4  # header bytes [8:12] are the per-chain valid flags
 _Q24_UNSET = 0x7FFFFFFF
 _HEADER_PREFIX = b"\x02\x01"
-_RESIDUE_MAX = 4  # size<=4 payloads are HDLC tail-fragment residue
+_RESIDUE_MAX = 3  # size<=3 payloads are HDLC tail-fragment residue; 4 B is the short form
 
 # ── the size gate's loud channel ─────────────────────────────────────────────
 # Only 3016 and 3036 are layouts. Every other payload is rejected, classified,
@@ -367,14 +369,15 @@ class Diag0x192A:
         "0x192A — LOG_LTE_RF_FED_RX_AGC (RF Rx AGC), 3016B/3036B fixed record: "
         "header + 4 chain-valid flags, sentinel slot table, 4 Q8.24 Rx-AGC chain entries, summary"
     ),
-    version=6,
+    version=7,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
         "Clean-room RE from FN980m SDX55, extended across MDM9x40, SWI9X50C, "
         "SDX55 and later silicon. version=0x02 at sizes 3016 or 3036; size=4 "
-        "outliers are HDLC framing residue. Name: LOG_LTE_RF_FED_RX_AGC (an "
+        "records are the shared short form (an RF-teardown event, word kept "
+        "raw). Name: LOG_LTE_RF_FED_RX_AGC (an "
         "RRC-reconfig reading is ruled out by the fixed size and cadence). "
         "Body: size-keyed layout (20/28 sentinel slots, 4 chain entries of 4 x "
         "Q8.24 int32 + index + flag gated by header valid flags [8:12], "
@@ -386,22 +389,26 @@ class Diag0x192A:
         "tail_truncated / head_truncated / unrecognised), counted and logged; "
         "ERROR on unrecognised and on any off-size recurring 100x in a run "
         "(corpus max 28). 459 off-size corpus records walked, 0 unrecognised; "
-        "the only non-residue v0x00 is a head-truncated 3036 B tail."
+        "the only non-short-form v0x00 is a head-truncated 3036 B tail."
     ),
     issues=(),
     primary_issue=None,  # canonical primary tracker
     field_invariants={
         "version": {"enum": [0x02]},
-        "payload_size": {"enum": [3016, 3036]},
+        # Union of attested sizes: 4 is the shared short form, the
+        # body couples 3016 / 3036 to their layouts.
+        "payload_size": {"enum": [4, 3016, 3036]},
     },
     fields_identified=15,
     fields_parsed=15,
 )
-def parse_0x192a(log_time: int, data: bytes) -> Diag0x192A | None:
+def parse_0x192a(log_time: int, data: bytes) -> Diag0x192A | ShortForm4B | None:
     if len(data) < 1:
         return None
-    # Layer-1 version gate. Rejects the size=4 HDLC framing residue and any
-    # future non-v0x02 emission, loudly.
+    # 4 B short form: a real teardown event record, not residue.
+    if len(data) == 4:
+        return parse_short_form_4b(0x192A, log_time, data)
+    # Layer-1 version gate. Rejects any non-v0x02 emission, loudly.
     if data[0] != 0x02:
         _alarm(data)
         return None

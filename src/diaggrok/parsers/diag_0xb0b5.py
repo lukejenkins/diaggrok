@@ -11,7 +11,7 @@ Two on-wire framings, one per version byte:
 ver     silicon (observed)                 framing
 ======  =================================  =====================================
 0x01    MDM9207 / 9x30 / 9x50 / SDX20 /    4 B wrapper + one DIAG sub-packet
-        SDX50M / SDX55 (EG25-G, MC7455,    (id 0xC7, sub-packet version 0x01 or
+        MDM9250 / SDX55 (EG25-G, MC7455,   (id 0xC7, sub-packet version 0x01 or
         EM7565, LM960, MC7411, RM500Q,     0x28, u16 size = record length - 4),
         LV55, m2000, FT980m)               PDU entry header 8 B
 0x38    SDX62 / SDX65 / m3100 (RM520N-GL,  flat: 1 B version + 3 B reserved,

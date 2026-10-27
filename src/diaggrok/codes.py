@@ -208,6 +208,9 @@ LOG_GSM_DSDS_SURROUND_CELL_BA_LIST  = 0x5A71  # mirror of 0x5071
 LOG_GSM_DSDS_L1_SERVING_AUX_MEAS    = 0x5A7A  # mirror of 0x507A
 LOG_GSM_DSDS_L1_NEIGHBOR_AUX_MEAS   = 0x5A7B  # mirror of 0x507B
 LOG_GSM_DSDS_RR_SIGNALING_MESSAGE   = 0x5B2F  # mirror of 0x512F
+LOG_GSM_DSDS_L2_STATES              = 0x5AC8  # mirror of 0x50C8
+LOG_GPRS_DSDS_RLC_UL_STATS          = 0x5C02  # mirror of 0x5202
+LOG_GPRS_DSDS_RLC_DL_STATS          = 0x5C0A  # mirror of 0x520A
 
 # 3G / WCDMA signalling
 LOG_WCDMA_SIGNALLING_MESSAGE        = 0x412F  # WCDMA RRC/RLC/MAC signalling PDU
@@ -227,6 +230,7 @@ LOG_UIM_APDU_PARSE_1CC8             = 0x1CC8  # 11316B UICC/SIM APDU-parse F3 tr
 LOG_NR5G_ML1_1D24                   = 0x1D24  # 144B NR5G ML1 short
 # Codes first observed together on an EM9291 (SDX65).
 LOG_NR5G_ML1_1CE2                   = 0x1CE2  # 608B v=0x05 NR5G ML1 (range-inferred) structural stub, R562L5 SDX62
+LOG_1CD9                            = 0x1CD9  # 24B v=0x07 (SDX62) / v=0x0A (SDX72) structural stub
 LOG_NR5G_ML1_1CE5                   = 0x1CE5  # 24B v=0x01 NR5G ML1 sleep-state event
 LOG_NR5G_ML1_1D1E                   = 0x1D1E  # 117B v=0x00 NR5G ML1, length-prefixed APN @78
 LOG_NR5G_ML1_1D31                   = 0x1D31  # 31B v=0x01 NR5G ML1 boot/cycle state
@@ -280,6 +284,8 @@ LOG_NR5G_ML1_MEAS_B95B              = 0xB95B  # structural
 LOG_NR5G_L1_MEAS_STATUS             = 0xB8C5
 LOG_NR5G_ML1_MEAS_DB                = 0xB8CB
 LOG_NR5G_ML1_MEAS_DB_UPDATE         = 0xB97F
+LOG_NR5G_ML1_ACQ_REQ_B9BE           = 0xB9BE  # NR cell acq request: SSB ARFCN+PCI+band, 32B v1/v2/v4, SDX55/65/72
+LOG_NR5G_ML1_ACQ_CONFIRM_B9BF       = 0xB9BF  # NR cell acq confirm: ARFCN+PCI+RSRP/RSRQ, 48B v5/v6, SDX55/65
 LOG_NR5G_RRC_OTA_MSG                = 0xB821
 LOG_LTE_NR5G_SIGNALLING_ARRAY_B8E5  = 0xB8E5  # 16B hdr + Nx32B block array, v=0x02, SDX55
 LOG_LTE_NR5G_SIGNALLING_B8E2        = 0xB8E2  # fixed 232B, v=0x06, seq+marker+tail, SDX55

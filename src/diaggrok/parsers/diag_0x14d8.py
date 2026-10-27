@@ -66,7 +66,7 @@ class Diag0x14D8:
       (``rfdevice_papm_therm.cpp``) -> ``(2,0,4:0)``. The XO slot ``(2,5,0:0)``
       tracks ``XO_THERM`` within 1 degC but is NOT value-exact (reads 1 below
       trunc(mdegC/1000) every cycle — likely a filtered XO value).
-    - **F3, 104-byte form (MC7411 SDX50M)** — ``PA_THERM1`` -> ``(1,0,0:1)``
+    - **F3, 104-byte form (MC7411 MDM9250)** — ``PA_THERM1`` -> ``(1,0,0:1)``
       37/37, ``SYS_THERM1`` -> ``(1,0,0:0)`` 61/61, TSENS sensor 2 ->
       ``(1,0,0:2)`` 74/74, TSENS sensor 4 -> ``(1,1,0:4)`` 37/37
       (value-matched per burst).
@@ -115,7 +115,7 @@ class Diag0x14D8:
     - **20 B short form** (SDX55, SDX62, SDX72): 5 x u32 header at offsets
       0, 4, 8, 12, 16. ~6 Hz on FN980m (1761 records in a 5-minute capture).
     - **104 B long form** (EG18-NA SDX20 V2, EM7511 SDX20/MDM9650, MC7455
-      MDM9x30, MC7411 SDX50M, SIM7600NA-H MDM9x07, LM960 SDX20, EG25-G /
+      MDM9x30, MC7411 MDM9250, SIM7600NA-H MDM9x07, LM960 SDX20, EG25-G /
       EC25 / EP06A / EG12-GT MDM9207, MDM9150 C-V2X roadside unit): the same
       20-byte header followed by 84 zero bytes. The tail is **always zero**
       on **12,047 records / 35 chipset+firmware buckets / 5 vendors**,
@@ -174,7 +174,7 @@ class Diag0x14D8:
     **EP06A SDX20** (145 records): ``(0,1)``, ``(6,0)``, ``(6,1)``, ``(1,2)``
     plus ``(0,0)``.
 
-    **MC7411 SDX50M** (617 records across three firmware builds, 6 stages)::
+    **MC7411 MDM9250** (617 records across three firmware builds, 6 stages)::
 
         1. (0, 0, +25..+34)
         2. (0, 1, +125)      constant across all builds; does not track ambient
@@ -338,7 +338,7 @@ class Diag0x14D8:
         SDX55 EM9190                -45     (es=2, f2=1, f3_low in {0, 1}, f3_hi=0)   88
         SDX55 FN980m                -40     mixed signatures, small sample            3
         SDX62 RM520N-GL             -40     (es=1, f2=0, f3_low=2, f3_hi=0)           293
-        SDX50M MC7411               +125    (0, 1, _)                                 see MC7411 order
+        MDM9250 MC7411              +125    (0, 1, _)                                 see MC7411 order
 
     LM960, EG18-NA and EP06A show no negative rail value in their poll
     order. Each value is stable for a given chipset/build.
@@ -449,7 +449,7 @@ class Diag0x14D8:
         """Sensor index within its group: low 16 bits of the u32 @ +12.
 
         For TSENS rows this IS the driver's sensor number (F3 ``DALTsens.c``
-        ``Sensor = %u``, proven on SDX50M, SDX55 and SDX62).
+        ``Sensor = %u``, proven on MDM9250, SDX55 and SDX62).
         """
         return self.field_3_low16
 
@@ -705,7 +705,7 @@ class Diag0x14D8:
         "form value-matches TSENS sensors 2/4, PA_THERM1 (+125 rail) and "
         "SYS_THERM1. AT+QTEMP per-sensor joins reach r=0.99-1.00 (RM500Q-AE, "
         "RM520N-GL, EG25-G). Layout version byte0 == 1 on 899,438 corpus "
-        "records across every chipset bucket (SDX20, SDX50M, MDM9x07/9x30, "
+        "records across every chipset bucket (SDX20, MDM9250, MDM9x07/9x30, "
         "MDM9150, SDX55, SDX62, SDX72); payload size is 20 B (SDX55 and later) "
         "or 104 B (earlier generations, 84-byte tail zero on 12,047/12,047 "
         "records); field_3_u32 byte+15 == 0 on 473,834/473,834 records. "

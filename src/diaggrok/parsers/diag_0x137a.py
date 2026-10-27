@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from struct import unpack_from
 from typing import Any
 
+from diaggrok.parsers._pdsm_client_ids import PDSM_CLIENT_IDS
 from diaggrok.registry import register
 
 
@@ -76,7 +77,8 @@ class Diag0x137A:
 @register(0x137A,
     name="0x137A",
     description="CGPS PDSM End Session marker (0x137A) — 8B all-constant magic; F3-confirmed pdsm_end_session_ex() event",
-    version=1, author="Luke Jenkins", author_url="https://github.com/lukejenkins",
+    version=2,
+    author="Luke Jenkins", author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
         "Cross-generation decode from MDM9607, MDM9x50 and SDX55 captures; "
@@ -86,7 +88,7 @@ class Diag0x137A:
     issues=(),
     fields_identified=3, fields_parsed=3,
     field_invariants={
-        "magic_a30d": {"enum": [0x0DA3]},
+        "magic_a30d": {"enum": sorted(PDSM_CLIENT_IDS)},
         "payload_matches_expected": {"enum": [True]},
     },
     # Version-less: byte-0 is the low byte of the 2-byte
@@ -98,11 +100,13 @@ def parse_0x137a(log_time: int, data: bytes) -> Diag0x137A | None:
     if len(data) < 8:
         return None
     magic_a30d = unpack_from('<H', data, 0)[0]
-    if magic_a30d != 0x0DA3:
+    # [0:2] is the PDSM client_id (see _pdsm_client_ids.py), not a magic.
+    if magic_a30d not in PDSM_CLIENT_IDS:
         return None
     return Diag0x137A(
         log_time=log_time,
         magic_a30d=magic_a30d,
-        payload_matches_expected=bytes(data[:8]) == _137A_EXPECTED,
+        # [2:8] all-zero; [0:2] varies with the client_id.
+        payload_matches_expected=bytes(data[2:8]) == _137A_EXPECTED[2:],
         payload_size=len(data),
     )

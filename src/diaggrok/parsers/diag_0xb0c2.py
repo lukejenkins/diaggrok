@@ -55,7 +55,7 @@ Grounding (v0x03), all on captured records:
   FirstNet/AT&T B14 cells under a non-AT&T SIM and during a manual PLMN
   scan, so it plausibly says whether the camp is suitable. That is a
   CANDIDATE, not grounded.
-* **All captures**: 1,502 records / 257 captures, all v0x03 / 29 B; dl/ul
+* **All captures**: 1,502 records / 257 captures, v0x03 / 29 B (plus the 5 MDM9625 v0x02 records below); dl/ul
   bandwidth ∈ {25, 50, 75, 100} RB; ECI top byte < 0x10 (28-bit); band top
   byte 0; num_mnc_digits 3 everywhere (US-only captures).
 
@@ -63,10 +63,50 @@ Grounding (v0x03), all on captured records:
 key), not subscriber PII, but a real (EARFCN, PCI, ECI, TAC) tuple can locate
 a capture site, so fixtures sentinel the ECI and TAC.
 
-Version enum: a black-box reference decoder also handles minor version
-**2**, which is **not attested** in any capture (all 1,502 records are
-v0x03 / 29 B). The enum stays {0x03}; a v0x02 record returns None (loud)
-rather than being decoded on a guessed layout.
+## v0x02 — MDM9625 (u16 EARFCNs), 25 B
+
+The v0x03 layout with **both EARFCNs narrowed to u16** (29 − 2×2 = 25 B);
+every other field is the same, in the same order::
+
+    0  u8   version (0x02)
+    1  u16  pci
+    3  u16  dl_earfcn
+    5  u16  ul_earfcn           = dl + 18000 on every record (B4 / B12 FDD)
+    7  u8   dl_bandwidth_rb
+    8  u8   ul_bandwidth_rb
+    9  u32  cell_identity
+    13 u16  tac
+    15 u32  band
+    19 u16  mcc
+    21 u8   num_mnc_digits
+    22 u16  mnc
+    24 u8   allowed_access      CANDIDATE (0 on all 5 records)
+
+Attested only on the Foxconn T77W595 (MDM9625, ``F0.0.0.6.5.VZ.017``):
+5 records / 3 captures, two distinct cells (B4 EARFCN 2300 / 20 MHz and
+B12 EARFCN 5035 / 5 MHz, one eNB, one TAC, PLMN 310-260). This is the same
+u16-EARFCN generation as 0xB0C1 v0x01 / 0xB183 v0x01.
+Grounding:
+
+* **F3, labelled**: ``tle_log.c:627`` "MCC:%d, MNC:%d, CellId:%d, Physical
+  CellId:%d, TAC:%d, DL Freq:%d" prints exactly two cell tuples across the
+  three captures (14 prints), and **5/5** records equal one of them on all of
+  (cell_identity, pci, tac, dl_earfcn, mcc, mnc). ``mmgsdi_eons_nitz.c:815``
+  "TAC: 0x%X" → tac **5/5**; ``dsatetsicall.c:2696`` "Cell id %d lte_tac %d"
+  → tac 4/4 (its cell id trails one reselection behind RRC on 2 of 4).
+* **F3, index-attributed**: ``lte_ml1_md.c:5691`` (MIB decode,
+  ``[earfcn, pci, bw, n_tx, …]``) → dl_earfcn + pci + dl_bandwidth_rb 4/5
+  nearest-instance (the miss is the other cell during the 2300↔5035
+  reselection); ``lte_rrc_csp.c:17109`` / ``:23162`` ``[eci]`` 5/6;
+  ``lte_rrc_sib.c:12562`` ``[band, pci, earfcn]`` → band 12 on the 5035 cell.
+* **SCAT** "LTE RRC SCell Info: EARFCN 2300/20300, Band 4, Bandwidth 20/20
+  MHz, PCI <pci>, MCC 310, MNC 260, xTAC/xCID <tac>/<eci>" — every field
+  equals this decode (2/2 renders; SCAT de-duplicates).
+* **Structure**: UL − DL = 18000 on 5/5; band 4 for EARFCN 2300 and 12 for
+  5035 are the 3GPP bands of those EARFCNs.
+
+Version enum: {0x02, 0x03}. Each version is gated on its own payload size;
+any other version or size returns None.
 
 Log name: LOG_LTE_RRC_SERV_CELL_INFO_LOG_C
 Also known as: LOG_LTE_RRC_SERVING_CELL_INFO, LOG_SERVING_CELL_INFO, LOG_LTE_RRC_SERVING_CELL_INFO_LOG_PKT, LTE RRC Serving Cell Info Log Pkt
@@ -82,7 +122,7 @@ from diaggrok.registry import register
 
 @dataclass
 class Diag0xB0C2:
-    """0xB0C2 — LTE RRC serving cell info (v0x03, 29 B)."""
+    """0xB0C2 — LTE RRC serving cell info (v0x03 29 B / v0x02 25 B)."""
     log_time: int
     version: int
     pci: int
@@ -134,13 +174,16 @@ class Diag0xB0C2:
         }
 
 
-# Every captured record is v0x03 / 29 B. Size invariance
-# != format invariance: another version at the same length is rejected, not
-# decoded on the v0x03 layout.
-_B0C2_VERSION_OBSERVED = 0x03
-_B0C2_PAYLOAD_SIZE_OBSERVED = 29
-_V3 = Struct("<BHIIBBIHIHBHB")
-assert _V3.size == _B0C2_PAYLOAD_SIZE_OBSERVED
+# One struct per attested version, each gated on its own payload size. v0x02
+# (MDM9625) is v0x03 with u16 EARFCNs. Size invariance != format invariance:
+# an unknown version, or a known version at another length, is rejected rather
+# than decoded on a neighbouring layout.
+_B0C2_LAYOUTS = {
+    0x02: Struct("<BHHHBBIHIHBHB"),
+    0x03: Struct("<BHIIBBIHIHBHB"),
+}
+assert _B0C2_LAYOUTS[0x02].size == 25
+assert _B0C2_LAYOUTS[0x03].size == 29
 
 
 @register(
@@ -149,8 +192,8 @@ assert _V3.size == _B0C2_PAYLOAD_SIZE_OBSERVED
     domain="rrc",
     wigle_direct=True,
     wigle_roles=("identity", "pci-earfcn-bridge", "rat-context"),
-    description="0xB0C2 — LTE RRC Serving Cell Info (fixed 29B v0x03; F3+SIB1-grounded pci, dl/ul earfcn, dl/ul bw, cell identity, tac, band, mcc/mnc)",
-    version=3,
+    description="0xB0C2 — LTE RRC Serving Cell Info (v0x03 29B / v0x02 25B u16-EARFCN; F3+SIB1-grounded pci, dl/ul earfcn, dl/ul bw, cell identity, tac, band, mcc/mnc)",
+    version=4,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -158,8 +201,9 @@ assert _V3.size == _B0C2_PAYLOAD_SIZE_OBSERVED
         "Full 29B body reverse-engineered from captures and "
         "grounded per field against in-capture F3 (lte_rrc_sib.c / "
         "lte_rrc_csp.c / emm_rrc_handler.c / lte_ml1_md.c prints) and the "
-        "SCAT-pcap SIB1/MIB OTA decode. Version and payload size are gated "
-        "(v0x03, 29 B). allowed_access remains a CANDIDATE."
+        "SCAT-pcap SIB1/MIB OTA decode. v0x02 (MDM9625, u16 EARFCNs, 25 B) "
+        "grounded by tle_log.c / mmgsdi F3 and SCAT. Version and payload "
+        "size are gated per version (v0x02 25 B, v0x03 29 B). allowed_access remains a CANDIDATE."
     ),
     source_url="",
     issues=(),
@@ -167,17 +211,18 @@ assert _V3.size == _B0C2_PAYLOAD_SIZE_OBSERVED
     fields_identified=13,
     fields_parsed=13,
     field_invariants={
-        "version": {"enum": [_B0C2_VERSION_OBSERVED]},
+        "version": {"enum": sorted(_B0C2_LAYOUTS)},
         "pci": {"range": (0, 503)},
     },
 )
 def parse_0xb0c2(log_time: int, data: bytes) -> Diag0xB0C2 | None:
-    if len(data) != _B0C2_PAYLOAD_SIZE_OBSERVED:
+    if not data:
         return None
-    if data[0] != _B0C2_VERSION_OBSERVED:
+    layout = _B0C2_LAYOUTS.get(data[0])
+    if layout is None or len(data) != layout.size:
         return None
     (version, pci, dl_earfcn, ul_earfcn, dl_bw, ul_bw, cell_identity, tac,
-     band, mcc, num_mnc_digits, mnc, allowed_access) = _V3.unpack(data)
+     band, mcc, num_mnc_digits, mnc, allowed_access) = layout.unpack(data)
     return Diag0xB0C2(
         log_time=log_time,
         version=version,

@@ -7,7 +7,7 @@ Layout
 band-combination table, dumped as a **paginated array of C structs**, up to
 100 combos per record:
 
-    [0]     u8   version            0x07 SDX55/SDX50 · 0x09 Inseego M3100 · 0x0d SDX6x · 0x11 T99W640
+    [0]     u8   version            0x07 SDX55 · 0x09 Inseego M3100 · 0x0d SDX6x · 0x11 T99W640
     [1:4]   u24  reserved           0x000000 on every record
     [4:6]   u16  total_combos       size of the whole table
     [6:8]   u16  start_index        index of this page's first combo (0,100,200…)
@@ -131,7 +131,7 @@ emits a header-only pcap for this code and SCAT does not translate it.
 F3-VERDICT 0xB826 v0x07: CO-EMIT (RRC-capability plane)
 -------------------------------------------------------
 
-v0x07 is a real, deterministic report on SDX55/SDX50 silicon: the RXM-G1 emits
+v0x07 is a real, deterministic report on SDX55 silicon: the RXM-G1 emits
 30 records at 15 coherent sizes (179–6881 B) ×2, byte-identical across five
 independent UE-capability captures; it is also coherent on RM500Q-AE (18
 records) and LV55/T99W175. A triggered UE-capability dump is driven by the
@@ -264,7 +264,7 @@ class Diag0xB826:
 @register(
     0xB826,
     name="0xB826",
-    description="0xB826 — NR5G RRC Supported CA Combos: paginated band-combination table (v0x07 SDX55/SDX50, v0x09 Inseego M3100, v0x0d SDX6x, v0x11 T99W640)",
+    description="0xB826 — NR5G RRC Supported CA Combos: paginated band-combination table (v0x07 SDX55, v0x09 Inseego M3100, v0x0d SDX6x, v0x11 T99W640)",
     version=7,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",

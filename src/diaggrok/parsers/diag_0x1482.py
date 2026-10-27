@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from struct import unpack_from
 from typing import Any
 
+from diaggrok.parsers._pdsm_client_ids import PDSM_CLIENT_IDS
 from diaggrok.registry import register
 
 
@@ -330,8 +331,10 @@ class Diag0x1482:
 # physical-quantity AT source, so the field_map carries the single honest
 # anchor and nothing more.
 
-#: Attested size classes: 107 B base layout, 115 B = base + one 8 B slot.
+#: Attested size classes: 107 B base layout, 115 B = base + one 8 B slot,
+#: and 111 B (Sierra MC7700 SWI9200X_03.05.20.03AP, 48 records) = base + 4 B.
 _SIZE_107 = 107
+_SIZE_111 = 111
 _SIZE_115 = 115
 
 
@@ -339,7 +342,7 @@ _SIZE_115 = 115
     0x1482, domain="gnss",
     name="0x1482",
     description="GNSS measurement data (0x1482) — 107B/115B size-variant",
-    version=11,
+    version=12,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -363,8 +366,9 @@ _SIZE_115 = 115
         "u8 fields. Byte [27] is a firmware-build identifier, not a chipset "
         "marker (EM9190 SDX55 = 0x00, FN980 SDX55 = 0x01 on all 930 FN980 "
         "records), so it is a field rather than a marker. Payloads shorter "
-        "than the 107 B base layout, or 108..114 B (a partial extra 8 B "
-        "slot), return None. Remaining gaps: ~30 bytes of per-record payload "
+        "than the 107 B base layout, or 108..114 B other than the MC7700 "
+        "111 B class (a partial extra slot), return None. v12: [1:3] is the "
+        "PDSM client_id, gated on the shared whitelist. Remaining gaps: ~30 bytes of per-record payload "
         "in [17..50] and the meaning of the count array."
     ),
     source_url="",
@@ -378,9 +382,11 @@ _SIZE_115 = 115
         # across 5 chipsets / 1339+ records. Parser-body gate covers byte 0 + subtype; layer-2 adds
         # defense-in-depth on payload_size + header_signature.
         "version": {"enum": [0]},
-        "subtype": {"enum": [0x0da3]},
-        "header_signature": {"enum": [0x57]},
-        "payload_size": {"enum": [107, 115]},
+        # subtype is the PDSM client_id (see _pdsm_client_ids.py).
+        "subtype": {"enum": sorted(PDSM_CLIENT_IDS)},
+        # 0x32 on every MC7700 record.
+        "header_signature": {"enum": [0x32, 0x57]},
+        "payload_size": {"enum": [107, 111, 115]},
         # byte_27 is a firmware-build discriminator with two observed
         # values across 5 chipsets and the 930-record FN980 corpus: 0x00 on
         # Sierra/Quectel modems (MC7455, EP06A, EM9190, EM7511) and 0x01 on
@@ -402,7 +408,9 @@ def parse_0x1482(log_time: int, data: bytes) -> Diag0x1482 | None:
     # bytes[1:3] u16LE == 0x0da3 (subtype = ASCII 'sub-type' marker).
     if data[0] != 0x00:
         return None
-    if unpack_from('<H', data, 1)[0] != 0x0da3:
+    # [1:3] is the PDSM client_id (0x0da3 = 3491 on most of the fleet; 5001
+    # SIM7600NA, 9001 MC7700), shared with 0x1378 / 0x1383.
+    if unpack_from('<H', data, 1)[0] not in PDSM_CLIENT_IDS:
         return None
     sz = len(data)
     # The layout is the 107 B base (body markers run
@@ -411,10 +419,12 @@ def parse_0x1482(log_time: int, data: bytes) -> Diag0x1482 | None:
     # truncated: return None (registry WARN) instead of a record whose
     # length-guarded fields silently read 0 / False. Longer payloads (>115 B)
     # are still accepted and labelled size_class='unknown'.
-    if sz < _SIZE_107 or _SIZE_107 < sz < _SIZE_115:
+    if sz < _SIZE_107 or (_SIZE_107 < sz < _SIZE_115 and sz != _SIZE_111):
         return None
     if sz == 107:
         cls = '107_mdm9x'
+    elif sz == _SIZE_111:
+        cls = '111_mdm9200'
     elif sz == 115:
         cls = '115_sdx55'
     else:

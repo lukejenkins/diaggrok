@@ -101,6 +101,32 @@ freq/psc -- so ``uarfcn`` (WCDMA-band u16 @8 on every corpus record) and
 pending a build that prints the set listing. The searcher line moves per build
 tree (v=0x05 LM960 ``srchacq.c:2221``; SDX55 ``:2269``; SDX62 ``:2278``).
 
+**v=0x01 (MDM9625, Foxconn T77W595 / HP X5) -- F3-grounded on its own
+silicon.** 136 records / 4 captures (SIM power cycle, COPS dereg, manual PLMN
+scan), build ``T77W595.F0.0.0.6.5.VZ.017``. Layout: the v=0x08 15-byte prefix
+(``num_tasks`` @12) with the v=0x05 11-byte gap and 12-byte trailer, so
+``size = 14 + 71 * num_tasks`` (85 .. 1434 B; 1434 = the 20-task cap). There is
+NO UARFCN in this prefix: [10:12] is a carrier-frequency word (``freq_word``,
+0 on 88/136 records) that tracks the tuned carrier's DL frequency at
+~131.43 kHz/LSB (fit against the ``TUNE_TO_CHAN prim_freq`` UARFCN; kept raw).
+[3:10] == ``00 02 00 fe 00 02 00`` and [14] == 0x01 on 136/136. Each record is
+emitted twice at the same DIAG tick (identical body, [1:3] differs by a few
+LSB). Grounding (legacy ``0x92`` + plaintext ``0x79``; INDEX-bound, 1.0):
+
+* ``wsrch.c:14653 "PN Logging: num_tasks:%d ... len:%d ... num_pks_task:6
+  num_rslts_task:1"`` (plaintext) fires at the record's tick with
+  ``len = 12 + 14 + 71 * num_tasks`` -- 24 tasks / len 1730 and 22 / 1588
+  against 1434 B records holding 20: the 20-task cap, third SoC.
+* ``wsrch.c:12067`` (legacy, 9 args) fires once PER TASK with arg0 = PSC,
+  arg3 = peak-0 energy, arg4 = peak-0 position: **888/888 tasks** across all
+  132 records of the two F3-bearing captures match (PSC, energy, position)
+  byte for byte. This F3-grounds ``psc_list`` on v=0x01, which v=0x08 could
+  not reach. arg1 maps 1:1 onto preamble[9] (``preamble_flag_a``: arg1 4 <->
+  0x04, 856 tasks; arg1 1 <-> 0x00, 32 tasks), still unnamed. arg7/arg8
+  bound a 768-cx8 search window whose upper edge, mod one slot (20480 cx8),
+  is a Step-1 peak of the preceding 0x4177 v=0x01 record (846/924, null
+  2/924) -- the WCDMA acquisition chain Step-1 -> PN search, in the logs.
+
 Log name: LOG_WCDMA_PN_SEARCH_EDITION_2
 """
 from __future__ import annotations
@@ -111,8 +137,8 @@ from typing import Any
 
 from diaggrok.registry import register
 
-_SUPPORTED_VERSIONS = frozenset({0x05, 0x08})
-_BASE_SIZE_FOR_VERSION = {0x05: 99, 0x08: 77}
+_SUPPORTED_VERSIONS = frozenset({0x01, 0x05, 0x08})
+_BASE_SIZE_FOR_VERSION = {0x01: 85, 0x05: 99, 0x08: 77}
 _PEAK_SLOTS = 6
 _ARRAY_BYTES = _PEAK_SLOTS * 4  # 24
 _PEAKS_BYTES = 2 * _ARRAY_BYTES  # 48: positions[6] + energies[6]
@@ -126,6 +152,10 @@ PN_POS_CX8_MAX = 38400 * 8  # 307200
 # Per-version layout. c0 = prefix + gap - trailer is R-independent; the task
 # stride is 11 + trailer + 48*R.
 _LAYOUT = {
+    # v=0x01 (MDM9625 Foxconn T77W595): the v=0x08 15-byte prefix with the
+    # v=0x05 gap/trailer. No UARFCN in the prefix -- a carrier-frequency word
+    # sits at [10:12] instead (``freq_word``; uarfcn_off None).
+    0x01: dict(prefix=15, taskcount_off=12, uarfcn_off=None, gap=11, trailer=12),
     0x05: dict(prefix=29, taskcount_off=26, uarfcn_off=16, gap=11, trailer=12),
     0x08: dict(prefix=15, taskcount_off=12, uarfcn_off=8, gap=3, trailer=4),
 }
@@ -236,6 +266,10 @@ class Diag0x4179:
     # Every task, in order (empty when the record is off-law or any peak
     # block fails the gate -- no half-populated structure).
     tasks: list[PnSearchTask] = field(default_factory=list)
+    # v=0x01 only: u16 LE @[10:12], 0 on 88/136 records. Tracks the tuned
+    # carrier's DL frequency at ~131.43 kHz/LSB (the same word 0x4177 v=0x01
+    # carries at [13:15]); the scale is a measured fit, so it stays raw.
+    freq_word: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -269,6 +303,7 @@ class Diag0x4179:
             "header_raw": self.header_raw,
             "middle_raw": self.middle_raw,
             "tasks": [t.to_dict() for t in self.tasks],
+            "freq_word": self.freq_word,
         }
 
 
@@ -371,9 +406,11 @@ def _solve_layout(version: int, sz: int, tasks_from_prefix: int | None):
         "result sets (not a prior window). Firmware caps the log at 20 tasks (F3 reports "
         "22-24) -> tasks_capped. v=0x05 (LM960 SDX20, EG25-G/EC25 MDM9607, "
         "EG95, FM101-GL, MC7411) size 28 + B(23+48R); v=0x08 (SDX55/SDX62 "
-        "family) 14 + B(15+48R)."
+        "family) 14 + B(15+48R); v=0x01 (MDM9625 T77W595) 14 + 71B, "
+        "no prefix UARFCN (freq_word @10 instead), wsrch.c:12067 per-task "
+        "(PSC, Eng0, Pos0) == record on 888/888 tasks."
     ),
-    version=12,
+    version=13,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -397,6 +434,11 @@ def _solve_layout(version: int, sz: int, tasks_from_prefix: int | None):
         "the srchsetutil.c set listing are not compiled into these SDX6x "
         "builds, so uarfcn@8 and psc*16 stay structurally grounded on v=0x08 "
         "(multi-block layout 80/80 v=0x08, prefix constants 28/28 RM520N-GL). "
+        "v=0x01 (MDM9625 Foxconn T77W595, 136 rec / 4 captures): prefix 15 "
+        "(num_tasks@12) + gap 11 + trailer 12; 136/136 decode on-law with the "
+        "task-count mirror, prefix consts and zero trailers; plaintext wsrch.c:14653 "
+        "'PN Logging' len == 12+14+71*num_tasks (20-task cap re-witnessed); "
+        "legacy wsrch.c:12067 per-task (PSC, Eng0, Pos0) == record 888/888. "
         "Truncated payloads (shorter than the size law for the prefix "
         "num_tasks and the preamble-flag result-set count) return None "
         "(registry WARN)."
@@ -404,8 +446,8 @@ def _solve_layout(version: int, sz: int, tasks_from_prefix: int | None):
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=25,
-    fields_parsed=25,
+    fields_identified=26,
+    fields_parsed=26,
     wigle_direct=True,
     wigle_roles=("identity", "signal"),
     supported_versions=sorted(_SUPPORTED_VERSIONS),
@@ -449,7 +491,10 @@ def parse_0x4179(log_time: int, data: bytes) -> Diag0x4179 | None:
         version, sz, tasks_from_prefix)
 
     prefix_raw = bytes(data[:prefix_size])
-    uarfcn = unpack_from("<H", data, L["uarfcn_off"])[0] if sz >= L["uarfcn_off"] + 2 else None
+    uarfcn_off = L["uarfcn_off"]
+    uarfcn = (unpack_from("<H", data, uarfcn_off)[0]
+              if uarfcn_off is not None and sz >= uarfcn_off + 2 else None)
+    freq_word = unpack_from("<H", data, 10)[0] if version == 0x01 else None
     prefix_u16_at3 = unpack_from("<H", data, 3)[0] if sz >= 5 else None
     prefix_flag_a = data[2] if sz > 2 else None
     if version == 0x08:
@@ -458,6 +503,14 @@ def parse_0x4179(log_time: int, data: bytes) -> Diag0x4179 | None:
         format_const_raw = bytes(data[5:8]) if sz >= 8 else b""
         prefix_tag: int | None = data[14] if sz > 14 else None
         prefix_const_ok = (sub_format == 0x01 and format_const_raw == b"\x00\x02\x00"
+                           and prefix_tag == 0x01)
+    elif version == 0x01:
+        # [3:10] == 00 02 00 fe 00 02 00 and [14] == 0x01 on 136/136 records.
+        prefix_flag_b = data[13]
+        sub_format = None
+        format_const_raw = bytes(data[3:10])
+        prefix_tag = data[14]
+        prefix_const_ok = (format_const_raw == b"\x00\x02\x00\xfe\x00\x02\x00"
                            and prefix_tag == 0x01)
     else:
         prefix_flag_b = None
@@ -540,4 +593,5 @@ def parse_0x4179(log_time: int, data: bytes) -> Diag0x4179 | None:
         header_raw=header_raw,
         middle_raw=middle_raw,
         tasks=tasks,
+        freq_word=freq_word,
     )

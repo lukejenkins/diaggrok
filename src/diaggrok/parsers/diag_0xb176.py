@@ -7,10 +7,11 @@ one record per ML1 acquisition attempt on one EARFCN, emitted on the same diag
 tick as the firmware's `lte_ml1_md.c` `PBCH decode resp` print.
 
 Layout. Little-endian. The same three lists on
-every version; only the packing of the 16 B header differs.
+every version; only the packing of the 16 B header differs
+(v0x01 has a 12 B header, see below).
 
     header (16 B)
-      [0]      version            0x03 / 0x10 / 0x20
+      [0]      version            0x01 / 0x03 / 0x10 / 0x20
       [1:4]    zero
       [4:8]    earfcn             u32 (F3-grounded on all 3 versions)
       [8:12]   header word        band / duplex / result bits, see below
@@ -19,13 +20,17 @@ every version; only the packing of the 16 B header differs.
     cells            n_cell  x 16 B detected cells, strongest first
       +0 u32  search_word   bits 0-7 always 0xFF, bits 8-14 shared by every
                             cell in a record, bit 15 varies; bits 16-31
-                            `timing_raw` (CANDIDATE: PSS timing position)
-      +4 u16  bits 0-8 pci, bit 9 `cp_flag` (CANDIDATE, see below),
-              bits 10-15 zero in the corpus
-      +6 s16  freq_offset_raw   (CANDIDATE; one value shared by the record's
-                                cells in 1890/1897)
-      +8 u32  zero
-      +12 u32 energy            (CANDIDATE: detection energy; descending
+                            `timing_raw` (CANDIDATE: PSS timing position).
+                            `frame_bndry` = search_word >> 11 is the
+                            firmware's `frame_bndry` / PBCH-req `ref time`
+                            (F3-named on v0x01; v0x10 PBCH-req `ref time`
+                            17/17, while timing_raw << 5 matches 0/18)
+      +4 u16  bits 0-8 pci, bit 9 `cp_flag` (F3 `cp_type` on v0x01; CANDIDATE
+              elsewhere), bits 10-15 zero in the corpus
+      +6 s16  freq_offset_raw   (F3 `freq_off` on v0x01; one value shared by
+                                the record's cells in 1890/1897 on v0x03+)
+      +8 u32  word8_raw         zero on v0x03+; populated on MDM9200 v0x01
+      +12 u32 energy            (F3 `sss` / `sss_metric` on v0x01; descending
                                 across a record's cells in 1895/1897)
     pbch             n_pbch  x 12 B PBCH decode results
       +0 u32  search_word   equals the decoded cell's `search_word` (252/252),
@@ -46,8 +51,18 @@ every version; only the packing of the 16 B header differs.
       bits 3-5  n_pbch                    bits 3-7  n_cell
       bits 6-10 n_cell
 
+    header, v0x01 (12 B; MDM9200, MDM9625)
+      [0]      version 0x01, [1:4] zero
+      [4:6]    earfcn u16 (pre-Rel-12 silicon: no 65536+ EARFCNs)
+      [6]      bits 0-5 band_index, bit 6 tdd, bit 7 acq_failed (the low
+               byte of the v0x03 header word); [7] zero
+      [8:12]   bits 0-19 raw (0x00421 const), bits 20-22 n_black
+               (CANDIDATE: 0 on every record), bits 23-25 n_pbch,
+               bits 26-30 n_cell
+
 Size = 16 + 4*n_black + 16*n_cell + 12*n_pbch held on 1897/1897 records from 5
-captures (3 versions, 5 chipsets). A record SHORTER than that (or than the
+captures (3 versions, 5 chipsets); with the 12 B header, on all 6 v0x01
+records (4 captures, 2 chipsets). A record SHORTER than that (or than the
 16 B header) is truncated and returns None. A longer record keeps
 its header fields, gets empty lists and `layout_ok=False`. That flag is not
 pinned as an invariant.
@@ -75,6 +90,23 @@ instead.
     serving PCI and DL bandwidth 4/4. No v0x20 capture with resolvable F3
     had the LML1 F3 client armed, so the PBCH-print join is v0x10 and
     v0x03 only.
+  * v0x01, all 6 corpus records. T77W595 MDM9625
+    (3 records): each joined to the legacy-0x92 `lte_ml1_sm_acq.c` /
+    `lte_ml1_md.c` prints of its attempt. Format text comes from the
+    EG25-G OCPU string catalog, argc-matched (cross-build). `Acq search
+    results for bin %d: %d cells found` and `Init Acq Cnf; earfcn num cells`
+    = n_cell 3/3. `Cell id %d frame_bndry %d 0x%x%08x sss %d freq_off %d
+    cp_type %d` per cell: pci, frame_bndry (= search_word >> 11), sss
+    (= energy), freq_off and cp_type 6/6. `PBCH decode resp` BW, PHICH,
+    sfn and freq err 3/3. BandLuxe C505 MDM9200 (3 records, hash-only 0x92,
+    the same arg shapes): the earfcn/num-cells print = n_cell 3/3; per-cell
+    print pci, +8, +12, freq_off and cp_type 4/4 (one cp_type 1);
+    `PBCH decode req (earfcn,pci) cp … ref time` = cp_flag and frame_bndry
+    4/4; PBCH resp 2/2. The B17 record (acq_failed=1, n_cell 8) has two
+    crc_pass=0 entries, and each has a `(5780,pci)` CRC-fail print 2/2.
+    On MDM9200 the selected-cell print carries two metric/SNR pairs,
+    (+8, dB) and (+12, dB), so `word8_raw` is a second detection metric
+    (CANDIDATE: PSS); v0x03+ leaves it zero. Band = EARFCN band (36.101) 6/6.
   * Not `# ant`: F3 printed 4 antennas while `info_raw` ranged 1-6.
 
 `band` is band_index+1. On v0x03 the index is 6 bits, and a 65+ band wraps
@@ -101,10 +133,11 @@ from typing import Any
 from diaggrok.registry import register
 
 # byte-0 version/sub-layout discriminator: every value observed
-# at size>4 in the corpus: 0x03, 0x10, 0x20.
-_B176_VERSIONS_OBSERVED = (0x03, 0x10, 0x20)
+# at size>4 in the corpus: 0x01, 0x03, 0x10, 0x20.
+_B176_VERSIONS_OBSERVED = (0x01, 0x03, 0x10, 0x20)
 
 _HDR_LEN = 16
+_HDR_LEN_V01 = 12
 _CELL_LEN = 16
 _PBCH_LEN = 12
 
@@ -120,18 +153,26 @@ class B176Cell:
     cp_flag: int
     freq_offset_raw: int
     energy: int
+    word8_raw: int = 0
 
     @property
     def timing_raw(self) -> int:
         return self.search_word >> 16
+
+    @property
+    def frame_bndry(self) -> int:
+        # F3 `Cell id %d frame_bndry %d` / `PBCH decode req … ref time`.
+        return self.search_word >> 11
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "pci": self.pci,
             "cp_flag": self.cp_flag,
             "timing_raw": self.timing_raw,
+            "frame_bndry": self.frame_bndry,
             "search_word": self.search_word,
             "freq_offset_raw": self.freq_offset_raw,
+            "word8_raw": self.word8_raw,
             "energy": self.energy,
         }
 
@@ -262,13 +303,14 @@ class Diag0xB176:
         "acq result, black-cell PCIs, detected cells (pci/energy), PBCH "
         "decodes (MIB bandwidth/PHICH/SFN, freq err, CRC)"
     ),
-    version=11,
+    version=12,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Body decoded on all three versions (byte 0 = 0x03 / 0x10 / 0x20, the "
-        "sub-layout discriminator). The 16 B header carries earfcn (u32@4), "
+        "Body decoded on all four versions (byte 0 = 0x01 / 0x03 / 0x10 / 0x20, "
+        "the sub-layout discriminator; v0x01 on MDM9200/MDM9625 has a 12 B "
+        "header with a u16 earfcn, F3-joined on all 6 corpus records). The 16 B header carries earfcn (u32@4), "
         "band_index/tdd/acq_failed (header word) and n_black/n_cell/n_pbch (count "
         "word, packed differently on v0x03), followed by n_black u32 black-cell "
         "PCIs, n_cell 16 B detected cells and n_pbch 12 B PBCH decodes whose "
@@ -296,8 +338,8 @@ class Diag0xB176:
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=22,
-    fields_parsed=22,
+    fields_identified=24,
+    fields_parsed=24,
     field_invariants={
         "version": {"enum": list(_B176_VERSIONS_OBSERVED)},
         "earfcn": {"range": (0, 262143)},
@@ -310,7 +352,9 @@ def parse_0xb176(log_time: int, data: bytes) -> Diag0xB176 | None:
     # Layer-1 byte-0 version gate.
     if version not in _B176_VERSIONS_OBSERVED:
         return None
-    if len(data) >= 8:
+    if version == 0x01 and len(data) >= 6:
+        earfcn = unpack_from('<H', data, 4)[0]
+    elif len(data) >= 8:
         earfcn = unpack_from('<I', data, 4)[0]
     elif len(data) >= 2:
         earfcn = data[1]
@@ -330,12 +374,25 @@ def parse_0xb176(log_time: int, data: bytes) -> Diag0xB176 | None:
         payload_size=len(data),
         body_raw=data[1:],
     )
-    if len(data) < _HDR_LEN:
-        # Shorter than the 16 B header -> truncated.
+    hdr_len = _HDR_LEN_V01 if version == 0x01 else _HDR_LEN
+    if len(data) < hdr_len:
+        # Shorter than the header -> truncated.
         return None
 
-    hdr, counts = unpack_from('<II', data, 8)
-    if version == 0x03:
+    if version == 0x01:
+        hb = unpack_from('<H', data, 6)[0]
+        counts = unpack_from('<I', data, 8)[0]
+        band_index = hb & 0x3F
+        tdd = (hb >> 6) & 1
+        acq_failed = (hb >> 7) & 1
+        # Byte 7 (zero in the corpus) is kept above the 20 raw count-word bits.
+        header_raw = (hb >> 8) << 20 | (counts & 0xFFFFF)
+        n_black = (counts >> 20) & 0x7
+        n_pbch = (counts >> 23) & 0x7
+        n_cell = (counts >> 26) & 0x1F
+        band = band_index + 1
+    elif version == 0x03:
+        hdr, counts = unpack_from('<II', data, 8)
         band_index = hdr & 0x3F
         tdd = (hdr >> 6) & 1
         acq_failed = (hdr >> 7) & 1
@@ -346,6 +403,7 @@ def parse_0xb176(log_time: int, data: bytes) -> Diag0xB176 | None:
         # 6-bit band index: bands 65+ wrap; their EARFCNs are all >= 65536.
         band = band_index + 1 + (64 if earfcn >= 65536 else 0)
     else:
+        hdr, counts = unpack_from('<II', data, 8)
         band_index = hdr & 0xFF
         tdd = (hdr >> 8) & 1
         acq_failed = (hdr >> 9) & 1
@@ -361,7 +419,7 @@ def parse_0xb176(log_time: int, data: bytes) -> Diag0xB176 | None:
     rec.header_raw = header_raw
     rec.n_black, rec.n_cell, rec.n_pbch = n_black, n_cell, n_pbch
 
-    want = _HDR_LEN + 4 * n_black + _CELL_LEN * n_cell + _PBCH_LEN * n_pbch
+    want = hdr_len + 4 * n_black + _CELL_LEN * n_cell + _PBCH_LEN * n_pbch
     if want > len(data):
         # The count word declares more lists than the payload holds ->
         # truncated; return None (registry warning).
@@ -370,14 +428,14 @@ def parse_0xb176(log_time: int, data: bytes) -> Diag0xB176 | None:
     if not rec.layout_ok:
         return rec
 
-    off = _HDR_LEN
+    off = hdr_len
     rec.black_cell_pcis = list(unpack_from(f'<{n_black}I', data, off))
     off += 4 * n_black
     for _ in range(n_cell):
-        sw, pw, fo, _zero, energy = unpack_from('<IHhII', data, off)
+        sw, pw, fo, w8, energy = unpack_from('<IHhII', data, off)
         rec.cells.append(B176Cell(
             search_word=sw, pci=pw & 0x1FF, cp_flag=(pw >> 9) & 1,
-            freq_offset_raw=fo, energy=energy))
+            freq_offset_raw=fo, energy=energy, word8_raw=w8))
         off += _CELL_LEN
     for _ in range(n_pbch):
         sw, mib, ferr, pw = unpack_from('<IIhH', data, off)

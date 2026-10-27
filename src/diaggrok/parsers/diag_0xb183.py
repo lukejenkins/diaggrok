@@ -6,17 +6,21 @@
 ### Layout
 
 Byte-0 selects the layout; the v56 (0x38) layout is the older one with 3 bytes
-of padding removed after byte 0, so EVERY body offset moves 3 left:
+of padding removed after byte 0, so EVERY body offset moves 3 left. The
+MDM9625-era v0x01 layout keeps one pad byte and a **16-bit** EARFCN (it predates
+the >65535 Band-66 EARFCNs):
 
-    old {0x02, 0x18, 0x28}   v56 {0x38}
-    @0  u8  version           @0  u8  version
-    @4  u32 earfcn            @1  u32 earfcn
-    @8  u16 (raw, 0 / 0xA000) @5  u16
-    @10 u32 MIB word          @7  u32 MIB word
-    @14.. tail (raw)          @11.. tail (raw)
+    v0x01                     old {0x02, 0x18, 0x28}   v56 {0x38}
+    @0  u8  version           @0  u8  version           @0  u8  version
+    @2  u16 earfcn            @4  u32 earfcn            @1  u32 earfcn
+    @4  u16 (raw, 0 / 0xA000) @8  u16 (raw, 0 / 0xA000) @5  u16
+    @6  u32 MIB word          @10 u32 MIB word          @7  u32 MIB word
+    @10.. tail (raw)          @14.. tail (raw)          @11.. tail (raw)
+    @12 u16 sfn_tti_start
 
-Sizes: 0x02=36B, 0x18=100B (44B-class body + zero pad), 0x28=44B **or 104B**
-(EM120R-GL: same 44B body + 60 zero bytes), 0x38=34B.
+Sizes: 0x01=32B (same 22B tail as 0x02), 0x02=36B, 0x18=100B (44B-class body +
+zero pad), 0x28=44B **or 104B** (EM120R-GL: same 44B body + 60 zero bytes),
+0x38=34B.
 
 MIB word bitfields (u32-LE):
 
@@ -39,6 +43,36 @@ phich_raw != 2, bits_25_31_raw >= 2 and a non-zero byte @9 (@6 on v56). They
 read as PBCH CRC false-passes, so the values are exposed as-is (dl_bandwidth_prb
 None) and are NOT pinned as invariants. Trust the MIB most when phich_raw == 2
 and bits_25_31_raw == 1.
+
+### v0x01 (MDM9625 / BandLuxe C505): in-capture 0x79 F3 + OTA MIB
+
+29 records, 5 captures, 2 chipsets: HP X5 / Foxconn T77W595 (MDM9625, Verizon,
+24 records / 4 captures) and BandLuxe C505 (5 records). Every capture carries
+plaintext 0x79 F3:
+
+* **Emitter**: each of the 24 T77W595 records sits within 20k ticks of
+  ``lte_ml1_md.c:1698`` "PBCH CNF received, stopping timer" (24/24). This is
+  ML1's PBCH-confirm log.
+* **earfcn (u16@2) + pci**: the 08 manual-PLMN-scan capture prints
+  ``lte_ml1_bplmn_int.c:1376`` "LTE_ML1_BPLMN_EXEC_ACTION_PBCH, <earfcn>, <pci>"
+  before each decode, and **9/9** (earfcn, pci) pairs match exactly:
+  (2300,<pci>) (5035,<pci>) (900,<pci>) (2050,<pci>) (5780,<pci>) (5230,<pci>)
+  (975,<pci>) (475,<pci>) (100,<pci>). ``lte_ml1_sm_main.c:966`` "SM: RX Cfg
+  Req freq F BW B cell_id P mode 4" also matches 15/15 on (earfcn, pci). On the
+  C505, ``lte_ml1_md.c:1323`` "Sent Init Acq Req; earfcn N" names 5/5 EARFCNs,
+  and ``mc_celldb.c:2279`` "Cell ID Update PhyCellId:<pci> FREQ:2300" names the
+  decoded PCI.
+* **dl_bandwidth**: ``lte_ml1_mcvs.c:2420`` "MIB update, BW %d num_tx_ant %d"
+  prints the same MIB enum, 13/13. The RX-Cfg ``BW`` is the pre-PBCH default
+  (25 for every band-scan cell, including the 100 RB ones), so it is no oracle.
+* **sfn / sfn_tti_start**: the MIB-word sfn is the full 10-bit decode SFN. It
+  is 4-aligned + {0,1} (945, 113, 993). u16@12 is that SFN rounded down to the
+  40 ms PBCH TTI. It equals 0xB0C1 v0x01 ``sfn`` on 11/11 sibling records, and
+  that is the OTA MIB systemFrameNumber x 4 (SCAT pcap BCCH-BCH, 7/7 joinable).
+  ``sfn_tti_start`` is exposed on v0x01 only: the other layouts' tail was never
+  checked for it.
+* **Failed decodes**: the C505's two EARFCN-5780 records carry an all-zero MIB
+  word low half (``mib_decoded`` False), the same signature as on 0x02.
 
 ### MIB-field grounding (one capture per version)
 
@@ -141,9 +175,9 @@ from typing import Any
 from diaggrok.registry import register
 
 # byte-0 version/sub-layout discriminator — every value observed
-# at size>4: 0x02 (size 36), 0x18 (100), 0x28 (44), 0x38 (34). Each byte-0
+# at size>4: 0x01 (size 32), 0x02 (size 36), 0x18 (100), 0x28 (44), 0x38 (34). Each byte-0
 # corresponds to a distinct fixed size, i.e. byte-0 selects the record layout.
-_B183_VERSIONS_OBSERVED = (0x02, 0x18, 0x28, 0x38)
+_B183_VERSIONS_OBSERVED = (0x01, 0x02, 0x18, 0x28, 0x38)
 
 # Per-version byte-offset of the u32-LE EARFCN field.
 # The EARFCN is a real, F3-grounded field on EVERY observed version — but the
@@ -166,20 +200,27 @@ _B183_VERSIONS_OBSERVED = (0x02, 0x18, 0x28, 0x38)
 #     coincidental fit. The legacy offset-4 window caught the two zero high
 #     bytes of the (small) EARFCN plus the next field's byte at offset 7 — hence
 #     the 0x??000000/0x??a00000-class garbage.
-_B183_EARFCN_OFFSET = {0x02: 4, 0x18: 4, 0x28: 4, 0x38: 1}
+#   * 0x01 (MDM9625) → offset 2, and only a u16: the field predates the
+#     >65535 EARFCNs (F3 BPLMN "EXEC_ACTION_PBCH, earfcn, pci" 9/9 exact).
+_B183_EARFCN_OFFSET = {0x01: 2, 0x02: 4, 0x18: 4, 0x28: 4, 0x38: 1}
+_B183_EARFCN_FMT = {0x01: '<H'}   # every other version: '<I'
 
-# Per-version byte-offset of the u32-LE MIB word: EARFCN offset + 6,
-# i.e. 10 on the old layouts and 7 on v56 (the same 3-byte left shift).
-_B183_MIB_OFFSET = {0x02: 10, 0x18: 10, 0x28: 10, 0x38: 7}
+# Per-version byte-offset of the u32-LE MIB word: 10 on the old layouts, 7 on
+# v56 (the same 3-byte left shift), 6 on v0x01 (u16 EARFCN @2 + u16 @4).
+_B183_MIB_OFFSET = {0x01: 6, 0x02: 10, 0x18: 10, 0x28: 10, 0x38: 7}
+
+# v0x01 only: u16 TTI-start SFN (== 0xB0C1 v0x01 sfn == OTA systemFrameNumber x 4).
+_B183_SFN_TTI_OFFSET = {0x01: 12}
 
 logger = logging.getLogger(__name__)
 
 # Every record size the corpus attests, per version (13,304 records / 344
-# captures: 0x02 36 B, 0x18 100 B, 0x28 44 B or 104 B, 0x38 34 B). 104 B 0x28
+# captures: 0x02 36 B, 0x18 100 B, 0x28 44 B or 104 B, 0x38 34 B; plus 0x01
+# 32 B, 29 records / 5 captures). 104 B 0x28
 # is the 44 B body + 60 zero bytes (EM120R-GL). A payload that is a known size
 # followed by zero padding parses as that known size (`_fit_known_size`); any
 # other length returns None and logs a length warning (`_length_alarm`).
-_B183_KNOWN_SIZES = {0x02: (36,), 0x18: (100,), 0x28: (44, 104), 0x38: (34,)}
+_B183_KNOWN_SIZES = {0x01: (32,), 0x02: (36,), 0x18: (100,), 0x28: (44, 104), 0x38: (34,)}
 
 # Per-(version, length) count of payloads the padding check could not explain.
 # Every one is counted; the WARN fires on the 1st, 10th, 100th, ... (as 0x192A).
@@ -250,6 +291,7 @@ class Diag0xB183:
     phich_raw: int | None = None
     bits_25_31_raw: int | None = None
     mib_decoded: bool | None = None
+    sfn_tti_start: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -267,6 +309,7 @@ class Diag0xB183:
             "phich_raw": self.phich_raw,
             "bits_25_31_raw": self.bits_25_31_raw,
             "mib_decoded": self.mib_decoded,
+            "sfn_tti_start": self.sfn_tti_start,
         }
 
 
@@ -276,12 +319,12 @@ class Diag0xB183:
     wigle_direct=False,
     wigle_roles=("pci-earfcn-bridge",),
     description="0xB183 — LTE ML1 PBCH decode: EARFCN + MIB word (sfn, dl_bandwidth, pci), per-version offsets",
-    version=12,
+    version=13,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Four layouts keyed on byte 0, each with known record sizes (0x02 36 B, "
+        "Five layouts keyed on byte 0, each with known record sizes (0x01 32 B, 0x02 36 B, "
         "0x18 100 B, 0x28 44 or 104 B, 0x38 34 B — the full corpus census). A "
         "payload that is a known size followed by zero padding parses as that "
         "size (so a cut into 0x28's 60 B pad still decodes the 44 B body); any "
@@ -305,6 +348,11 @@ class Diag0xB183:
         "u32@4 the mirror). The u32-LE MIB word at EARFCN offset + 6 carries sfn "
         "(bits 0-9), phich_raw (10-12, CANDIDATE, constant 2), dl_bandwidth "
         "(13-15, MIB enum 0..5 -> 6..100 PRB), pci (16-24) and bits_25_31_raw. "
+        "v0x01 (MDM9625 T77W595 + BandLuxe C505, 29 records): u16 earfcn @2, MIB "
+        "word @6, sfn_tti_start u16 @12; (earfcn, pci) == same-capture F3 "
+        "`LTE_ML1_BPLMN_EXEC_ACTION_PBCH, earfcn, pci` 9/9, `RX Cfg Req` 15/15, "
+        "dl_bandwidth == `MIB update, BW %d` 13/13, sfn_tti_start == 0xB0C1 sfn "
+        "11/11 == OTA systemFrameNumber x 4. "
         "pci: (earfcn,pci) present in same-capture 0xB0C0 SIB headers 241/259 vs "
         "random baseline 2 (v0x02 46/47, v0x18 32/32, v0x28 148/162, v0x38 "
         "15/18) + EG25-G F3 `acq_entry_ptr[EARFCN:2300, PCI:<pci>]`. sfn: next "
@@ -319,8 +367,8 @@ class Diag0xB183:
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=7,
-    fields_parsed=7,
+    fields_identified=8,
+    fields_parsed=8,
     field_invariants={
         "version": {"enum": list(_B183_VERSIONS_OBSERVED)},
         "earfcn": {"range": (0, 262143)},
@@ -347,8 +395,9 @@ def parse_0xb183(log_time: int, data: bytes) -> Diag0xB183 | None:
     # older layouts, 1 on the SDX6x v56 (0x38) 34B layout that moved it 3B left.
     off = _B183_EARFCN_OFFSET.get(version)
     earfcn: int | None
-    if off is not None and len(data) >= off + 4:
-        earfcn = unpack_from('<I', data, off)[0]
+    efmt = _B183_EARFCN_FMT.get(version, '<I')
+    if off is not None and len(data) >= off + (2 if efmt == '<H' else 4):
+        earfcn = unpack_from(efmt, data, off)[0]
     elif len(data) >= 2:
         earfcn = data[1]
     else:
@@ -367,7 +416,7 @@ def parse_0xb183(log_time: int, data: bytes) -> Diag0xB183 | None:
         payload_size=received,
         body_raw=data[1:],
     )
-    # The MIB word, at the EARFCN offset + 6 on every version.
+    # The MIB word, at a per-version offset.
     moff = _B183_MIB_OFFSET[version]
     if len(data) >= moff + 4:
         w = unpack_from('<I', data, moff)[0]
@@ -379,4 +428,7 @@ def parse_0xb183(log_time: int, data: bytes) -> Diag0xB183 | None:
         rec.mib_decoded = bool(w & 0xFFFF)
         if rec.dl_bandwidth < len(_DL_BANDWIDTH_PRB):
             rec.dl_bandwidth_prb = _DL_BANDWIDTH_PRB[rec.dl_bandwidth]
+    toff = _B183_SFN_TTI_OFFSET.get(version)
+    if toff is not None:
+        rec.sfn_tti_start = unpack_from('<H', data, toff)[0]
     return rec

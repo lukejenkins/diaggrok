@@ -68,7 +68,12 @@ Layout:
   [15:17]              = 0x00 const ×2
   [17:25]  hdr_slot   8B  — entry-shaped (4 × s16 LE); per-record varying,
                             likely a reference/serving measurement slot
-  [25:29]  marker     4B  = 5a 01 1e 00 const (format discriminant)
+  [25:27]  marker     2B  = 5a 01 const (format discriminant)
+  [27]     cfg_b27    u8  — per-session value, constant within a capture
+                            session: 0x1e (2,392 recs) or 0x26 (735 recs);
+                            semantics unknown, so it is decoded, not gated
+                            .
+  [28]                 = 0x00 const (marker tail)
   [29]     n_entries  u8  ∈ 1..8 (drives entries[] length)
   [30:35]  reserved_mid 5B = 0x00 const (same offset/role as v=0x05)
   [35:35+8N] entries[N] — 8B each, decoded as 4 × s16 LE (w0,w1,w2,w3)
@@ -184,6 +189,7 @@ class Diag0x1350V6:
     hdr_var7: bytes       # [3:10] per-record varying header region
     hdr_slot: LteMeas1350V6Entry  # [17:25] entry-shaped reference slot
     n_entries: int        # byte [29] ∈ 1..8
+    cfg_b27: int          # byte [27], per-session value (0x1e / 0x26 attested)
     entries: list[LteMeas1350V6Entry]  # [35:35+8N]
     trailer: bytes        # trailing 10B
     consts_ok: bool       # all corpus-verified const bytes hold
@@ -199,6 +205,7 @@ class Diag0x1350V6:
             'hdr_var7': self.hdr_var7.hex(),
             'hdr_slot': self.hdr_slot.to_dict(),
             'n_entries': self.n_entries,
+            'cfg_b27': self.cfg_b27,
             'entries': [e.to_dict() for e in self.entries],
             'trailer': self.trailer.hex(),
             'consts_ok': self.consts_ok,
@@ -206,8 +213,11 @@ class Diag0x1350V6:
         }
 
 
-# v=0x06 format discriminant marker at [25:29] (corpus-invariant, 2,392 recs).
-_V6_MARKER = b'\x5a\x01\x1e\x00'
+# v=0x06 format discriminant marker: [25:27] = 5a 01 and [28] = 00 on all 3,127
+# records. [27] sits between them but varies per session (0x1e, 0x26), so it is
+# decoded as cfg_b27 rather than gated.
+_V6_MARKER = b'\x5a\x01'
+_V6_MARKER_TAIL = 0x00
 _V6_HEADER = 35   # bytes before the entries region
 _V6_ENTRY = 8     # bytes per entry
 _V6_TRAILER = 10  # trailing bytes after the entries region
@@ -215,7 +225,7 @@ _V6_TRAILER = 10  # trailing bytes after the entries region
 # Attested (version -> size) coupling (1,793 scanned captures). Every record
 # falls on one of these pairs and none crosses:
 #   v=0x05  97 B, entry_count == 8                 69,758 records, 15+ chipsets
-#   v=0x06  35 + 8n + 10 B, n_entries n in 1..8     2,392 records, MDM9x35 AC791L
+#   v=0x06  35 + 8n + 10 B, n_entries n in 1..8     3,127 records, MDM9x35 AC791L
 # Anything else returns None so it reaches the registry's WARN and the
 # unhandled tally. A new size or count is new silicon or a misframe, and it must
 # be investigated, not truncated or guessed at.
@@ -243,7 +253,7 @@ _1350_SIZES_OBSERVED = sorted({_V05_SIZE, *_V6_SIZE_BY_N.values()})
 @register(0x1350,
     name="0x1350",
     description="LTE measurement (0x1350) — 97B fixed, 8 × s16 triplet entries",
-    version=8, author="Luke Jenkins", author_url="https://github.com/lukejenkins",
+    version=9, author="Luke Jenkins", author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
         "Cross-generation decode from MDM9607 + MDM9x50 + SDX20 + SDX20V2 + "
@@ -257,7 +267,7 @@ _1350_SIZES_OBSERVED = sorted({_V05_SIZE, *_V6_SIZE_BY_N.values()})
         "containment). entries.val_a = tcxomgr AFC rotator, F3-grounded (88% "
         "within ±6 on MDM9x50, 316/317 on SDX20). v=0x06: variable-length "
         "VCTCXO/AFC record from the AirCard 791L (MDM9x35); size model "
-        "len==35+8*n_entries+10 on 2,392 records; structural decode only (F3 "
+        "len==35+8*n_entries+10 on 3,127 records; structural decode only (F3 "
         "does not label the fields). The parser gates on exact (version -> "
         "size) coupling: v=0x05 len == 97 and entry_count == 8, v=0x06 "
         "n_entries in 1..8; anything else returns None so the registry WARN "
@@ -334,7 +344,7 @@ def _parse_v06(log_time: int, data: bytes) -> Diag0x1350V6 | None:
         return None
     # Marker [25:29] is the corpus-invariant format magic — reject mismatches
     # rather than mis-decode a same-sized record from another format.
-    if data[25:29] != _V6_MARKER:
+    if data[25:27] != _V6_MARKER or data[28] != _V6_MARKER_TAIL:
         return None
     entries = [_read_v6_entry(data, _V6_HEADER + i * _V6_ENTRY)
                for i in range(n_entries)]
@@ -349,6 +359,6 @@ def _parse_v06(log_time: int, data: bytes) -> Diag0x1350V6 | None:
     return Diag0x1350V6(
         log_time=log_time, version=data[0], const_06=data[1], flag14=data[14],
         hdr_var7=data[3:10], hdr_slot=_read_v6_entry(data, 17),
-        n_entries=n_entries, entries=entries, trailer=trailer,
+        n_entries=n_entries, cfg_b27=data[27], entries=entries, trailer=trailer,
         consts_ok=consts_ok, payload_size=len(data),
     )

@@ -15,6 +15,7 @@ name does not. Layout
 (52 B header + N x 24 B history entries)::
 
     0  u8   version            0x10 (fixed 17-slot table, 460 B) | 0x38 (52+24*N)
+                               | 0x01 (MDM9625 compact form, 320 B: see below)
     1..3    reserved (0 on every sampled record)
     4  u32  earfcn             serving cell EARFCN  (F3-grounded, both versions)
     8  u16  pci:9 | flags:7    serving PCI (F3-grounded); flags raw (always 5)
@@ -40,6 +41,32 @@ unused slots carry the sentinel ``(earfcn 0xFFFFFFFF, pci 511)``: the F3
 ``old (4294967295,65535)`` truncated to the 9-bit PCI field, and they are
 omitted from ``entries``.
 
+**v0x01 (MDM9625, HP X5 / Foxconn T77W595)** is the
+same fixed 17-slot table in the pre-Rel-9 compact form: every cell is a
+u16 earfcn + u16 {pci:9, flags:7} (4 B, not 8), so the header is 48 B and
+each entry 16 B (48 + 17*16 = 320)::
+
+    0  u8   version 0x01, 1..3 reserved (0)
+    4  u16  earfcn, u16 pci:9|flags:7   serving cell (flags 5, as v0x10/v0x38)
+    8  u64  anchor_time_ms, 16 u64 current_time_ms
+    24 [16] speed_params_raw (all 0xFF on 17/17)
+    40 u8   hdr_byte44 twin (0x77 | 0x00), 41 hdr_byte45 twin (0), 42..47 (0)
+    48 17 x 16 B entry: u64 time_ms, old cell (4 B), new cell (4 B)
+
+Unused slots read ``ffffffffffffffff ffff ff01 ffff ff07`` (earfcn 0xFFFF,
+pci 511) and are omitted. Grounded on all three in-capture oracles (17/17
+records, 3 captures): the header serving cell flips to (2300,<pci>) 54 ms
+before F3 ``lte_ml1_dlm_sib.c:8613 current_req.freq:2300 |
+current_req.cell_id:<pci>``, a NEW entry0 ``(5035,<pci>)->(2300,<pci>)`` is born
+with its ``time_ms`` == ``anchor_time_ms`` == ``current_time_ms`` at that
+flip, the ``0x60`` ``EVENT_LTE_RRC_NEW_CELL_IND`` payload carries the same
+u16 earfcn + u16 pci (``02 fc08`` + the u16 pci) 49 ms later, and the ML1 ms clock
+deltas equal the DIAG log-time deltas to the ms. SCAT's 0xB193 serving-cell
+run sequence (2300/<pci> -> 5035/<pci> -> 2300/<pci>) matches the header sequence.
+The 5035<->2300 ping-pong reselections add no new entry: TS 36.304
+§5.2.4.3 does not count consecutive reselections between the same two cells,
+which is the likely reason the table "skips some returns" on every version.
+
 The EARFCN at offset 4 was first attributed by DIAG×AT correlation;
 ``to_dict()`` keeps the ``earfcn`` key (never ``config_word``).
 
@@ -60,7 +87,8 @@ from diaggrok.registry import register
 # transient, and carries a valid EARFCN@4 like the 0x38 records. 0xFFFFFFFF@4
 # is a minority search-mode/no-cell sentinel within some captures, not a 460B
 # property.
-_B17E_VERSIONS_OBSERVED = (0x10, 0x38)
+# 0x01 is the MDM9625 compact form (u16 earfcn, 48 B header + 17 x 16 B).
+_B17E_VERSIONS_OBSERVED = (0x01, 0x10, 0x38)
 
 
 # Header + 24 B serving-cell-change history entries.
@@ -68,12 +96,15 @@ _B17E_HEADER_LEN = 52
 _B17E_ENTRY_LEN = 24
 _B17E_MAX_ENTRIES = 17
 _PCI_MASK = 0x1FF
+# v0x01 (MDM9625) compact form: u16 earfcn cells.
+_B17E_V01_HEADER_LEN = 48
+_B17E_V01_ENTRY_LEN = 16
 _U64_NONE = 0xFFFFFFFFFFFFFFFF
 
 
-def _cell(data: bytes, off: int) -> tuple[int, int, int]:
-    """(earfcn, pci, flags) from a u32 earfcn + u16 {pci:9, flags:7}."""
-    earfcn, word = unpack_from("<IH", data, off)
+def _cell(data: bytes, off: int, fmt: str = "<IH") -> tuple[int, int, int]:
+    """(earfcn, pci, flags) from a u32 (v0x01: u16) earfcn + u16 {pci:9, flags:7}."""
+    earfcn, word = unpack_from(fmt, data, off)
     return earfcn, word & _PCI_MASK, word >> 9
 
 
@@ -133,13 +164,51 @@ class Diag0xB17E:
         }
 
 
+def _parse_v01(log_time: int, data: bytes, density: float) -> Diag0xB17E | None:
+    """v0x01 — the MDM9625 320 B compact form (u16 earfcn cells)."""
+    if len(data) < _B17E_V01_HEADER_LEN + _B17E_MAX_ENTRIES * _B17E_V01_ENTRY_LEN:
+        return None
+    earfcn, pci, serving_flags = _cell(data, 4, "<HH")
+    anchor, current = unpack_from("<QQ", data, 8)
+    entries: list[dict[str, int]] = []
+    for i in range(_B17E_MAX_ENTRIES):
+        off = _B17E_V01_HEADER_LEN + i * _B17E_V01_ENTRY_LEN
+        time_ms = unpack_from("<Q", data, off)[0]
+        old_e, old_p, old_f = _cell(data, off + 8, "<HH")
+        new_e, new_p, new_f = _cell(data, off + 12, "<HH")
+        if time_ms == _U64_NONE and old_e == 0xFFFF and new_e == 0xFFFF:
+            continue  # unused slot
+        entries.append({
+            "time_ms": time_ms,
+            "old_earfcn": old_e, "old_pci": old_p, "old_flags": old_f,
+            "new_earfcn": new_e, "new_pci": new_p, "new_flags": new_f,
+        })
+    return Diag0xB17E(
+        log_time=log_time,
+        version=0x01,
+        earfcn=earfcn,
+        pci=pci,
+        serving_flags=serving_flags,
+        anchor_time_ms=None if anchor == _U64_NONE else anchor,
+        current_time_ms=None if current == _U64_NONE else current,
+        speed_params_raw=bytes(data[24:40]),
+        hdr_byte44=data[40],
+        hdr_byte45=data[41],
+        num_entries=len(entries),
+        entries=entries,
+        data_density=density,
+        payload_size=len(data),
+        body_raw=data[1:],
+    )
+
+
 @register(
     0xB17E,
     name="0xB17E",
     wigle_direct=False,
     wigle_roles=("pci-earfcn-bridge",),
-    description="0xB17E — LTE ML1 UE mobility state: serving cell + serving-cell change history (F3 lte_ml1_common_uemob.c twin; earfcn@4, pci@8, 24B old/new-cell entries; legacy mislabel LtePdcpB17E)",
-    version=6,
+    description="0xB17E — LTE ML1 UE mobility state: serving cell + serving-cell change history (F3 lte_ml1_common_uemob.c twin; earfcn@4, pci@8, 24B old/new-cell entries; v0x01 MDM9625 compact u16-earfcn form; legacy mislabel LtePdcpB17E)",
+    version=7,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -176,7 +245,11 @@ class Diag0xB17E:
         "over the 73-capture sample: the only earfcn invariant hits are the "
         "0xFFFFFFFF no-cell sentinel, flagged by design; earfcn=0 search-mode "
         "records are valid. Payloads shorter than the header + declared history "
-        "return None (registry warning). Neither QCSuper nor SCAT decodes 0xB17E."
+        "return None (registry warning). Neither QCSuper nor SCAT decodes 0xB17E. "
+        "v7: v0x01 = MDM9625 (T77W595) 320 B compact form, 48B header + "
+        "17 x 16B entries with u16 earfcn cells; 17/17 records grounded against "
+        "F3 lte_ml1_dlm_sib.c:8613 current_req.freq/cell_id, the 0x60 "
+        "EVENT_LTE_RRC_NEW_CELL_IND payload and SCAT's 0xB193 serving sequence."
     ),
     source_url="",
     issues=(),
@@ -197,6 +270,11 @@ def parse_0xb17e(log_time: int, data: bytes) -> Diag0xB17E | None:
     # Layer-1 byte-0 version gate.
     if version not in _B17E_VERSIONS_OBSERVED:
         return None
+    if version == 0x01:
+        if len(data) < _B17E_V01_HEADER_LEN:
+            return None
+        nonzero = sum(1 for b in data[2:] if b != 0)
+        return _parse_v01(log_time, data, round(nonzero / max(len(data) - 2, 1), 2))
     # The payload must hold the 52 B header plus the history it declares —
     # 17 fixed slots on v0x10, data[46] entries on v0x38. Anything shorter is
     # truncated -> None (registry warning).

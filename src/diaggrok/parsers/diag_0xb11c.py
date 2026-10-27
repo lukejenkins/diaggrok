@@ -8,13 +8,14 @@ subframe, plus the subframe number.
 
 Consecutive records advance word 0 by exactly one millisecond of a timer:
 **19,200 ticks** (19.2 MHz XO / VSTMR) on the 632 B and 760 B layouts,
-**30,720 ticks** (30.72 MHz, LTE ``Ts``) on the 272 / 400 / 416 B layouts.
+**30,720 ticks** (30.72 MHz, LTE ``Ts``) on the 264 / 272 / 400 / 416 B
+layouts.
 Byte 0 — the legacy ``counter`` — is therefore the **low byte of that timer
 stamp**, which is why it takes all 256 values uniformly; it was never an
 SFN or transaction id and never a DIAG version (``version_less=True``
 stands; the real layout key is ``payload_size``).
 
-Three layouts, dispatched on ``payload_size``:
+Six sizes, dispatched on ``payload_size``:
 
   ======  ===========  ========  =============================================
   size    layout       timebase  observed on (2,445,651-record corpus)
@@ -24,6 +25,7 @@ Three layouts, dispatched on ``payload_size``:
   416 B   ``ts416``    30.72     MC7455/EM7455 (MDM9x30)               335,972
   400 B   ``ts400``    30.72     EP06-A, AC791L, RM520N-class          3,535
   272 B   ``ts272``    30.72     SC200E                               17,887
+  264 B   ``ts264``    30.72     Foxconn T77W595 (MDM9625)           172,427
   ======  ===========  ========  =============================================
 
 Whole-corpus check (2,445,750 records / 164 sessions): across every
@@ -72,6 +74,31 @@ Every other word between 4 and 404 is either a word-0-relative XO stamp or
 a small duration/count; they are left in ``body_raw`` (no F3 site labels
 them).
 
+### ``ts264`` (264 B) — F3-GROUNDED
+
+Seen only on Foxconn T77W595 (MDM9625) ``T77W595.F0.0.0.6.5.VZ.017``
+(cellular edge-case suite capture). v6 dropped every one of these records,
+79% of the NEW drops in a runtime census.
+
+  off   field               ground
+  ===   ==================  ==================================================
+  0     timeline_ts         **22-bit** 30.72 MHz Ts stamp (max 0x3FFFFF; it
+                            wraps every ~136.5 ms). It steps +30,720 ±64 on
+                            99.05% of subframe-advancing pairs. The jitter is
+                            processing time; u32 @32 is the clean copy
+                            (+30,720 ±8 on 99.8%), left in ``body_raw``.
+  16    frame_subframe_idx  LTE subframe 0-9, duplicated @156 (172,424 of
+                            172,427). **F3-GROUND**
+                            (``lte_ml1_schdlr2_stm.c:1287`` "Current Subframe:
+                            %d/%d"): F3 subframe == @16 + 3 (mod 10) on
+                            166,392/166,469 co-timed (±0.5 ms) events in 3
+                            captures.
+  152   sfn                 LTE SFN 0-1023, +1 once per 10 records.
+                            **F3-GROUND** (same site, first argument): F3
+                            ``SFN*10+subframe`` == ``@152*10 + @16 + 3`` (mod
+                            10240) on 165,966/166,469 (99.70%). A record-index
+                            control does not match (gaps break it).
+
 ### ``ts400`` (400 B), ``ts272`` (272 B), ``ts416`` (416 B) — STRUCTURAL
 
 word 0 is the 30.72 MHz stamp (+30,720/record); the subframe index is u32 @16
@@ -99,12 +126,15 @@ from diaggrok.registry import register
 
 
 #: ``payload_size`` -> layout key. Byte 0 is a timer LSB, never a version.
-_LAYOUT = {760: "xo", 632: "xo", 400: "ts400", 272: "ts272", 416: "ts416"}
+_LAYOUT = {760: "xo", 632: "xo", 400: "ts400", 272: "ts272", 416: "ts416",
+           264: "ts264"}
 #: Tick rate of word 0 per layout (measured: +19,200 / +30,720 per 1 ms record).
 _TIMEBASE_HZ = {"xo": 19_200_000, "ts400": 30_720_000, "ts272": 30_720_000,
-                "ts416": 30_720_000}
+                "ts416": 30_720_000, "ts264": 30_720_000}
 #: Offset of the u32 LTE subframe index per layout.
-_SUBFRAME_OFF = {"xo": 12, "ts400": 16, "ts272": 16, "ts416": 116}
+_SUBFRAME_OFF = {"xo": 12, "ts400": 16, "ts272": 16, "ts416": 116, "ts264": 16}
+#: Offset of the u32 LTE SFN (0-1023), on the layouts known to carry it.
+_SFN_OFF = {"ts264": 152}
 #: ``xo`` layout: 16-byte task slots run from here to the end of the record.
 _XO_SLOT_BASE = 408
 
@@ -114,8 +144,9 @@ class Diag0xB11C:
     """LTE LL1 per-subframe firmware timeline (see the module docstring).
 
     ``layout`` is ``"xo"`` (632/760 B, 19.2 MHz XO stamps), ``"ts400"``
-    (400 B), ``"ts272"`` (272 B) or ``"ts416"`` (416 B), all 30.72 MHz. Any
-    other size is not decoded: the parser returns None.
+    (400 B), ``"ts272"`` (272 B), ``"ts416"`` (416 B) or ``"ts264"`` (264 B),
+    all 30.72 MHz. Any other size is not decoded: the parser returns None.
+    ``sfn`` is set only on ``ts264``.
     ``timeline_ts`` ticks at ``timebase_hz``. Stamps in ``task_slots`` are
     given relative to ``timeline_ts`` (``xo_ts_rel``, signed XO ticks).
     """
@@ -134,6 +165,7 @@ class Diag0xB11C:
     ustmr24_ts: int | None = None
     o_stmr_ts: int | None = None
     task_slots: list[dict[str, int]] | None = None
+    sfn: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +184,7 @@ class Diag0xB11C:
             "ustmr24_ts": self.ustmr24_ts,
             "o_stmr_ts": self.o_stmr_ts,
             "task_slots": self.task_slots,
+            "sfn": self.sfn,
         }
 
 
@@ -160,34 +193,38 @@ class Diag0xB11C:
     name="0xB11C",
     description=(
         "LTE LL1 per-subframe FW timeline — timer stamp (19.2 MHz XO on "
-        "632/760 B, 30.72 MHz Ts on 272/400/416 B), subframe index, O_STMR, "
-        "task slots (F3-grounded)"
+        "632/760 B, 30.72 MHz Ts on 264/272/400/416 B), subframe index, SFN, "
+        "O_STMR, task slots (F3-grounded)"
     ),
-    version=6,
+    version=7,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Five layouts keyed on payload_size (272/400/416/632/760 B); word 0 "
+        "Six sizes keyed on payload_size (264/272/400/416/632/760 B); word 0 "
         "is a hardware timer stamp stepping +19,200 (632/760 B, XO) or "
-        "+30,720 (272/400/416 B, Ts) per 1 ms record, so byte 0 (`counter`) "
+        "+30,720 (264/272/400/416 B, Ts) per 1 ms record, so byte 0 (`counter`) "
         "is its LSB and the log is version-less. F3-grounded on the xo "
         "layout in two F3-armed captures (EM7565 632 B, LM960 760 B): "
         "vstmr_epoch.c VSTMR XO leads word 0 by 2-4.4 ms on 2,666/2,666 "
         "events; gts.c O_STMR SysFN sits 2.67 subframes after word @80 on "
         "98.5-99.6%; lte_LL1_cmd_proc_sys.c Doppler Init subframe_num + 6 == "
-        "word @12 (mod 10) on 357/375. The 272/400/416 B layouts are "
+        "word @12 (mod 10) on 357/375. The 264 B T77W595 (MDM9625) layout "
+        "is F3-grounded by lte_ml1_schdlr2_stm.c 'Current Subframe: %d/%d': "
+        "SFN*10+subframe == @152*10 + @16 + 3 on 165,966/166,469 co-timed "
+        "events in 3 captures. The 272/400/416 B layouts are "
         "structurally grounded only. Any other size (e.g. a truncated "
         "record) returns None (registry warning)."
     ),
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=12,
-    fields_parsed=12,
+    fields_identified=13,
+    fields_parsed=13,
     field_invariants={
-        "payload_size": {"enum": [272, 400, 416, 632, 760]},
+        "payload_size": {"enum": [264, 272, 400, 416, 632, 760]},
         "frame_subframe_idx": {"range": [0, 9]},
+        "sfn": {"range": [0, 1023]},
         "state_flag": {"enum": [0, 1, 2]},
     },
     # byte-0 is the LSB of a free-running timer stamp (NOT a DIAG version);
@@ -256,4 +293,9 @@ def parse_0xb11c(log_time: int, data: bytes) -> Diag0xB11C | None:
         out.task_slots = slots
     elif sfi <= 9:
         out.frame_subframe_idx = sfi
+    sfn_off = _SFN_OFF.get(layout)
+    if sfn_off is not None:
+        sfn = unpack_from('<I', data, sfn_off)[0]
+        if sfn <= 1023:
+            out.sfn = sfn
     return out

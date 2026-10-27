@@ -26,8 +26,12 @@ the classic LTE-MAC subpacket container.
       u16 tbs, 3B v1_reserved_raw, u8 mac_hdr_len, mac_hdr
 
     rnti_type: 0 C-RNTI, 2 P-RNTI, 3 RA-RNTI, 4 TC-RNTI, 5 SI-RNTI (others raw).
-    For a transparent-MAC TB (P-/SI-/RA-RNTI) mac_hdr is the whole TB; for a
-    C-/TC-RNTI TB it is the MAC subheader block (+ any CE bytes).
+    For a transparent-MAC TB (P-/SI-/RA-RNTI) mac_hdr is the TB, but only its
+    head is logged: at most 32 B (15 B on the MC7700 and some MDM9x07 builds).
+    mac_hdr_len < tbs means mac_hdr is a head, not the whole TB (corpus:
+    3,899 sp07.v2 + 946 sp07.v4 samples at 32 B, 71 at 15 B; each such head is
+    the first bytes of the 0xB0C0 PDU). For a C-/TC-RNTI TB it is the MAC
+    subheader block (+ any CE bytes).
 
 **v0x32** (SDX55/SDX6x RM520N-GL / M3100 / EM9291 …) and **v0x31** (SDX55
 RM500Q / LV55 / FN980 / M2000 / T99W175): a flat TB-entry list.
@@ -83,6 +87,26 @@ list.
   tbs - L - 3 == padding_bytes.
 * **v0x01 framing:** 74 captures / 34 model groups: every subpacket walks with
   0..3 alignment bytes left, multi-sample (up to 23) included.
+* **v0x01 per subpacket layout:** each sample layout grounded on its own
+  records.
+  F3 1:1, P-RNTI sample <-> MAC->RRC paging hand-off print, record after print
+  by 0-51 ms: sp07.v1 MC7700 12/12 (`lte_rrc_paging.c:934 Received paging
+  dlm`; that build has no PCCH_DL_DATA_IND print); sp07.v2 EG25-G 103/103
+  (`lte_rrc_stm.c:537` PCCH_DL_DATA_IND and `lte_rrc_paging.c:1037`, 103 each);
+  sp07.v4 EM160R-GL 117/117 (`lte_rrc_stm.c:852`), LM960A18 318/318
+  (`lte_rrc_stm.c:683`, + TC-RNTI Msg4 1/1 CCCH_DL_DATA_IND), EM060K-GL 135/135
+  (`lte_rrc_stm.c:648` + `lte_rrc_paging.c:1211`, + Msg4 2/2). The timing word:
+  sfn*10+subframe == the `pag_sf` arg of ML1's `lte_ml1_common_paging_drx.c`
+  "Next Pag Occ" print in the 3 s before the record on sp07.v1 12/12, sp07.v2
+  103/103, sp07.v4 302/302 (LM960A18) and 129/135 (EM060K-GL); the same
+  subframe + 10 matches pag_sf 0 times (control). SCAT MAC-LTE (timing tag +
+  bytes): sp07.v2 92/92, sp07.v4 167/167 DL frames with the RNTI type agreeing
+  on P/RA/C(TC)/SI; SCAT emits no MAC frame on the MC7700 (sp07.v1).
+  0xB0C0 content join, 338 bearing captures, head-aware: P-RNTI == PCCH
+  sp07.v1 409/409, sp07.v2 6,200/6,207, sp07.v4 7,307/7,475; SI-RNTI == BCCH
+  sp07.v2 6,114/6,121, sp07.v4 1,630/1,875; TC-RNTI CRI == Msg3 sp07.v2
+  102/106, sp07.v4 61/69; CCCH L == DL-CCCH length 15/15, 12/13. The sp07.v4
+  P/SI misses are not characterised.
 * **v0x32, F3 + RRC OTA, RM520N-GL SDX62 survey (46 RACHs):** exactly 46 entries
   carry an LCID-28 Contention Resolution CE; ce_payload == the 0xB0C0 UL-CCCH
   Msg3 head 46/46, the LCID-0 element length == the 0xB0C0 DL-CCCH length 46/46,
@@ -392,7 +416,7 @@ def _parse_entries(data: bytes, base: int, n: int):
     0xB063,
     name="0xB063",
     description="0xB063 — LTE MAC DL Transport Block: per-TB RNTI type, HARQ id, SFN/subframe, TBS, MAC subheader LCID/length, MAC CEs (contention resolution, TA), v0x01 TB head bytes",
-    version=4,
+    version=5,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",

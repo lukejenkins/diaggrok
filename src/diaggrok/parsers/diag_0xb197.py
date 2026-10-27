@@ -1,7 +1,8 @@
 """0xB197 — LTE ML1 Serving Cell Information (``LOG_LTE_ML1_SERVING_CELL_INFORMATION``).
 
-All corpus records are **v=0x02 / 36 B** (7,470 records / 233 captures). The
-serving-cell identity fields are exposed:
+Two versions are attested: **v=0x02 / 36 B** (7,470 records / 233 captures,
+the layout below) and the MDM9625-era **v=0x01 / 32 B** (see "v=0x01" at the
+end). The serving-cell identity fields are exposed:
 
     offset 0 : u8    version            (corpus-invariant 0x02)
     offset 1 : u8    dl_bandwidth (RB)  {6,15,25,50,75,100} = 1.4/3/5/10/15/20 MHz;
@@ -90,10 +91,48 @@ the modem, so ``earfcn`` below is the **low-16-truncated** value. It is exposed
 (the low bits are still useful for cross-code correlation) but must not be trusted
 as a usable absolute EARFCN on bands above ~65.
 
-Version enum: SCAT handles a minor version 1 that the ``version`` enum (={0x02})
-rejects. That version is **not attested in this corpus** (all 7,470 records are
-v=0x02), so the enum is left strict rather than widened for a version only a
-reference decoder knows.
+## v=0x01 — MDM9625 (u16 EARFCN), 32 B
+
+v=0x02 with the EARFCN narrowed to u16 and the 2-byte pad after ``pci``
+dropped, so every field after ``pci`` sits 4 bytes earlier::
+
+    offset 0 : u8    version (0x01)
+    offset 1 : u8    dl_bandwidth (RB)  same sentinels {0, 101} as v=0x02
+    offset 2 : u16   sfn                PBCH TTI-start frame (4-aligned), v=0x01 only
+    offset 4 : u16   earfcn             full value (no truncation caveat at u16)
+    offset 6 : u16   pci (low 9 bits)   + pci_word_hi, as v=0x02
+    offset 16: 12 B  measurement region (v=0x02 [20:32])
+    offset 30: u8    num_antennas       (v=0x02 offset 34)
+
+Attested on the Foxconn T77W595 (MDM9625, ``F0.0.0.6.5.VZ.017``, 16
+records / 3 captures, cells 2300/<pci> and 5035/<pci>) and the BandLuxe C505
+(``QC_0_00016749_0_001_0030``, 5 records / 1 capture). Grounding:
+
+* **F3, labelled**: ``lte_ml1_dlm_sib.c:8613`` "current_req.freq:%d |
+  current_req.cell_id:%d" → earfcn + pci **16/16**; ``lte_ml1_sm_main.c:966``
+  "SM: RX Cfg Req freq %d BW %d cell_id %d" → earfcn + dl_bandwidth + pci 9/11
+  nearest-instance (the 2 misses are the previous cell's print 2.75 s earlier).
+* **F3, index-attributed**: ``lte_ml1_md.c:5691`` (MIB decode, ``[earfcn,
+  pci, bw, n_tx, 32, sfn, …]``) → earfcn + pci + dl_bandwidth **16/16**, and
+  its sfn arg == ``sfn`` on **15/16** records within ±0.2 s. The one miss is
+  the first record of a camp (sfn 0, measurement region still zeroed), logged
+  before the MIB decode it would match.
+* **Sibling code**: ``sfn`` == 0xB0C1 v0x01 ``sfn`` on every co-emitted pair
+  (same TTI-start semantics).
+* **SCAT** "LTE ML1 Cell Info": 11/11 T77W595 renders and **5/5** C505 renders
+  equal this decode on earfcn, pci, bandwidth and num_antennas, including the
+  two C505 no-measurement records (byte-1 0, byte-30 3 ↔ SCAT "0 PRBs, Num
+  antennas: 3"). C505 plaintext F3 ``cmss.c`` "earfcn 2300" / "pci:<pci>" names
+  the serving cell; its sentinel records are on EARFCN 5780, where
+  ``lte_ml1_md.c:1323`` logs "Sent Init Acq Req; earfcn 5780".
+* ``num_antennas`` is 2 on every populated record while the MIB (F3 n_tx arg,
+  SCAT "TX antennas: 4") says 4 Tx ports on both T77W595 cells: a third chipset
+  where this field is not the eNB Tx-port count.
+* Unlike v=0x02, ``meas_region_zeroed`` is not exclusive to the sentinels on
+  MDM9625: the first record of a camp carries a valid bandwidth (100) with the
+  region still zeroed.
+
+Version enum: {0x01, 0x02}, each gated on its own payload size (32 / 36 B).
 
 Log name: LTE ML1 Serving Cell Information
 Also known as: LOG_LTE_ML1_SERVING_CELL_INFORMATION, LTE ML1
@@ -106,8 +145,13 @@ from typing import Any
 
 from diaggrok.registry import register
 
-_B197_VERSION_OBSERVED = 0x02
-_B197_PAYLOAD_SIZE_OBSERVED = 36
+# Per-version layout: (payload size, earfcn struct fmt, earfcn offset, pci
+# offset, measurement-region slice, num_antennas offset). v=0x01 (MDM9625) is
+# v=0x02 with a u16 EARFCN and no pad after pci (every later field -4 B).
+_B197_LAYOUTS = {
+    0x01: (32, '<H', 4, 6, slice(16, 28), 30),
+    0x02: (36, '<I', 4, 8, slice(20, 32), 34),
+}
 
 # Canonical LTE DL bandwidths, expressed as their resource-block counts:
 #   6 → 1.4 MHz, 15 → 3 MHz, 25 → 5 MHz, 50 → 10 MHz, 75 → 15 MHz, 100 → 20 MHz.
@@ -128,7 +172,7 @@ _VALID_ANTENNA_PORTS = frozenset({1, 2, 4})
 
 @dataclass
 class Diag0xB197:
-    """0xB197 — LTE ML1 Serving Cell Information (v=0x02, 36 B)."""
+    """0xB197 — LTE ML1 Serving Cell Information (v=0x02 36 B / v=0x01 32 B)."""
     log_time: int
     version: int
     dl_bandwidth_rb: int | None
@@ -141,6 +185,7 @@ class Diag0xB197:
     meas_region_zeroed: bool
     payload_size: int
     body_raw: bytes
+    sfn: int | None = None  # v=0x01 only (u16@2, PBCH TTI-start frame)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -155,6 +200,7 @@ class Diag0xB197:
             "num_antennas": self.num_antennas,
             "num_antennas_raw": self.num_antennas_raw,
             "meas_region_zeroed": self.meas_region_zeroed,
+            "sfn": self.sfn,
             "payload_size": self.payload_size,
             "body_raw": self.body_raw,
         }
@@ -165,8 +211,8 @@ class Diag0xB197:
     name="0xB197",
     wigle_direct=False,
     wigle_roles=("pci-earfcn-bridge", "rat-context"),
-    description="0xB197 — LTE ML1 Serving Cell Information (earfcn/pci/dl_bandwidth/num_antennas, F3+SCAT-grounded)",
-    version=4,
+    description="0xB197 — LTE ML1 Serving Cell Information (v0x02 36B / v0x01 32B; earfcn/pci/dl_bandwidth/num_antennas, F3+SCAT-grounded)",
+    version=5,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -176,37 +222,45 @@ class Diag0xB197:
         "capture (tm_cm_iface_nonship.c 'Freq=800 PSC=<pci>' ↔ decoded "
         "earfcn=800/pci=<pci>); byte-1 dl_bandwidth {0,101}→None sentinels; "
         "num_antennas@34 SCAT-grounded on EM9291 (237/237 per-record match, "
-        "{1,2,4}→value else None, 3⟺sentinel). v=0x02/36B on 7,470 records."
+        "{1,2,4}→value else None, 3⟺sentinel). v=0x02/36B on 7,470 records; "
+        "v=0x01/32B (MDM9625, u16 earfcn, +sfn@2) F3-grounded on T77W595 "
+        "(lte_ml1_dlm_sib.c / lte_ml1_md.c MIB decode) and SCAT on C505."
     ),
     source_url="",
     issues=(),
     primary_issue=None,
     fields_identified=5,
-    fields_parsed=10,
+    fields_parsed=11,
     field_invariants={
-        "version": {"enum": [_B197_VERSION_OBSERVED]},
-        "payload_size": {"enum": [_B197_PAYLOAD_SIZE_OBSERVED]},
+        "version": {"enum": sorted(_B197_LAYOUTS)},
+        "payload_size": {"enum": sorted(v[0] for v in _B197_LAYOUTS.values())},
     },
 )
 def parse_0xb197(log_time: int, data: bytes) -> Diag0xB197 | None:
-    if len(data) != _B197_PAYLOAD_SIZE_OBSERVED:
+    if not data:
         return None
     version = data[0]
-    if version != _B197_VERSION_OBSERVED:
+    layout = _B197_LAYOUTS.get(version)
+    if layout is None:
+        return None
+    size, earfcn_fmt, earfcn_off, pci_off, meas, ant_off = layout
+    if len(data) != size:
         return None
 
     dl_bandwidth_raw = data[1]
     dl_bandwidth_rb = dl_bandwidth_raw if dl_bandwidth_raw in _VALID_DL_BANDWIDTH_RB else None
 
-    earfcn = unpack_from('<I', data, 4)[0]  # low-16-truncated (bytes 6-7 == 0)
-    pci_word = unpack_from('<H', data, 8)[0]
+    # v=0x02: low-16-truncated (bytes 6-7 == 0); v=0x01: a plain u16.
+    earfcn = unpack_from(earfcn_fmt, data, earfcn_off)[0]
+    pci_word = unpack_from('<H', data, pci_off)[0]
     pci = pci_word & 0x1FF
     pci_word_hi = pci_word >> 9
 
-    num_antennas_raw = data[34]  # SCAT "Num antennas" (237/237 EM9291 match)
+    num_antennas_raw = data[ant_off]  # SCAT "Num antennas" (237/237 EM9291 match)
     num_antennas = num_antennas_raw if num_antennas_raw in _VALID_ANTENNA_PORTS else None
 
-    meas_region_zeroed = not any(data[20:32])
+    meas_region_zeroed = not any(data[meas])
+    sfn = unpack_from('<H', data, 2)[0] if version == 0x01 else None
 
     return Diag0xB197(
         log_time=log_time,
@@ -219,6 +273,7 @@ def parse_0xb197(log_time: int, data: bytes) -> Diag0xB197 | None:
         num_antennas=num_antennas,
         num_antennas_raw=num_antennas_raw,
         meas_region_zeroed=meas_region_zeroed,
+        sfn=sfn,
         payload_size=len(data),
         body_raw=data[1:],
     )

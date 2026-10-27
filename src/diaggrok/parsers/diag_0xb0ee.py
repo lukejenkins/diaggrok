@@ -8,8 +8,9 @@ Layout (v0x02, the sole version; fixed 19 B; 7,267 records / 336 captures /
 
     [0]      u8    version          0x02 (Layer-1 gated)
     [1]      u8    emm_state        see _EMM_STATE_NAMES
-    [2:4]    u16   emm_substate     LE; state-dependent enum, surfaced raw
-                                    (byte [3] is 0x00 on every sampled record)
+    [2:4]    u16   emm_substate     LE; state-dependent enum, see
+                                    _EMM_SUBSTATE_NAMES (byte [3] is 0x00 on
+                                    every sampled record)
     [4:7]    3B    plmn             TS 24.008 §10.5.1.3 TBCD; ff ff ff = none
     [7]      u8    guti_valid       0 / 1
     [8]      u8    guti_ue_id_type  6 (GUTI, TS 24.301 §9.9.3.12) when valid,
@@ -42,9 +43,24 @@ Grounding (three chipsets, two PLMNs):
     outgoing Detach Request; 1 follows the detach and precedes the next
     Attach Request; 3 follows Attach Accept / Complete; 5 is logged
     immediately before an outgoing Service Request.
-    0 and 4 were not seen transitioning; they are named by elimination
-    against the TS 24.301 state list and flagged as candidates.
-  * emm_substate — no oracle labels it; surfaced raw (values 0–7 seen).
+    4 is the last state logged before an outgoing TAU Request in 28/36
+    corpus cases. 0 has never been observed and stays a candidate.
+    The Telit FN990B AT#LTEDS command reference (the FN990B is the
+    SDX72 sibling of the T99W640) documents the same state enum
+    (0 NULL, 1 DEREGISTERED, 2 REG_INIT, 3 REGISTERED, 4 TAU_INIT,
+    5 SVC_REQ_INIT, 6 DEREGINIT), matching every grounded value above.
+  * emm_substate — named from the same AT#LTEDS table, whose comments carry
+    the firmware's enum identifiers (``EMM_DEREGISTERED_NO_CELL_AVAILABLE`` …).
+    The table covers DEREGISTERED (0–7), REGISTERED (0–8) and
+    REGISTERED_INITIATED (0–1); other states stay unnamed. Corpus check
+    (157 captures carrying 0xB0EE + 0xB0ED, 5,893 records): every
+    observed value is inside its state's range, REGISTERED_INITIATED uses
+    exactly {0, 1}, and the last DEREGISTERED record before an outgoing
+    Attach Request is 7 WAITING_PDN_CONN_REQ (207), 4 ATTEMPTING_TO_ATTACH
+    (27) or 2 ATTACH_NEEDED (18), never 0 NO_IMSI. Caveat: 5 of 257 were
+    3 NO_CELL_AVAILABLE. The check took the last DEREGISTERED record, not
+    the immediately preceding one, so a direct NO_CELL → REG_INIT hop would
+    land there; this is not verified.
   * Black-box A/B: qcsuper + tshark on an EM7511 (MDM9x50) capture decode
     the Detach Request from RRC ULInformationTransfer (an independent path,
     not this code). Its GUTI IE and the RRCConnectionRequest s-TMSI
@@ -71,17 +87,56 @@ _B0EE_VERSION_OBSERVED = 0x02
 _B0EE_PAYLOAD_SIZE_OBSERVED = 19
 _EPS_ID_TYPE_GUTI = 0x6
 
-# Grounded values: see the module docstring. "(candidate)" = named by
-# elimination, never observed in a grounded transition.
+# Grounded values: see the module docstring. "(candidate)" = never observed
+# in a grounded transition.
 _EMM_STATE_NAMES = {
     0: "EMM_NULL (candidate)",
     1: "EMM_DEREGISTERED",
     2: "EMM_REGISTERED_INITIATED",
     3: "EMM_REGISTERED",
-    4: "EMM_TRACKING_AREA_UPDATING_INITIATED (candidate)",
+    4: "EMM_TRACKING_AREA_UPDATING_INITIATED",
     5: "EMM_SERVICE_REQUEST_INITIATED",
     6: "EMM_DEREGISTERED_INITIATED",
 }
+
+# Keyed by emm_state. Telit FN990B AT#LTEDS SUBSTATUS table (firmware enum
+# identifiers, the doc's "DEGEGISTERED" typo corrected); corpus-checked, see
+# the module docstring.
+_EMM_SUBSTATE_NAMES = {
+    1: {
+        0: "EMM_DEREGISTERED_NO_IMSI",
+        1: "EMM_DEREGISTERED_PLMN_SEARCH",
+        2: "EMM_DEREGISTERED_ATTACH_NEEDED",
+        3: "EMM_DEREGISTERED_NO_CELL_AVAILABLE",
+        4: "EMM_DEREGISTERED_ATTEMPTING_TO_ATTACH",
+        5: "EMM_DEREGISTERED_NORMAL_SERVICE",
+        6: "EMM_DEREGISTERED_LIMITED_SERVICE",
+        7: "EMM_DEREGISTERED_WAITING_PDN_CONN_REQ",
+    },
+    2: {
+        0: "EMM_WAITING_FOR_NW_RESPONSE",
+        1: "EMM_WAITING_FOR_ESM_RESPONSE",
+    },
+    3: {
+        0: "EMM_REGISTERED_NORMAL_SERVICE",
+        1: "EMM_REGISTERED_UPDATE_NEEDED",
+        2: "EMM_REGISTERED_ATTEMPTING_TO_UPDATE",
+        3: "EMM_REGISTERED_NO_CELL_AVAILABLE",
+        4: "EMM_REGISTERED_PLMN_SEARCH",
+        5: "EMM_REGISTERED_LIMITED_SERVICE",
+        6: "EMM_REGISTERED_ATTEMPTING_TO_UPDATE_MM",
+        7: "EMM_REGISTERED_IMSI_DETACH_INITIATED",
+        8: "EMM_REGISTERED_WAITING_FOR_ESM_ISR_STATUS",
+    },
+}
+
+
+def _substate_name(state: int, substate: int) -> str | None:
+    """Name for a state that has a documented table, else None."""
+    table = _EMM_SUBSTATE_NAMES.get(state)
+    if table is None:
+        return None
+    return table.get(substate, f"UNKNOWN_{substate}")
 
 
 def _plmn(b3: bytes) -> dict[str, str] | None:
@@ -101,6 +156,7 @@ class Diag0xB0EE:
     emm_state: int
     emm_state_name: str
     emm_substate: int
+    emm_substate_name: str | None
     plmn_raw: bytes
     plmn: dict[str, str] | None
     guti_valid: int
@@ -119,6 +175,7 @@ class Diag0xB0EE:
             "emm_state": self.emm_state,
             "emm_state_name": self.emm_state_name,
             "emm_substate": self.emm_substate,
+            "emm_substate_name": self.emm_substate_name,
             "plmn_hex": self.plmn_raw.hex(),
             "plmn": self.plmn,
             "guti_valid": self.guti_valid,
@@ -135,11 +192,12 @@ class Diag0xB0EE:
     0xB0EE, domain="nas",
     name="0xB0EE",
     description=(
-        "LTE NAS EMM state — EMM state (named, F3/OTA-grounded) and raw "
-        "substate, registered PLMN, and the UE GUTI (PLMN / MMEGI / MMEC / "
-        "M-TMSI, grounded 4/4 against the NAS OTA EPS-mobile-identity IE)"
+        "LTE NAS EMM state — EMM state (named, F3/OTA-grounded) and "
+        "substate (named per state from the FN990B AT#LTEDS enum, "
+        "corpus-checked), registered PLMN, and the UE GUTI (PLMN / MMEGI / "
+        "MMEC / M-TMSI, grounded 4/4 against the NAS OTA EPS-mobile-identity IE)"
     ),
-    version=3,
+    version=4,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -152,8 +210,12 @@ class Diag0xB0EE:
         "and s-TMSI equal it. plmn == F3 "
         "emm_update_lib.c:1708 Attach Request PLMN octets; emm_state 2 == F3 "
         "emm_esm_handler.c:2434 (2/2) + EVENT_NAS_ATTACH co-emission; states "
-        "1/3/5/6 named from OTA sequencing; 0/4 are candidates by elimination. "
-        "Substate raw. Version and payload size are gated (v0x02, 19 B)."
+        "1/3/5/6 named from OTA sequencing, 4 from TAU Request precedence "
+        "(28/36); 0 is a candidate. State and substate enums match the Telit "
+        "FN990B AT#LTEDS table; substate corpus check over 157 captures: all "
+        "in range, REG_INIT exactly {0,1}, pre-Attach DEREGISTERED substate "
+        "7/4/2 (252/257), never NO_IMSI. Version and payload size are gated "
+        "(v0x02, 19 B)."
     ),
     source_url="",
     issues=(),
@@ -177,12 +239,14 @@ def parse_0xb0ee(log_time: int, data: bytes) -> Diag0xB0EE | None:
     guti_valid = data[7]
     guti_ue_id_type = data[8]
     has_guti = guti_valid == 1 and guti_ue_id_type == _EPS_ID_TYPE_GUTI
+    emm_substate = unpack_from("<H", data, 2)[0]
     return Diag0xB0EE(
         log_time=log_time,
         version=version,
         emm_state=emm_state,
         emm_state_name=_EMM_STATE_NAMES.get(emm_state, f"UNKNOWN_{emm_state}"),
-        emm_substate=unpack_from("<H", data, 2)[0],
+        emm_substate=emm_substate,
+        emm_substate_name=_substate_name(emm_state, emm_substate),
         plmn_raw=bytes(data[4:7]),
         plmn=_plmn(data[4:7]),
         guti_valid=guti_valid,

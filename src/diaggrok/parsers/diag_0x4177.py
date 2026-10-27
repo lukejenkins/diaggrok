@@ -1,4 +1,9 @@
-"""0x4177 — LTE PHY, 4 chipset-keyed versions, stride-family encoding.
+"""0x4177 — WCDMA Step-1 search (LOG_WCDMA_STEP_1_EDITION_2) on v=0x01; historically
+"LTE PHY" on v=0x05/0x07/0x08/0x0b. 5 chipset-keyed versions, stride-family encoding.
+
+**v=0x01 (MDM9625, Foxconn T77W595 / HP X5) is F3-grounded as the WCDMA
+Step-1 (P-SCH slot-sync) searcher's peak list — the canonical name is right.**
+See "v=0x01" below; it re-opens the LTE attribution of the other versions.
 
 Corpus: 194,395 records / 44 captures. Unlike codes where each version maps
 1:1 to a payload size, 0x4177 is a **stride-family** code: each version has
@@ -74,7 +79,7 @@ F3 attribution, per version
     ID <pci>"), ``lte_ml1_bplmn_intf.c``; zero NR. cell_id is not a PCI,
     cross-chipset: LM960 0/45 in 0–503 on the serving-PCI anchor (values
     cluster 17,836–18,412), LM960 2/31 on a second drive anchor,
-    MC7411 (SDX50M) 0/1 (17,944); no v0x08 cell_id ever equals the
+    MC7411 (MDM9250) 0/1 (17,944); no v0x08 cell_id ever equals the
     F3/0xB193-anchored serving or neighbour PCI. Records are overwhelmingly
     header-only (n_cells=0), consistent with a per-TTI scheduling/PHY status
     record (possibly PDCCH/DCI grants) rather than a neighbour list. The
@@ -97,6 +102,62 @@ F3 attribution, per version
     the 29B v0x05 header shares the family framing skeleton with the 42B
     v0x08 header (``01 01 … fe/ff 00 02 00 02 00 02`` preamble, a
     ``2d 20 00 60 00`` trailer segment).
+
+v=0x01 — WCDMA Step-1 peaks (24B header + 5B per peak, 16-peak log cap)
+-----------------------------------------------------------------------
+
+1,617 records / 4 captures (SIM power cycle, COPS dereg, manual PLMN scan,
+uimcycle-attach), build ``T77W595.F0.0.0.6.5.VZ.017``; sizes 24 + 5n, n=0..16::
+
+    [0:2]   01 00                    version + const (1,617/1,617)
+    [2:4]   i16 LE  hdr_i16_at2      unnamed, -426..-19
+    [4:11]  00 02 00 fe 00 02 00     const (1,617/1,617; 0x4179 v=0x01 [3:10])
+    [11:13] u16 LE  freq_word_prev   0 (818) or == freq_word (799) — records pair
+    [13:15] u16 LE  freq_word        carrier DL frequency, ~131.43 kHz/LSB
+    [15:22] 00 00 2d 20 00 60 00     const (the family "2d 20 00 60 00" segment)
+    [22:24] u16 LE  num_peaks        peaks FOUND; logged = min(num_peaks, 16)
+    n x 5B: u16 peak_pos_cx8 (slot-relative, < 20480) | u16 peak_energy
+            (descending) | u8 flag (0/1)
+
+Grounding (legacy ``0x92`` INDEX-bound @1.0 + plaintext ``0x79``):
+
+* ``srchsched.c:3412`` (WCDMA searcher scheduler, argc 3) fires at the
+  record's DIAG tick with arg0 == ``num_peaks`` on **1,548/1,561** records
+  (cops-dereg 592/592, PLMN scan 956/969). The 13 others are all F3 < record
+  (29 vs 32, 1 vs 2, 2 vs 3) — never greater — consistent with a count
+  printed after a pruning pass; not grounded. The MDM9207 EG25-G STRING DB
+  names the corresponding print ``srchsched.c:3460 "STEP1_PROC: Number of
+  Step1 peaks:%d, Primary cnt:%d,Sec cnt:%d"`` (same argc and arg shape;
+  48-line cross-build offset > ALIGN_MAX_DISTANCE, so a CANDIDATE label).
+* ``wsrch.c:13712`` fires only on capped records with ``[found, logged]`` =
+  ``[num_peaks, 16]``: **44/44** (``[32, 16]``) — the 16-peak log cap.
+* Cross-code (independent of the count): every 0x4179 v=0x01 PN-search task
+  print ``wsrch.c:12067`` carries a 768-cx8 search window; its upper edge mod
+  one slot (20480 cx8) lies within ±4 cx8 of a logged peak of the preceding
+  0x4177 v=0x01 record on **846/924** prints (random-position null 2/924; 46
+  of the 78 misses follow a capped record whose other peaks are unlogged).
+  The searcher places its PN windows on these positions: they are Step-1
+  slot-boundary hypotheses, not cell identities.
+* ``freq_word``: 789/841 distinct (freq_word, last ``TUNE_TO_CHAN prim_freq``
+  UARFCN) pairs fit DL frequency = freq_word × 131.43 kHz within 0.5 MHz
+  (bands I/II/IV/V/VIII incl. additional channels; median residual 35 kHz,
+  i.e. quantisation). The scale is a measured fit, so the word stays raw.
+
+All 1,561 F3-co-captured records and all 1,617 v=0x01 records are energy-
+sorted (u16 energy — 32 peaks exceed 255, so [+3] is not a pad) with every
+position < 20480.
+
+**This re-opens the LTE attribution of v=0x05/0x07/0x08/0x0b (not
+re-verdicted).** A whole-corpus walk (218 captures, 489,042
+records) finds the per-cell ``cell_id`` u16 below 20480 on EVERY element of
+every version — v=0x0b 92,841/92,841, v=0x08 14,206/14,206, v=0x07
+4,593/4,593 — with the per-version maximum exactly 20,476: the Step-1
+slot-position range, not an identifier. v=0x0b also carries an in-header
+count ([19] == n_cells on 20,339/20,339 element-bearing records). The
+"cell_id is not a PCI" refutations above stand (uniform 0..20479 predicts the
+measured ~1.5-2.9 % in-PCI-range rate), but the names ``cell_id`` /
+``signal_quality`` are kept until a same-silicon Step-1 F3 witness exists
+for those versions.
 
 Stride invariance was verified at corpus scale: 0/194,395 records
 violate `(size - base) % stride == 0` for their version. The parser
@@ -122,6 +183,7 @@ from diaggrok.registry import register
 
 # Per-version (base_size, stride). stride==0 means "fixed base, no cells".
 _4177_VERSION_PROFILE: dict[int, tuple[int, int]] = {
+    0x01: (24, 5),  # MDM9625 Foxconn T77W595 — WCDMA Step-1 peaks, 5B per peak
     0x05: (29, 0),  # MDM9x30 Sierra MC7455 — fixed 29B
     0x07: (34, 7),  # MDM9207+MDM9x07 Quectel EG25-G/EG95-NA — 7B per cell
     0x08: (42, 7),  # SDX20 LM960 + MDM9x40 MC7411 — 7B per cell
@@ -159,6 +221,38 @@ class Diag0x4177Cell:
         return d
 
 
+#: v=0x01: the firmware logs at most 16 Step-1 peaks (header count up to 32).
+_V01_PEAK_CAP = 16
+#: One WCDMA slot in chip x8 units (2560 chips x 8); Step-1 positions are
+#: slot-relative, so every v=0x01 position is < this.
+STEP1_SLOT_CX8 = 2560 * 8
+_V01_HDR_CONST_A = bytes.fromhex("000200fe000200")                    # [4:11]
+_V01_HDR_CONST_B = bytes.fromhex("00002d20006000")                    # [15:22]
+
+
+@dataclass
+class Diag0x4177Step1Peak:
+    """One v=0x01 WCDMA Step-1 (P-SCH slot-sync) peak, 5 bytes.
+
+      [+0..+1] u16 LE  peak_pos_cx8 — slot-relative position, chip x8
+                       (0..20479). 846/924 PN-search windows (0x4179 v0x01,
+                       wsrch.c:12067 arg7) start on one of these, mod 20480.
+      [+2..+3] u16 LE  peak_energy — energy-sorted descending (1,561/1,561
+                       records; u16, not u8: 32 peaks exceed 255).
+      [+4]     u8      flag — 0/1, unnamed.
+    """
+    peak_pos_cx8: int
+    peak_energy: int
+    flag: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'peak_pos_cx8': self.peak_pos_cx8,
+            'peak_energy': self.peak_energy,
+            'flag': self.flag,
+        }
+
+
 @dataclass
 class Diag0x4177:
     """LTE PHY 0x4177 — 4 chipset-keyed versions, stride-family encoding.
@@ -174,6 +268,14 @@ class Diag0x4177:
     payload_size: int
     n_cells: int
     cells: list[Diag0x4177Cell] = field(default_factory=list)
+    # v=0x01 only (WCDMA Step-1 search, F3-grounded) — None/empty otherwise.
+    num_peaks: int | None = None          # u16 @[22:24]: peaks FOUND (F3 count)
+    peaks_capped: bool | None = None      # num_peaks > logged (16-peak cap)
+    freq_word: int | None = None          # u16 @[13:15], ~131.43 kHz/LSB, raw
+    freq_word_prev: int | None = None     # u16 @[11:13]: 0, or == freq_word
+    hdr_i16_at2: int | None = None        # i16 @[2:4], unnamed (-426..-19)
+    hdr_const_ok: bool | None = None      # [0:2],[4:11],[15:22],[23] constants
+    peaks: list[Diag0x4177Step1Peak] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -186,6 +288,14 @@ class Diag0x4177:
         }
         if self.cells:
             d['cells'] = [c.to_dict() for c in self.cells]
+        if self.version == 0x01:
+            d['num_peaks'] = self.num_peaks
+            d['peaks_capped'] = self.peaks_capped
+            d['freq_word'] = self.freq_word
+            d['freq_word_prev'] = self.freq_word_prev
+            d['hdr_i16_at2'] = self.hdr_i16_at2
+            d['hdr_const_ok'] = self.hdr_const_ok
+            d['peaks'] = [p.to_dict() for p in self.peaks]
         return d
 
 
@@ -201,8 +311,8 @@ class Diag0x4177:
     name="0x4177",
     wigle_direct=True,
     wigle_roles=("identity",),
-    description="LTE PHY (0x4177) — 4 chipset-keyed versions with per-version stride families; v=0x07/0x08/0x0b cell decode; cell_id is not a PCI on EG25-G (v0x07 MDM9207), LM960 (v0x08 SDX20), MC7411 (v0x08 SDX50M) or the SDX55/62 corpus (v0x0b); v0x07/v0x08/v0x0b LTE-ML1/LL1 attribution F3-grounded, v0x05 attributed by LTE-ML1 log-code co-presence (no F3 in its captures)",
-    version=7,
+    description="0x4177 — v=0x01 (MDM9625 T77W595) is the WCDMA Step-1 searcher peak list (LOG_WCDMA_STEP_1_EDITION_2), F3-grounded: srchsched.c:3412 peak count == num_peaks 1,548/1,561, wsrch.c:13712 16-peak cap 44/44, 0x4179 PN windows sit on its slot positions 846/924. Historically LTE PHY (0x4177) — 4 chipset-keyed versions with per-version stride families; v=0x07/0x08/0x0b cell decode; cell_id is not a PCI on EG25-G (v0x07 MDM9207), LM960 (v0x08 SDX20), MC7411 (v0x08 MDM9250) or the SDX55/62 corpus (v0x0b); v0x07/v0x08/v0x0b LTE-ML1/LL1 attribution F3-grounded, v0x05 attributed by LTE-ML1 log-code co-presence (no F3 in its captures)",
+    version=8,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -226,15 +336,21 @@ class Diag0x4177:
         "no F3 in any capture; attributed to the same LTE-ML1 family by "
         "co-present 0xB193 / 0xB126 / 0xB192 / 0xB0C0. No header offset echoes "
         "the F3- or 0xB193-printed EARFCN/PCI on any version, so headers stay "
-        "raw; the signal_quality dBm scale is ungrounded."
+        "raw; the signal_quality dBm scale is ungrounded. v=0x01 (MDM9625 "
+        "Foxconn T77W595, 1,617 records / 4 captures): 24B header + 5B/peak "
+        "(u16 peak_pos_cx8 < 20480, u16 energy descending, u8 flag), "
+        "num_peaks u16@22 == legacy srchsched.c:3412 arg0 on 1,548/1,561, "
+        "16-peak cap == wsrch.c:13712 [found, logged] 44/44; 0x4179 v0x01 "
+        "wsrch.c:12067 window edges mod 20480 hit a logged peak 846/924 "
+        "(null 2/924) — WCDMA Step-1 slot-sync peaks, as the name says."
     ),
     source_url="",
-    fields_identified=7,
-    fields_parsed=7,
+    fields_identified=13,
+    fields_parsed=13,
     issues=(),
     primary_issue=None,
     field_invariants={
-        "version": {"enum": [0x05, 0x07, 0x08, 0x0b]},
+        "version": {"enum": [0x01, 0x05, 0x07, 0x08, 0x0b]},
     },
 )
 def parse_0x4177(log_time: int, data: bytes) -> Diag0x4177 | None:
@@ -278,6 +394,31 @@ def parse_0x4177(log_time: int, data: bytes) -> Diag0x4177 | None:
                     signal_quality=signal_quality,
                     flag=flag,
                 ))
+    if version == 0x01:
+        peaks = [
+            Diag0x4177Step1Peak(
+                peak_pos_cx8=unpack_from('<H', data, base + i * stride)[0],
+                peak_energy=unpack_from('<H', data, base + i * stride + 2)[0],
+                flag=data[base + i * stride + 4],
+            )
+            for i in range(n_cells)
+        ]
+        num_peaks = unpack_from('<H', data, 22)[0]
+        return Diag0x4177(
+            log_time=log_time,
+            version=version,
+            variant=f"wcdma_step1_4177_v01_{size}B",
+            payload_size=size,
+            n_cells=n_cells,
+            num_peaks=num_peaks,
+            peaks_capped=num_peaks > n_cells,
+            freq_word=unpack_from('<H', data, 13)[0],
+            freq_word_prev=unpack_from('<H', data, 11)[0],
+            hdr_i16_at2=unpack_from('<h', data, 2)[0],
+            hdr_const_ok=(data[1] == 0 and data[4:11] == _V01_HDR_CONST_A
+                          and data[15:22] == _V01_HDR_CONST_B and data[23] == 0),
+            peaks=peaks,
+        )
     return Diag0x4177(
         log_time=log_time,
         version=version,

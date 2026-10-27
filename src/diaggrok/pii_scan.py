@@ -225,6 +225,39 @@ SUBSCRIBER_RULES = (
 )
 
 
+# ── Inline credential shape ───────────────────────────────────────────────────
+# A credential printed next to its label, as device logs do: a hotspot's
+# connection manager writes ``Password: <ddns-password> Hostname: …`` to its
+# debug-message stream. A password the user typed into the device is known to
+# no exact-value rule, so only the label can catch it.
+#
+# The value must mix letters and digits. That drops the code shapes that make a
+# bare ``password:`` label noisy (``password: &str``, ``password =
+# encoded_password``, ``pass: check``) and keeps the usual password shape. An
+# all-letter password is missed: this rule narrows the gap, it does not close it.
+# Report-only, like the subscriber shapes: the gate refuses, a human scrubs.
+_CREDENTIAL_RE = re.compile(
+    r"(?i)\b(?:password|passwd|passphrase|pwd|psk|wpa_?key)\b\s*[:=]\s*"
+    r"[\"']?(?=[^\s\"',;)]*[A-Za-z])(?=[^\s\"',;)]*\d)(?![%{<$(\[&])"
+    r"([^\s\"',;)]{4,})")
+
+#: ``(rule, regex, why)``; the secret is group 1. Iterated by the other gates.
+CREDENTIAL_RULES = (
+    ("inline-credential", _CREDENTIAL_RE,
+     "a value printed after a password/PSK label (e.g. a device log line)"),
+)
+
+
+def credential_tokens(text: str) -> list[str]:
+    """Inline credential values in ``text``, deduped and order-preserving."""
+    out: list[str] = []
+    for _rule, rx, _why in CREDENTIAL_RULES:
+        for m in rx.finditer(text):
+            if m.group(1) not in out:
+                out.append(m.group(1))
+    return out
+
+
 def subscriber_tokens(text: str) -> list[str]:
     """ICCID / IMSI / E.164 tokens in ``text`` — deduped, order-preserving.
     Report-only (see the note above); folded into ``leak_tokens``."""
@@ -322,7 +355,7 @@ def leak_tokens(text: str) -> list[str]:
             if m not in out:
                 out.append(m)
     for report_only in (_unlabeled_imeis(text), subscriber_tokens(text),
-                        high_precision_coordinates(text)):
+                        high_precision_coordinates(text), credential_tokens(text)):
         for tok in report_only:
             if tok not in out:
                 out.append(tok)

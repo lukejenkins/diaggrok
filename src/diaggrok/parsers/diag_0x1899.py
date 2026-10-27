@@ -7,8 +7,8 @@ OBU; a +250 ms control scores 0). That supports the name
 ``LOG_GNSS_GEOFENCE_MOTION_DETECTION_WIFI_STATE`` over the older table name
 ``LOG_EVENT_PM_BATT_TEMP_OUT_OF_RANGE``. The neighbouring ``gm_core.c`` /
 ``gm_ebee.c`` prints ("Fix type", "Setting Inside Geofence", "Backoff
-Selected") come from the same pass. No print labels byte[1] (counter) or
-byte[2] (state), which stay as decoded below.
+Selected") come from the same pass. No print labels the record sequence
+counter at [1:5], the only varying field.
 Cadence is NOT always 1 Hz despite the constant ``rate_ms`` = 1000: a C-V2X
 OBU emits at 100 ms.
 
@@ -27,50 +27,41 @@ from diaggrok.registry import register
 
 
 # ---------------------------------------------------------------------------
-# 0x1899 — GNSS geofence status tick (108B fixed, 106/108 bytes constant)
+# 0x1899 — GNSS geofence status tick (108B fixed, 104/108 bytes constant)
 # ---------------------------------------------------------------------------
-# Cross-chipset corpus: 3380 records across 6 chipset generations — LM960
-# SDX20, EG18-NA SDX20 V2, EP06A MDM9x07, FN980m SDX55, EM7511 MDM9650,
-# plus GNSS-diag 5-min captures on several networks and after cold resets.
-# Across this corpus, only bytes [1] and [2] actually vary:
+# Cross-chipset corpus: LM960 SDX20, EG18-NA SDX20 V2, EP06A MDM9x07, FN980m
+# SDX55, EM7511 MDM9650, RM520N-GL SDX62, plus long-uptime units: the Kapsch
+# RIS-9260 (same 81UMV91M21 modem as the 81umv91m21 captures, same physical
+# unit; it adds only uptime, not a second device), the Ficosa CarCom
+# MDM9250 and the Casa CFW-3212 (RG520N). Only [1:5] varies.
 #
-#   - `byte[1]` — free-running u8 counter (all 256 values observed).
-#     **+1 per record, 635/635 consecutive deltas on the two biggest
-#     captures** — a strict `+1 mod 256` frame counter, one tick per 0x1899
-#     record.
-#   - `byte[2]` — small-enum engine-internal state field.  Distribution
-#     across the 3380-record corpus: {0: 2601 (77%), 1: 657 (19%),
-#     2: 109 (3%), 3: 9 (0.3%), 4: 4 (0.1%)}.  Values {0,1,2,3,4} observed.
+# [1:5] is ONE u32 LE record sequence counter, +1 per record. v1..v9 split it
+# into a u8 `counter` at [1], a small-enum "engine-internal state"
+# `status_byte_2` at [2], and reserved-zero bytes at [3] and [4]. A runtime
+# census showed v9 dropping 2,337 records, all v0x02 108 B and all from those
+# long-uptime units, whose only difference was byte[3] != 0. In those 16
+# captures:
 #
-# byte[2] is NOT a GNSS fix-lifecycle state machine, even though in a
-# handful of captures it co-varies with the GNSS session.  Three
-# independent lines of evidence rule that reading out:
+#   - byte[2] (with byte[3]) advances by exactly +1 when byte[1] wraps 255->0.
+#     The RIS-9260 capture holds [2:4] = 2086 for 235 records, 2087 for
+#     exactly 256, then 2088.
+#   - [1:4] read as u24 LE is a +1-per-record count (0x0826FF -> 0x082700).
 #
-#   1. HW/QMI ground truth (RM520N-GL SDX62): byte[2] stays 0 during a HELD
-#      FIX, so 0 cannot mean "idle, pre-fix".
-#   2. F3 ground truth (EG18-NA cold GNSS start): the GNSS fix became valid
-#      (mgp `FixVal 1`, `New fix saved as best`, `TPC:ALE position` with real
-#      Lat/Lon) ~1 s BEFORE byte[2] flipped 0→1, and the flip coincided with
-#      NO discrete engine event — it happened mid-tracking.  A "tracking"
-#      state would flip AT fix acquisition, not a second later.
-#   3. Same-unit contradiction (EG18-NA boot + GNSS): byte[2] stayed 0 for
-#      ALL 242 records despite a full GNSS session on the SAME unit/firmware
-#      that flipped to 1 in the cold start.  A fix-lifecycle byte cannot
-#      read 0 throughout one GNSS session and 0→1 in another.
+# So the "state" byte was bits 8..15 of the count. That is why it looked like
+# a small enum {0..4} on short, freshly booted captures (count < 1,280), why it
+# was "monotonic non-decreasing within a capture", and why an earlier F3
+# pass saw it flip 0->1 about 1 s into an established fix with no engine event
+# (the count crossed 255->256). The earlier fix-lifecycle names (refuted by
+# that F3 pass) and the neutral `state_<n>` names that replaced them are both
+# dropped. `counter` and `status_byte_2` stay as the sequence's low and
+# second bytes for back-compat.
 #
-# byte[2] is therefore an UNLABELLED engine-internal state byte (values
-# {0,1,2,3,4}; 3/4 seen only on one LM960 firmware build).  Its physical
-# meaning is unknown and demonstrably NOT a fix state — the names are
-# neutral `state_<n>`.
+# byte[4] is 0 on every corpus record (largest count seen ~0x0828xx, at a
+# 100 ms .. 18.5 s cadence). It is read as the sequence MSB, not gated as
+# reserved, so a platform with > 2**24 records of uptime is not dropped. The
+# remaining 99 reserved-zero bytes keep the gate tight.
 #
-# The empirical invariant "within any capture the status sequence is
-# monotonic non-decreasing" holds on all 47 captures that
-# contain 0x1899 records — useful as a corruption-detection heuristic.
-#
-# All 106 other bytes are bit-exact constants across 6 chipsets,
-# including the values named status_flag_10, rate_ms, and
-# status_flag_85. Those names remain for back-compat but are really
-# cross-chipset CONSTANTS, not runtime-variable flags:
+# The other bytes are bit-exact constants across every chipset:
 #
 #   - `status_flag_10` = 0x01 at [10]  → cross-chipset CONSTANT
 #   - `rate_ms`        = 1000 (0x03E8) at [58:60] → CONSTANT u16 LE
@@ -79,11 +70,9 @@ from diaggrok.registry import register
 # Field map:
 #
 #     [0]       u8     version            = 0x02 (CONSTANT across chipsets)
-#     [1]       u8     counter            u8 frame counter, +1 mod 256
-#     [2]       u8     status_byte_2      engine-internal state enum, values
-#                                         {0,1,2,3,4}; meaning unknown, NOT a
-#                                         fix state (see above)
-#     [3:10]    7B     reserved           all zero (CONSTANT)
+#     [1:5]    u32LE   sequence           record count, +1 per record
+#                                         (counter = [1], status_byte_2 = [2])
+#     [5:10]    5B     reserved           all zero (CONSTANT)
 #     [10]      u8     status_flag_10     = 0x01 (CONSTANT)
 #     [11:58]  47B     reserved           all zero (CONSTANT)
 #     [58:60]  u16LE   rate_ms            = 1000 (CONSTANT)
@@ -91,42 +80,27 @@ from diaggrok.registry import register
 #     [85]      u8     status_flag_85     = 0x03 (CONSTANT)
 #     [86:108] 22B     reserved           all zero (CONSTANT)
 
-# Status-byte-2 enum mapping.  NEUTRAL labels only: the physical meaning of
-# byte[2] is unknown and it is not a GNSS fix-lifecycle state (see the field
-# map above).  Values 3/4 are seen on a single LM960 firmware build only.
-# Fix-progression names (idle_pre_fix/tracking/post_cold_reset_recovery)
-# would contradict the RM520N held-fix=0 and the EG18-NA same-unit 0-vs-0→1
-# observations.
-GNSS_STATUS_1899_STATES: dict[int, str] = {
-    0: 'state_0',
-    1: 'state_1',
-    2: 'state_2',
-    3: 'state_3',  # LM960 only
-    4: 'state_4',  # LM960 only
-}
 
-
-# Reserved-zero byte positions (101 bytes).  Bytes 3..9 (7), 11..57 (47),
-# 60..84 (25), 86..107 (22) = 101 bytes total.  These are 0x00 on every
-# observed 0x1899 record (24,873 records / 133 captures).
+# Reserved-zero byte positions (99 bytes).  Bytes 5..9 (5), 11..57 (47),
+# 60..84 (25), 86..107 (22) = 99 bytes total, zero on every corpus record.
 _RESERVED_ZERO_OFFSETS: tuple[int, ...] = tuple(
-    list(range(3, 10)) + list(range(11, 58)) + list(range(60, 85)) + list(range(86, 108))
+    list(range(5, 10)) + list(range(11, 58)) + list(range(60, 85)) + list(range(86, 108))
 )
 
 
 @dataclass
 class Diag0x1899:
-    """GNSS geofence status tick report (0x1899) — 108B, every byte accounted for."""
+    """GNSS geofence WiFi motion-detector state log (0x1899) — 108B, every byte accounted for."""
     log_time: int
     version: int
-    counter: int                     # u8 frame counter, +1 mod 256 per record
-    status_byte_2: int               # raw state enum value
-    status_byte_2_name: str          # mapped name from GNSS_STATUS_1899_STATES or 'unknown_<n>'
+    sequence: int                    # u32 LE [1:5] record count, +1 per record
+    counter: int                     # sequence low byte ([1]); back-compat
+    status_byte_2: int               # sequence bits 8..15 ([2]); back-compat, NOT a state
     status_flag_10: int
     rate_ms: int
     status_flag_85: int
     all_invariants_ok: bool          # True iff 4 named constants match AND all
-                                     # 101 reserved-byte positions are zero;
+                                     # 99 reserved-byte positions are zero;
                                      # always True on accepted records
     payload_size: int
 
@@ -135,9 +109,9 @@ class Diag0x1899:
             'type': 'Diag0x1899',
             'log_time': self.log_time,
             'version': self.version,
+            'sequence': self.sequence,
             'counter': self.counter,
             'status_byte_2': self.status_byte_2,
-            'status_byte_2_name': self.status_byte_2_name,
             'status_flag_10': self.status_flag_10,
             'rate_ms': self.rate_ms,
             'status_flag_85': self.status_flag_85,
@@ -147,10 +121,9 @@ class Diag0x1899:
 
 
 # --- Notes for validation ----------------------------------------------------
-# 108B geofence WiFi-motion state log: 106/108 bytes are constant, so only two
-# fields carry information — byte[1] counter (strict +1/record cadence) and
-# byte[2] engine-internal state (not a fix-state machine; see the field map
-# above). Naming: older tables list this code as
+# 108B geofence WiFi-motion state log: 104/108 bytes are constant, so the only
+# field carrying information is the u32 LE record sequence at [1:5] (see the
+# field map above). Naming: older tables list this code as
 # LOG_EVENT_PM_BATT_TEMP_OUT_OF_RANGE or as
 # LOG_GNSS_GEOFENCE_MOTION_DETECTION_WIFI_STATE; the F3 commit print
 # (gm_log.c) supports the geofence name. SIM8202G-M2 (SIMCom SDX55, v=0x02)
@@ -160,30 +133,32 @@ class Diag0x1899:
     0x1899, domain="gnss",
     name="0x1899",
     description="GNSS geofence WiFi motion-detector state log (gm_log.c commit, F3-grounded) — 108B, every byte accounted for",
-    version=9,
+    version=10,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
         "Clean-room RE across LM960, EG18-NA, EP06A, FN980m, EM7511, MC7455 "
         "and cold-reset captures (24,873 records / 133 captures / 7+ chipset "
-        "generations). 106/108 bytes are bit-exact constant: 4 named "
-        "constants (version=2, status_flag_10=1, rate_ms=1000, "
-        "status_flag_85=3) plus 101 reserved-zero positions hold corpus-wide "
-        "and are hard-rejected before any other byte read; all_invariants_ok "
-        "is retained for back-compat and is always True on accepted records. "
-        "byte[1] is a +1/record u8 counter; byte[2] is a small-enum "
-        "engine-internal state {0,1,2,3,4} whose physical meaning is UNKNOWN "
-        "— F3 and HW ground truth show it is NOT a fix-lifecycle state. The "
+        "generations), plus long-uptime units (Kapsch RIS-9260 = same "
+        "81UMV91M21 modem / same physical unit, uptime only; Ficosa CarCom "
+        "MDM9250; Casa CFW-3212) (2,337 records / 16 captures). 104/108 bytes are "
+        "bit-exact constant: 4 named constants (version=2, status_flag_10=1, "
+        "rate_ms=1000, status_flag_85=3) plus 99 reserved-zero positions hold "
+        "corpus-wide and are hard-rejected; all_invariants_ok is retained for "
+        "back-compat and is always True on accepted records. [1:5] is a u32 LE "
+        "record sequence, +1 per record; byte[2] (formerly read as a state "
+        "enum) is its bits 8..15 and steps exactly when byte[1] wraps. The "
         "subsystem is F3-grounded: gm_log.c 'Logging WIFI motion detector "
         "state' commits every record 1:1 (<=1 ms)."
     ),
     source_url="",
     issues=(),
-    # Every byte accounted for: 2 varying bytes (counter, status_byte_2) + 4
-    # named constants (version=2, status_flag_10=1, rate_ms=1000,
-    # status_flag_85=3) + 101 reserved-zero bytes verified by
-    # all_invariants_ok.  All 9 emitted fields are parsed on every record.
+    # Every byte accounted for: the u32 LE sequence at [1:5] (also exposed as
+    # its counter / status_byte_2 bytes) + 4 named constants (version=2,
+    # status_flag_10=1, rate_ms=1000, status_flag_85=3) + 99 reserved-zero
+    # bytes verified by all_invariants_ok.  All 9 emitted fields are parsed
+    # on every record.
     fields_identified=9,
     fields_parsed=9,
     field_invariants={
@@ -203,9 +178,8 @@ def parse_0x1899(log_time: int, data: bytes) -> Diag0x1899 | None:
         return None
     # Hard `return None` rejection BEFORE any other byte read (a soft
     # boolean would let a foreign 108B payload through with a garbage
-    # status_byte_2). Corpus (24,873 records / 133 captures): 4 named
-    # constants + 101 reserved-zero bytes hold corpus-wide. Reject any
-    # record that fails any of them.
+    # status_byte_2). Corpus: 4 named constants + 99 reserved-zero bytes hold
+    # corpus-wide. Reject any record that fails any of them.
 
     invariants_ok = (
         data[0] == 2
@@ -216,13 +190,12 @@ def parse_0x1899(log_time: int, data: bytes) -> Diag0x1899 | None:
     )
     if not invariants_ok:
         return None
-    status_byte_2 = data[2]
     return Diag0x1899(
         log_time=log_time,
         version=data[0],
+        sequence=unpack_from('<I', data, 1)[0],
         counter=data[1],
-        status_byte_2=status_byte_2,
-        status_byte_2_name=GNSS_STATUS_1899_STATES.get(status_byte_2, f'unknown_{status_byte_2}'),
+        status_byte_2=data[2],
         status_flag_10=data[10],
         rate_ms=unpack_from('<H', data, 58)[0],
         status_flag_85=data[85],

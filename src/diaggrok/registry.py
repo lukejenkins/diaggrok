@@ -1522,6 +1522,12 @@ _UNHANDLED_TALLY: dict[tuple[int, int | None, int | None], dict[str, Any]] = {}
 # another thread's top-level record as nested.
 _DISPATCH = threading.local()
 
+# Opt-in record of every code parse() was asked to dispatch, nested included
+#. None (the default) records nothing. A runtime sweep sets it to a set
+# before walking one capture, so that capture's cached tally can be keyed on only
+# the parsers it exercised instead of on every parser in the registry.
+DISPATCH_RECORD: set[int] | None = None
+
 
 def reset_unhandled_warn_cache() -> None:
     """Clear both the WARN rate-limit set and the runtime tally.
@@ -1689,6 +1695,8 @@ def parse(log_code: int, log_time: int, data: bytes) -> Any | None:
     embedded sub-record) is tallied with ``via`` = that container's code, so the
     harvest can tell a nested drop from a top-level one.
     """
+    if DISPATCH_RECORD is not None:
+        DISPATCH_RECORD.add(log_code)
     entry = resolve(log_code, data)
     if entry is None:
         return None

@@ -134,6 +134,7 @@ from dataclasses import dataclass
 from struct import unpack_from
 from typing import Any
 
+from diaggrok.parsers._short_form_4b import ShortForm4B, parse_short_form_4b
 from diaggrok.registry import register
 
 
@@ -156,7 +157,7 @@ class Diag0x1980:
     0x1980, domain="gnss",
     name="0x1980",
     description="GNSS/RF state flag (0x1980) — 4B fixed, constant u32 during mode transitions",
-    version=1,
+    version=2,
     issues=(),
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
@@ -181,12 +182,14 @@ class Diag0x1980:
 
     version_less=True,
 )
-def parse_0x1980(log_time: int, data: bytes) -> Diag0x1980 | None:
+def parse_0x1980(log_time: int, data: bytes) -> Diag0x1980 | ShortForm4B | None:
     if len(data) < 4:
         return None
     state_word = unpack_from('<I', data, 0)[0]
     if state_word != 0xC002F2A0:
-        return None
+        # Any other 4 B word is the shared short form, a real teardown
+        # event record; longer payloads are other layouts.
+        return parse_short_form_4b(0x1980, log_time, data)
     return Diag0x1980(
         log_time=log_time,
         state_word=state_word,

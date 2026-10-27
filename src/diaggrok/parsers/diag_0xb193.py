@@ -28,7 +28,7 @@ Subpacket data (payload offset 8):
     [6:8]    u16  num_rx_antennas
 
 THE PER-CELL LAYOUT IS KEYED ON subpacket_version, WHICH TRACKS THE CHIPSET.
-Eleven versions are corpus-observed (the share column is from a full walk of 807
+Thirteen versions are corpus-observed (the share column is from a full walk of 807
 captures / 482 with records / 359,915 records, before v40 appeared). There is
 NO single per-cell layout — the table below is the map, and each version's
 constants block carries its evidence:
@@ -38,28 +38,35 @@ constants block carries its evidence:
     59   38.9%  SDX62 RM520N-GL, EM9291       PCI@cell+8 (bit15=srv) 12-bit @+44/+56
     36   28.9%  SDX20 LM960, EG18-NA          PCI@cell+0             RSRP x16 @+20,
                                                                     RSRQ x16 @+36
-    35   17.6%  SDX50M MC7411, MDM9x50 EM75xx PCI@cell+0             REFUTED (F3 +7 dB)
+    35   17.6%  MDM9x50 MC7411, EM75xx        PCI@cell+0             REFUTED (F3 +7 dB)
     48    6.8%  SDX55 LV55, RM500Q, EM9190    PCI@cell+4 (12B hdr)   RSRP x16 @+28
     50    4.2%  SDX55 FN980, EM9190           v59 family             v59 scale ✓
     18    3.2%  MDM9207 EG25-G, MDM9230       serving INLINE @sp+4   not RE'd
-    3     0.2%  MDM9200 MC7700                serving INLINE, 4B hdr not RE'd
+    3     0.2%  MDM9200 MC7700, C505          serving INLINE, 4B hdr RSRP x16 @sp+24,
+                                                                    RSRQ x16 @sp+32 (=v6)
+    6   (2687)  MDM9625 T77W595               v3 4B hdr, serving     RSRP x16 @sp+24,
+                                              INLINE                 RSRQ x16 @sp+32
     22    0.1%  EP06-A                        PCI@cell+0             not RE'd
     56   <0.1%  SDX62 RM520N-GL               v59 family             v59 scale ✓
     40   (893)  SDX24 EM120R-GL, EM160R-GL    PCI@cell+0, FIXED      RSRP x16 @+36,
                                               4x132 B cell array     RSRQ x16 @+48 b20
     60  (1634)  SDX72 T99W640                 v59 family; sp+4 b3    v59 scale ✓
                                               is a flag (count b0..2) (vs 0xB17F)
+    41   (555)  SDX50M+SM8150 Inseego M1000   PCI@cell+0 (=v35)      RSRP x16 @+36,
+                                              v35 +4 B after PCI     RSRQ x16 @+48
 
 An UNKNOWN version emits the carrier header and ZERO entries — never another
 version's offsets. Guessing fabricates a PCI and a dBm: v50 read under another
 version's offsets decodes its antenna mask as "PCI 3" on all 15,145 records
 ("size invariance != format invariance", in its VERSION form).
 
-RSRP/RSRQ ARE NOT DECODABLE ON EVERY VERSION, AND THAT IS DELIBERATE. Only v36,
-v40, v48 and the v59 family (v50/v56/v59) carry a grounded dBm scale — all x16
-fixed-point. On v3/v18/v22/v35 the signal fields are None because the candidate
-field is REFUTED (it is wideband RSSI / a linear energy, not dBm) or ungrounded.
-Emitting a plausible-but-wrong dBm is worse than emitting None: it flows into
+RSRP/RSRQ DECODE ONLY WHERE A SCALE IS GROUNDED, AND THAT IS DELIBERATE. Every
+corpus version now carries one — v3, v6, v18, v22, v35, v36, v40, v48 and the v59
+family (v50/v56/v59/v60), all x16 fixed-point — each grounded against its own F3
+and/or same-cycle 0xB17F. v41 (v35's layout shifted +4 B) also decodes,
+PROVISIONALLY: same-cycle 0xB17F/0xB196 and the TS 36.214 RSRQ closure, but a
+per-carrier sweep under the bar below. Multi-cell records stay gated to None on most of them,
+and an unknown version emits None. Emitting a plausible-but-wrong dBm is worse than emitting None: it flows into
 wigle_direct as a measurement. Do NOT "restore" any of them without a
 WIDE-RSRP-SWEEP (>=15-20 dB) capture with co-temporal truth — a stationary camp
 cannot tell a real field from a constant look-alike (on v36, a single stationary
@@ -124,9 +131,32 @@ class LteMl1ServingCellMeasEntry:
                                      onto the carriers' true N_RB.
       * v40 (SDX24)                — rsrp+rsrq for SINGLE-cell records: within
                                      1 LSB of the same-tick 0xB17F (551/551).
-      * v3 / v18 / v22 / v35       — ALWAYS None. The candidate field is REFUTED
-                                     (wideband RSSI / a linear energy, not dBm —
-                                     v35 is +7.0 dB vs its own F3) or never RE'd.
+      * v6 (MDM9625)               — rsrp (best Rx) + rsrq, single serving
+                                     cell: rx0 == own F3 "Filtered RSRP0"
+                                     281/281 within 1/32 dB.
+      * v3 (MDM9200)               — v6's signal block byte-for-byte: rsrp
+                                     (best Rx) + rsrq, single serving cell;
+                                     == own F3 lte_ml1_md.c:3241 used-Rx
+                                     within 0.061 dB on 59/59.
+      * v35 (MDM9x50/SDX12)        — rsrp + rsrq, single serving cell: own F3
+                                     lte_ml1_md.c:6128/:6138 within 1/16 dB on
+                                     978/978, same-cycle 0xB17F within 1 LSB
+                                     on 7,080/7,080.
+      * v18 (MDM9x07)              — v6's signal block at +8: rsrp (best Rx)
+                                     + rsrq, single serving cell; same-cycle
+                                     0xB17F within 1 LSB on 30,991/30,991
+                                     (17 models, 80.6 dB).
+      * v22 (MDM9240 EP06-A)       — v35's slots: rsrp (best Rx) + rsrq, single
+                                     cell; own F3 lte_ml1_md.c:5922 max |d|
+                                     0.031 dB on 842/842, 0xB17F 3,181/3,181.
+      * v41 (SDX50M + SM8150)      — v35 shifted +4 B: rsrp + rsrq, single
+                                     serving cell; same-cycle 0xB17F within
+                                     1 LSB on 134/134 (2 units, 2 networks);
+                                     provisional on per-carrier sweep.
+
+    ``rssi`` (v39) is the wideband RSSI slot, surfaced on v3/v6/v18/v22/v35/
+    v36/v40/v41 single-cell records (each within 1 LSB of same-tick 0xB17F) and
+    None on v48 and the v59 family.
 
     A None here means "we do not know", NOT "no signal". Do not substitute a
     default, and do not drop the observation — the pci/earfcn identity carries two
@@ -152,6 +182,11 @@ class LteMl1ServingCellMeasEntry:
                                      # v50/v56: derived (single-cell record). NB bit15 is NOT a
                                      # primary flag outside v59 — v50's serving cell has bit15=0.
     meas_type: str | None = None     # v59 family: RX-antenna mask -> "intra_2rx" (0x3) / "inter_4rx" (0xF)
+    # dBm, wideband RSSI (raw/16 - 110). v3/v6/v18/v22/v35/v36/v40/v41 single-cell
+    # records only, each within 1 LSB of same-tick 0xB17F rssi (parser v39).
+    # None on v48 and the v59 family (their surfaced RSRP is the
+    # FILTERED tap; no counted RSSI oracle) and wherever rsrp is gated off.
+    rssi: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,6 +194,7 @@ class LteMl1ServingCellMeasEntry:
             'earfcn': self.earfcn,
             'rsrp': self.rsrp,
             'rsrq': self.rsrq,
+            'rssi': self.rssi,
             'serving_flag': self.serving_flag,
             'meas_type': self.meas_type,
         }
@@ -313,22 +349,40 @@ _V48_PCI_OFF = 0
 # (e.g. 0x1136 = 4406). The serving cell is: EARFCN @ sp+0 (u32, low 18 bits),
 # serving PCI @ sp+4 (u32, low 9 bits). Validated on an EG25-G LTE
 # limited-service capture: EARFCN 2050 + PCI <pci> == AT+QENG="servingcell" AND
-# the co-captured, already-verified 0xB116 serving-PCI field (same PCI). The per-cell
-# RSRP/RSRQ byte layout is NOT RE'd for v18, so v18 entries carry pci+earfcn
-# with rsrp/rsrq=None. Only the serving cell has been observed; larger v18
-# payloads (multi-cell) are not yet characterised.
+# the co-captured, already-verified 0xB116 serving-PCI field (same PCI). Every
+# corpus v18 record is 100 B, single serving cell (77,152 records / 244
+# captures).
 #
-# RSRP-field search: a scan of a 100 B v18 payload at every i8/i16/u16/i32
-# offset against co-captured AT truth (QENG servingcell RSRP -100..-104, RSSI
-# -67..-71, RSRQ -11..-13) cannot locate the field: the only fields whose value
-# sits near the AT RSRP are CONSTANT across all 245 records (payload off=7 i16
-# == -1024 == -102.4 dBm at a /10 scale; off=21 i8 == -105) and therefore do
-# NOT track the AT's ~4 dB RSRP variation, while every field that DOES vary
-# spans the full byte range (noise). A stable-RSRP capture cannot disambiguate
-# the field even WITH AT truth; locating it needs a v18 capture with a WIDE
-# serving-RSRP sweep (>=15-20 dB, e.g. a drive/attach) so the true field
-# separates from the constant look-alikes. rsrp/rsrq stay None.
+# SIGNAL: v6's signal block at v6's offsets + 8 (v18's serving header is two
+# u32s, v6's two u16s plus padding), all x16:
+#   sp+24  u32  bits 0..11 rsrp_rx0   raw/16 - 180 dBm  (located, not surfaced)
+#   sp+28  u32  bits 0..11 rsrp_rx1   raw/16 - 180 dBm  (located, not surfaced)
+#   sp+32  u32  bits 0..11 rsrp       raw/16 - 180 dBm  <- entries.rsrp (best Rx)
+#   sp+40  u32  bits 0..9  rsrq       raw/16 -  30 dB   <- entries.rsrq
+#   sp+44  u16  bits 0..11 rssi       raw/16 - 110 dBm  <- entries.rssi (v39)
+# (sp+88 bits 0..9 equals sp+40 on every record.) Grounded on:
+#   * same-cycle 0xB17F v0x05 (same earfcn+pci, within 200 ms): rsrp, rsrq and
+#     rssi within 1 LSB on 30,991/30,991 pairs (~94% bit-exact), 211 captures,
+#     17 MDM9x07-family models (EG25-G, EG95, RC400L, SIM7600, MC7455/EM7455,
+#     LE910Cx, NL668, IK41 …), 8 EARFCNs, -136.6..-56.1 dBm (80.6 dB). An
+#     unbiased scan of every 10/12-bit window in the subpacket finds exactly
+#     these slots at 100% with K = 180 / 30 / 110 unfitted.
+#   * rsrp == max(rx0, rx1) on 30,991/30,991, as on v6.
+#   * the modem's OWN F3 lte_ml1_mdb_idle.c:6637 (qsr_legacy, args Qrxlevmeas,
+#     ?, Qrxlevmin, offset, Srxlev; a4 == a0 - a2 - a3 on 6,779/6,779), printed
+#     just before its record (all within 50k ticks), 22 captures: arg0 ==
+#     floor(rsrp) on 5,778/6,779 over 29.1 dB. 998 of the 1,001 misses are +-1
+#     on the integer seam (-1 at frac ~0, +1 at frac ~15/16), so F3 floors a
+#     value a fraction of a dB from the logged one; 3 are >= 2 dB.
+#     floor(rx0) / floor(rx1) reach only 46/48%.
+# The 2026-06 note that the field "cannot be located without a wide sweep"
+# came from one 245-record stable-signal capture against AT; the corpus now
+# holds the sweep, and same-cycle 0xB17F is a sharper oracle than AT.
 _V18_SUBPACKET = 18
+_V18_RSRP_OFF = 32        # u32 bits0..11, raw/16 - 180 dBm (best Rx)
+_V18_RSRQ_OFF = 40        # u32 bits0..9,  raw/16 -  30 dB
+_V18_MIN_BODY = 44        # need the full u32 at sp+40
+_V18_RSSI_OFF = 44        # u16 bits0..11, raw/16 - 110 dBm
 
 # v3 (MDM9200: Sierra MC7700) — the SMALL 4-byte carrier header. Like v18 it
 # packs the serving cell INLINE and has no num_cells, but its fields are u16,
@@ -355,38 +409,178 @@ _V18_SUBPACKET = 18
 # 2175 (valid band 4) + pci <pci>, and the SAME capture's co-captured,
 # independently-verified codes agree on BOTH fields — 0xB116 config_word
 # (verified==PCI) = <pci>, 0xB0C0 = (pci <pci>, earfcn 2175), and 0xB192's own
-# MDM9200 4-byte-header path = earfcn 2175. Per-cell RSRP/RSRQ are not RE'd for
-# v3 -> None.
+# MDM9200 4-byte-header path = earfcn 2175.
+#
+# SIGNAL: v3 carries v6's signal block at v6's
+# offsets — rx0 @sp+16, rx1 @sp+20, best-Rx rsrp @sp+24, rsrq @sp+32 b0..9,
+# rssi @sp+36, all x16 — so v3 decodes through the v6 branch below. v6 is the
+# same 84 B record one chipset generation on, not a different layout. Grounded
+# on 786 records / 10 captures, two MDM9200 builds: Sierra MC7700 (2 units, 3
+# firmwares) + BandLuxe C505 (QC_0_00016749):
+#   * same-cycle 0xB17F (same earfcn+pci, emitted 1:1 with 0xB193): rsrp, rsrq
+#     and rssi BIT-EXACT on 786/786; 0xB196's cell 785/786.
+#   * the MC7700's OWN F3, paired on the raw DIAG tick (the record and the print
+#     carry the identical ts): lte_ml1_md.c:3241 "Serving Cell %d LL RSRP
+#     (used=rx%d rx0 .. rx1 ..)" — PCI 59/59, the used-Rx value == rsrp within
+#     0.061 dB on 59/59 (F3 prints the unquantised value; 1 LSB = 0.0625);
+#     lte_ml1_mdb_idle.c:3679 "Serv meas upd new rsrp %d .. rsrq %d .. rssi %d"
+#     == floor(rsrp / rsrq / rssi) on 59/59.
+#   * rsrp == max(rx0, rx1) on 786/786. The F3-bearing MC7700 runs have a dead
+#     rx0 chain (~-153 dBm in this record AND in 0xB196, F3 used=rx1), which is
+#     what separates "best Rx" from "rx0": sp+24 tracks rx1 there.
+#   * RSRP spans -115.9..-101.7 dBm (14.2 dB) — narrower than v6's sweep, but
+#     the layout is v6's and the own-F3 match is sub-LSB, not a crossing point.
+# The :3241 "RSRQ (used=rx1 rx0 ..)" arg is the dead rx0's RSRQ, so RSRQ rests
+# on :3679 + 0xB17F/0xB196. SCAT declines this layout ("Unknown ... subpacket
+# version 3"). EARFCN stays u16 (a u32 read swallows the PCI, above).
 _V3_SUBPACKET = 3
-_CARRIER_HEADER_MDM9200 = 4
+
+# v6 (MDM9625: Foxconn T77W595) — the v3 SMALL-HEADER family one generation on,
+# and the first small-header version with a decoded signal. Always 84 B, single
+# serving cell. 2,687 records / 14 captures, all T77W595.F0.0.0.6.5.VZ.017.
+#   sp+0   u16  EARFCN (u16, as on v3 — the u32-low18 read gives 67586 for 2050:
+#               the serving PCI's odd low bit leaking in as 2^16, the v3 artefact)
+#   sp+2   u16  serving PCI (bits 9..15 zero on every record)
+#   sp+16  u32  bits 0..11 rsrp_rx0   raw/16 - 180 dBm  (located, not surfaced)
+#   sp+20  u32  bits 0..11 rsrp_rx1   raw/16 - 180 dBm  (located, not surfaced)
+#   sp+24  u32  bits 0..11 rsrp       raw/16 - 180 dBm  <- entries.rsrp (best Rx)
+#   sp+32  u32  bits 0..9  rsrq       raw/16 -  30 dB   <- entries.rsrq
+#   sp+36  u32  bits 0..11 rssi       raw/16 - 110 dBm  <- entries.rssi (v39)
+# The same 12-bit x16 idiom as v36/v40/v59 and as the 0xB196/0xB17F cell
+# blocks this record shares a measurement cycle with.
+#
+# Grounded on the whole corpus:
+#   * identity == the latest 0xB116 config_word on 2,681/2,681 and the latest
+#     0xB0C0 (earfcn, pci) on 2,592/2,596 (misses = reselection edges); three
+#     carriers, 2300/<pci>, 5035/<pci>, 2050/<pci>.
+#   * the modem's OWN F3 lte_ml1_common_ant_switch.c:2766 "ML1 ASDiv: Filtered
+#     RSRP0" == rsrp_rx0 within 1/32 dB on 281/281. The print lands one DRX
+#     cycle (640 / 1280 ms) AFTER the record it reports, so pair it with the
+#     preceding record; the nearest record is the next cycle's (26/285).
+#   * the same cycle's 0xB196 cell (same earfcn+pci): rsrp bit-exact on
+#     2,370/2,512 and within 1 LSB on 2,510; rx0 / rx1 / rsrq / rssi bit-exact
+#     on 94% the same way. The next 0xB17F: rsrp AND rsrq within 1 LSB on
+#     2,274/2,368 (it can carry the next cycle's value).
+#   * RSRP sweeps -107.75..-75.0 dBm (32.75 dB), clearing the >=15-20 dB bar.
+#   * TS 36.214 closure with the best-Rx rsrp lands on N_RB 100.0 (2300, 20 MHz)
+#     and 25.5 (5035, 5 MHz); the 2050 carrier is noisy (median 119.7), so the
+#     closure corroborates rather than proves.
+# entries.rsrp is the best Rx (== max(rx0, rx1), the 0xB196 / 0xB17F `rsrp`),
+# not rx0: it is the value every sibling surfaces as the serving RSRP.
+_V6_SUBPACKET = 6
+_V6_RSRP_OFF = 24         # u32 bits0..11, raw/16 - 180 dBm (best Rx)
+_V6_RSRQ_OFF = 32         # u32 bits0..9,  raw/16 -  30 dB
+_V6_MIN_BODY = 36         # need the full u32 at sp+32
+_V6_RSSI_OFF = 36         # u32 bits0..11, raw/16 - 110 dBm (v3 shares it)
 
 # v22 (Quectel EP06-A) — the v35/v36 carrier-header shape (EARFCN u32-low18
 # @sp+0, num_cells u16 @sp+4, per-cell array @sp+8, PCI low-9 @cell+0). Identity
 # fields anchored on a 22-record (496 B) capture: earfcn 2050 + pci <pci> ==
-# co-captured 0xB116 config_word <pci> AND 0xB0C0 (pci <pci>, earfcn 2050). Its
-# per-cell RSRP/RSRQ scale is NOT RE'd; a wrong-scale rsrp would fail the
-# -140..-30 plausibility gate and `continue`, discarding the VERIFIED
-# pci+earfcn with it (0 entries on all 523 corpus records). rsrp/rsrq -> None
-# so the identity fields survive.
+# co-captured 0xB116 config_word <pci> AND 0xB0C0 (pci <pci>, earfcn 2050). Every
+# corpus v22 record is 496 B, single cell (5,394 records / 21 captures, all
+# EP06-A 01.009).
+#
+# SIGNAL: v35's RSRP/RSRQ slots exactly, so v22 decodes through the v35 arm:
+#   cell+20  u32  bits 0..11 rsrp_rx0   raw/16 - 180 dBm  (located, not surfaced)
+#   cell+24  u32  bits 0..11 rsrp_rx1   raw/16 - 180 dBm  (located, not surfaced)
+#   cell+32  u32  bits 0..11 rsrp       raw/16 - 180 dBm  <- entries.rsrp (best Rx)
+#   cell+44  u32  bits 0..9  rsrq       raw/16 -  30 dB   <- entries.rsrq
+#   cell+52  u16  bits 0..11 rssi       raw/16 - 110 dBm  <- entries.rssi (v39;
+#                                                          v35's is at cell+56)
+# (cell+100 bits 0..9 equals cell+44 on every record.) Grounded on:
+#   * the EP06-A's OWN F3, plaintext lte_ml1_md.c:5922 "Apply RSRP offset to
+#     serv cell %d Serv cell (%d, %d) ll RSRP raw (rx0 %d.%04d rx1 %d.%04d)":
+#     (earfcn, pci) match, rx0 / rx1 / max(rx0, rx1) == cell+20 / +24 / +32,
+#     max |d| 0.031 dB on 842/842 tick pairs (3 captures, -109.9..-84.3 dBm).
+#   * same-cycle 0xB17F v0x05: rsrp, rsrq and rssi within 1 LSB on 3,181/3,181
+#     (21 captures, 25.9 dB, 4 EARFCNs); the unbiased 10/12-bit window scan
+#     finds exactly these slots at 100% with K = 180 / 30 / 110 unfitted.
+#   * rsrp == max(rx0, rx1) on 3,181/3,181. These units read rx0 ~30 dB below
+#     rx1 (a weak chain), which is what separates "best Rx" from rx0.
+# The old `-raw/10` u16 stays refuted: it was never the RSRP.
 _V22_SUBPACKET = 22
 
-# v35 (SDX50M Sierra MC7411 / MDM9x50 EM7565+EM7511 / SDX12 FM101-GL) — the v36
-# carrier/PCI shape (PCI low-9 @cell+0, VERIFIED) but its per-cell RSRP is
-# REFUTED. v35 is 17.6% of the corpus (63,319 records); decoding it with v36's
-# old `-raw/10` offsets puts a wrong value into a wigle_direct "signal" field.
+# v35 (MDM9250 Sierra MC7411 / MDM9x50 EM7565+EM7511 / SDX12 FM101-GL) — the v36
+# carrier/PCI shape (PCI low-9 @cell+0, VERIFIED, 8 B carrier header) with its
+# OWN signal geometry. v35 is 17.6% of the corpus (63,319 records), and nearly
+# every record is single-cell (5 two-cell records in a 68,281-record walk).
 #
-# Refuted by the firmware's own F3 on an EM7565 capture with 32,234 v35 records:
-#   F3 qm_meas.c:938  "LTE rssi 61, rsrq -7, rsrp -87, sinr 214" (93 samples,
-#   constant -87), corroborated by cmss.c:10151 (rsrp=-87) and atrf.c:2345
-#   ("AT+CESQ input: RSRP: -86")  ->  `-raw/10` decodes median -80.0  =  +7.0 dB.
-# NOT a calibration offset — the error differs per modem (MC7411 ~+30 dB vs
-# AT!GSTATUS -100.1; EM7511 -69.2; EM7565 +7.0), i.e. it is the WRONG FIELD, the
-# same "linear energy read as dBm" semantics as 0xB192's neighbour rsrp.
-# An exhaustive offset scan (cell+0..200 x i8/i16/u16/i32 x 5 scales) for a field
-# == the F3 truth found ZERO candidates, so the true field is not locatable from
-# a zero-spread capture (the same trap as v18). rsrp/rsrq -> None; pci+earfcn
-# keep.
+#   RSRP = u32 @cell+32 bits0..11  raw/16 - 180 dBm  (the used-Rx serving RSRP)
+#   RSRQ = u32 @cell+44 bits0..9   raw/16 -  30 dB
+#   RSSI = u16 @cell+56 bits0..11  raw/16 - 110 dBm  (v36's own slot)
+#                                                     <- entries.rssi (v39)
+#
+# Same x16 idiom as v36/v40/v59, at v35's own offsets. The RSRP word repeats the
+# value in bits12..23, and cell+28 bits12..23 holds it again as raw/16 - 140, so
+# all three windows read identically. The RSRQ word repeats its 10-bit value in
+# bits10..19, as 0xB17F's does.
+#
+# Grounded two independent ways:
+#   (1) the modem's OWN F3, tick-paired. lte_ml1_md.c:6128 "Serving Cell Meas:
+#       (EARFCN, PCI) LL RSRP (used=rx%d ...)", :6138 "LL RSRQ (used=rx%d ...)"
+#       and :6143 "LL RSSI (comb ...)" print ~1 ms before each record, with the
+#       same (EARFCN, PCI). On 978 pairs over 5 captures (MC7411 x4, EM7565 x1),
+#       6 EARFCNs and -116.9..-82.4 dBm, every field is within the F3 %04d print
+#       quantum of the decode: RSRP 978/978 (median -0.003 dB), RSRQ 974/974,
+#       RSSI 968/968, all within 1/16 dB.
+#   (2) same-cycle 0xB17F. On 7,080 single-cell records over 46 captures
+#       (MC7411 x4 firmware builds + FM101-GL), the 0xB17F carrying the same
+#       (EARFCN, PCI) shares the tick: RSRP, RSRQ and RSSI all equal it bit for
+#       bit on 94% and within 1 LSB on 100%, over -125.4..-82.4 dBm (one capture
+#       alone sweeps 37 dB). An unbiased scan of every 10/12-bit window in the
+#       cell found no other 100% window outside the duplicates above.
+# The old `-raw/10` u16 at cell+56 was never RSRP: it is this RSSI word read at
+# the wrong scale (+7.0 dB vs the EM7565's own F3, +30 dB vs MC7411 AT!GSTATUS).
+# SINGLE-CELL ONLY, as on v36/v40/v48/v50: the 2-cell form is ungrounded, so it
+# ships pci/earfcn with signal None. SCAT declines v35 ("Unknown ... subpacket
+# version 35"). 0x60 carries no serving signal here.
 _V35_SUBPACKET = 35
+_V35_RSRP_WORD_OFF = 32
+_V35_RSRQ_WORD_OFF = 44
+_V35_RSSI_OFF = 56        # u16 bits0..11, raw/16 - 110 dBm
+_V22_RSSI_OFF = 52        # u16 bits0..11, raw/16 - 110 dBm (v22's own slot)
+
+# v41 (Inseego M1000: SDX50M modem on an SM8150 AP, firmware
+# SM8150PER-SDX50M_1.18.20) — v35's layout with 4 bytes inserted after
+# the PCI word. Carrier header, EARFCN (u32 low18 @sp+0) and PCI (low 9 @cell+0)
+# are unchanged; every signal word sits 4 B later than on v35:
+#
+#   RSRP = u32 @cell+36 bits0..11  raw/16 - 180 dBm  (used-Rx: == max(rx0, rx1)
+#                                                     of same-cycle 0xB196 87/87)
+#   RSRQ = u32 @cell+48 bits0..9   raw/16 -  30 dB
+#   RSSI = u32 @cell+60 bits0..11  raw/16 - 110 dBm  <- entries.rssi (v39)
+#
+# As on v35, the RSRP word repeats a value in bits12..23 and cell+32 bits12..23
+# holds RSRP again as raw/16 - 140. The bits12..23 copy is NOT a safe twin: it
+# matched 0xB17F 94/94 on unit 2 but only 7/40 (off up to 1.06 dB) on unit 1's
+# T-Mobile capture, while bits0..11 held 40/40 — so bits0..11 is the field.
+#
+# Grounded on three captures from two units (1,529 v41 records):
+#   (1) same-cycle 0xB17F (same tick, same PCI/EARFCN): EARFCN + PCI exact and
+#       RSRP/RSRQ/RSSI within 1/16 dB on 134/134 — unit 2 Verizon B66 66536 +
+#       B13 5230 (one PCI, 94 pairs) and unit 1 T-Mobile B66 66786 (one PCI,
+#       40 pairs); -111.2..-87.8 dBm across the three carriers.
+#   (2) TRUTH-FREE TS 36.214 closure, RSRQ = 10log10(N_RB) + RSRP - RSSI, solved
+#       for N_RB over ALL records: B66 100.00 (20 MHz), B13 50.9 (10 MHz) and the
+#       0xB17F-unpaired B2 carrier 26.2 (5 MHz). Three fields at wrong offsets
+#       cannot land on three bandwidths' RB counts.
+#   (3) the AP's own integer print qpDcm.c "qpDplSendSSInfoEvent: rsrp %d" lies
+#       within 1 dB of the preceding B66 record on 36/42 (median -0.56 dB, the
+#       floor() bias).
+# B46 LAA records (EARFCN 55342/55540, -131..-116 dBm) decode under the same
+# layout but do NOT close the N_RB identity (RSSI there is Wi-Fi/noise
+# dominated), so their dBm is structurally consistent but unvalidated.
+# ⚠️ PROVISIONAL on sweep width: the 23 dB span is ACROSS
+# carriers; within any one carrier the paired sweep is <= 9 dB (Verizon B66
+# ~9 dB, T-Mobile B66 ~5 dB, B13 2 records). That is below the 15-20 dB bar
+# above, so the layout is held up by its v35 identity, two units / two networks
+# agreeing, and the N_RB closure, not by a per-carrier sweep. Re-ground with a band-locked
+# or moving capture once the M1000 exposes a band/RAT knob.
+# SINGLE-CELL ONLY, as on v35: every observed v41 record is single-cell.
+_V41_SUBPACKET = 41
+_V41_RSRP_WORD_OFF = 36
+_V41_RSRQ_WORD_OFF = 48
+_V41_RSSI_WORD_OFF = 60   # u32 bits0..11, raw/16 - 110 dBm
 
 # v36 (SDX20: Telit LM960 / Quectel EG18-NA) — PCI @cell+0 VERIFIED.
 #
@@ -451,7 +645,7 @@ _V35_SUBPACKET = 35
 #   cell+20 u16 bits0..11  RSRP rx0  raw/16 - 180 dBm   <- entries.rsrp (used chain)
 #   cell+24 u16 bits0..11  RSRP rx1  raw/16 - 180 dBm   (located; not surfaced)
 #   cell+36 u16 bits0..9   RSRQ rx0  raw/16 -  30 dB    <- entries.rsrq
-#   cell+56 u16 bits0..11  RSSI      raw/16 - 110 dBm   (located; not surfaced)
+#   cell+56 u16 bits0..11  RSSI      raw/16 - 110 dBm   <- entries.rssi (v39)
 # Same idiom as the v59 family (12-bit fields, raw/16 - offset), different
 # geometry — which is itself corroborating: v36 and v59 are the same ML1 struct
 # at two chipset generations.
@@ -483,6 +677,21 @@ _V36_RSRP_RX0_OFF = 20    # u16 bits0..11, raw/16 - 180 dBm  (the `used=rx0` cha
 _V36_RSRP_RX1_OFF = 24    # u16 bits0..11, raw/16 - 180 dBm  (located, not surfaced)
 _V36_RSRQ_OFF = 36        # u16 bits0..9,  raw/16 -  30 dB
 _V36_RSSI_OFF = 56        # u16 bits0..11, raw/16 - 110 dBm  (the `-raw/10` look-alike)
+
+
+def _rssi_at(buf: bytes, off: int, fmt: str) -> float | None:
+    """Wideband RSSI from the x16 slot at ``off`` (bits0..11, raw/16 - 110 dBm).
+
+    None when the slot is past the end of ``buf``, unpopulated (raw == 0), or
+    outside -110..-20 dBm. Shared by every version that surfaces it (v39).
+    """
+    if off + (4 if fmt == '<I' else 2) > len(buf):
+        return None
+    raw = unpack_from(fmt, buf, off)[0] & 0xFFF
+    if not raw:
+        return None
+    rssi = round(raw / 16.0 - 110.0, 2)
+    return rssi if -110.0 <= rssi <= -20.0 else None
 _V36_RSRP_BASE = -180.0
 _V36_RSRQ_BASE = -30.0
 
@@ -506,7 +715,7 @@ _V36_RSRQ_BASE = -30.0
 #                          reading does not hold across modems)
 #   cell+36  u32 bits0..11 RSRP, raw/16 - 180 dBm         -> entries.rsrp
 #   cell+48  u32 bits20..31 RSRQ, raw/16 - 30 dB          -> entries.rsrq
-#   cell+60  u32 bits0..11 RSSI, raw/16 - 110 dBm         (located, not surfaced)
+#   cell+60  u32 bits0..11 RSSI, raw/16 - 110 dBm         <- entries.rssi (v39)
 # The same x16 idioms as v36/v59 (cell+48 b20..31 is v59's exact RSRQ slicing).
 #
 # GROUNDED on the same three-leg bar as v36:
@@ -544,7 +753,7 @@ _V40_SUBPACKET = 40
 _V40_CELL_STRIDE = 132          # fixed array slot — NOT (len - hdr) / num_cells
 _V40_RSRP_WORD_OFF = 36         # u32 bits0..11,  raw/16 - 180 dBm
 _V40_RSRQ_WORD_OFF = 48         # u32 bits20..31, raw/16 -  30 dB
-_V40_RSSI_WORD_OFF = 60         # u32 bits0..11,  raw/16 - 110 dBm (located, not surfaced)
+_V40_RSSI_WORD_OFF = 60         # u32 bits0..11,  raw/16 - 110 dBm
 
 # The v59 FAMILY (SDX55 FN980/EM9190 v50; SDX62 v56/v59) — one per-cell layout:
 #   cell+0  u32 valid-RX-antenna mask (0x3 = 2-RX intra, 0xF = 4-RX inter)
@@ -569,6 +778,20 @@ _V40_RSSI_WORD_OFF = 60         # u32 bits0..11,  raw/16 - 110 dBm (located, not
 #   NOT invoke the narrow-range trap.
 # v56 (3 records, RM520N-GL 180 B) carries the same signatures (mask 0x3, indices
 # 0xffff0100, pci <pci>, earfcn 66786, rsrp -103.94) and rides the same branch.
+# OWN-F3 GROUNDED. The corpus now holds
+# ~68 k v56 records (Inseego M3100 THN-1.54 ~49 k, RM520N-GL R01A08 the rest).
+# On 5 R01A08 captures the Quectel vendor print quectel_led_modem.c:697
+# "serv_cell_freq_ptr->cell.rsrp = %d" (0.1 dB units) matches the PRECEDING
+# single-cell v56 rsrp (the print trails the record by ~615 ms): median -0.05 dB,
+# 105/108 within 0.7 dB (the 3 outliers sit in a throughput run where RSRP moves
+# between records, and the nearest record agrees). Its integer twin :408
+# "rsrp = %d" agrees on 163/170 within 1 dB, median +0.38 (truncation toward 0).
+# Span -107.25..-99.44 dBm on one cell (PCI <pci> / 66786): narrow, but the scale
+# is v59's, tested here, not fitted. The M3100 build is F3-silent on serving
+# RSRP and identity (only lte_LL1_wb_cne.c:1008 neighbour ngbr_rsrp_filt_max),
+# and no 0x60 event carries RSRP. The M3100 two-cell 344 B class (masks 0xF/0xF)
+# stays gated to None: there is no F3 or AT to say which cell, if either, the
+# cell+44 slot is right for.
 #
 # bit15 IS NOT A SERVING FLAG OUTSIDE v59. v59's serving cell sets bit15=1
 # (fixture pci_word 0x000080c9); v50's serving cell has bit15=0 on all 1,408
@@ -605,6 +828,20 @@ _V56_SUBPACKET = 56
 #     pair with same-tick, same-PCI 0xB17F on 1,628/1,634 — RSRP median delta
 #     0.00 dB (p5/p95 +-0.25, 1,302 within 1 LSB), RSRQ bit-exact p5..p95 —
 #     over -125.2..-94.9 dBm (30.3 dB): v40's grounding bar.
+#   SHARPENED (5,700 records / 37 captures, now incl. 10
+#     two-cell 312 B records): each of those u32 words packs TWO values, and
+#     the "median 0.00, +-0.25" above compared filtered against instantaneous.
+#     The surfaced HIGH fields (cell+44 b12..23, cell+56 b20..31) are
+#     bit-for-bit 0xB17F's FILTERED rsrp_avg / rsrq_avg (within 1 LSB on
+#     4,238/4,238 same-cycle pairs, 33.8 dB, 7 EARFCNs); the LOW fields
+#     (cell+44 b0..11, cell+56 b0..9) are its instantaneous rsrp / rsrq
+#     (4,238/4,238), and cell+68 b0..11 is rssi (raw/16-110). entries.rsrp on
+#     the v59 family is therefore the FILTERED serving RSRP, where v3/v6/v18/
+#     v22/v35/v40 surface the instantaneous one (not changed here). Own F3
+#     corroborates the level only: lmtsmgr_cmd.c:1932 "Power update contd
+#     tech:0 ... rx_power_rsrp:%d" (0.1 dB, an unsynchronised coex print)
+#     median +0.04 dB over 1,521 nearest-print pairs / 20 captures, the 16
+#     closest all within 0.5 dB.
 # THE ONE GEOMETRY CHANGE: the u16 at sp+4 is NOT a plain cell count. It reads
 # 1 or 9 on a record that only fits one cell; bit3 is an unidentified flag
 # (set on 1,058 records; it tracks counter != 0 on 1,630/1,634 — close, not a
@@ -662,9 +899,9 @@ _V48_SFN_OFF = 16
 # version forever: "size invariance != format invariance" — a version byte the
 # parser has never seen is NOT an invitation to guess.
 _DECODED_SUBPACKET_VERSIONS = frozenset({
-    _V3_SUBPACKET, _V18_SUBPACKET, _V22_SUBPACKET, _V35_SUBPACKET,
+    _V3_SUBPACKET, _V6_SUBPACKET, _V18_SUBPACKET, _V22_SUBPACKET, _V35_SUBPACKET,
     _V36_SUBPACKET, _V40_SUBPACKET, _V48_SUBPACKET, _V50_SUBPACKET,
-    _V56_SUBPACKET, _V59_SUBPACKET, _V60_SUBPACKET,
+    _V56_SUBPACKET, _V59_SUBPACKET, _V60_SUBPACKET, _V41_SUBPACKET,
 })
 
 
@@ -676,8 +913,8 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
 
 @register(LOG_LTE_ML1_SERVING_CELL_MEAS_RSP, domain="lte-signal",
     name="0xB193",
-    description="Serving cell PCI, EARFCN, RSRP, RSRQ from the 0xB193 subpacket — outer v=1 corpus-wide; per-cell layout keyed on subpacket_version {3,18,22,35,36,40,48,50,56,59,60}. pci/earfcn grounded on every version; RSRP/RSRQ decoded only where an x16 fixed-point scale is grounded (v36, v40, v48 RSRP, v50/v56/v59/v60), single-cell or serving-cell only.",
-    version=32,
+    description="Serving cell PCI, EARFCN, RSRP, RSRQ, RSSI from the 0xB193 subpacket — outer v=1 corpus-wide; per-cell layout keyed on subpacket_version {3,6,18,22,35,36,40,41,48,50,56,59,60}. pci/earfcn grounded on every version; RSRP/RSRQ decoded only where an x16 fixed-point scale is grounded (v3, v6, v18, v22, v35, v36, v40, v41, v48 RSRP, v50/v56/v59/v60 — filtered on the v59 family), single-cell or serving-cell only.",
+    version=39,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -688,7 +925,7 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
         "(carrier header, u32-low18; u16 on v3) and PCI are grounded on every "
         "version against AT+QENG / AT!LTEINFO / AT#RFSTS and co-captured, "
         "independently verified 0xB116 config_word / 0xB0C0 / 0xB192 / 0xB17F: "
-        "v3 MC7700 (2175/<pci>), v18 EG25-G and EM7455 (inline serving cell), v22 "
+        "v3 MC7700 (2175/<pci>), v6 T77W595 MDM9625 (u16 header like v3; 2,681/2,681 == 0xB116), v18 EG25-G and EM7455 (inline serving cell), v22 "
         "EP06-A, v35 MC7411/EM7565, v36 LM960, v40 EM120R-GL/EM160R-GL, v48 "
         "RM500Q-AE/LV55 (12 B carrier header), v50 FN980, v56/v59 RM520N-GL and "
         "CFW-3212, v60 T99W640 (SDX72; 1,623/1,634 == 0xB0C0 AND 0xB116). RSRP/RSRQ are x16 fixed-point (raw/16-180 dBm, raw/16-30 dB) "
@@ -698,18 +935,27 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
         "only, median -0.38 dB vs QENG, neighbours read 3-8 dB low and are "
         "gated to None); v50/v56 (v59 layout; median -0.31/-0.25 dB vs AT#RFSTS "
         "at every quantile); v60 (v59 layout, sp+4 bit3 masked off the count; "
-        "same-tick 0xB17F RSRP median 0.00 dB, RSRQ bit-exact, n=1,628 over "
-        "30.3 dB); v36 (cell+20 / cell+36; 45 dB drive sweep, own-F3 "
+        "the surfaced high fields == 0xB17F FILTERED rsrp_avg/rsrq_avg within 1 LSB "
+        "on 4,238/4,238 over 33.8 dB, the low fields == its instantaneous rsrp/rsrq; "
+        "own F3 lmtsmgr_cmd.c:1932 rx_power_rsrp median +0.04 dB); v36 (cell+20 / cell+36; 45 dB drive sweep, own-F3 "
         "tick-paired max error 0.032 dB, AT#LAPS -0.31/+0.05 dB, TS 36.214 "
         "closure onto N_RB 100.0/50.1, reconfirmed on a newer firmware build); "
+        "v3 MDM9200 MC7700/C505 (v6 offsets; bit-exact vs same-cycle 0xB17F 786/786, own F3 lte_ml1_md.c:3241 used-Rx within 0.061 dB 59/59 tick-exact); "
+        "v6 (sp+24 best-Rx RSRP / sp+32 RSRQ; rx0 @sp+16 == own F3 ant_switch.c:2766 Filtered RSRP0 within 1/32 dB on 281/281 over 32.75 dB, same-cycle 0xB196 within 1 LSB); "
         "v40 (fixed 4x132 B array; cell+36 / cell+48 b20..31 within 1 LSB / "
         "bit-exact of same-tick 0xB17F on 551/551 over 32.6 dB, AT+QENG-matched, "
         "TS 36.214-consistent); v48 RSRP only (in-cell +24 over the 12 B base, "
-        "-101.50 vs own F3 -101.56 and AT -101). v36/v40/v48/v50/v56 dBm is "
-        "single-cell only. v3/v18/v22/v35 signal is None: on v35 the `-raw/10` "
-        "candidate is +7.0 dB vs the EM7565's own F3 qm_meas.c (and +30 dB on "
-        "MC7411 — a wrong field, not an offset), and v18 could not be located "
-        "without a wide RSRP sweep. v48 also exposes valid_rx (sp+6) and "
+        "-101.50 vs own F3 -101.56 and AT -101); v35 MDM9x50/SDX12 "
+        "(cell+32 b0..11 / cell+44 b0..9; own F3 lte_ml1_md.c:6128/:6138 "
+        "within 1/16 dB on 978/978 tick pairs, MC7411 + EM7565; same-cycle "
+        "0xB17F within 1 LSB on 7,080/7,080 over 43 dB, MC7411 + FM101-GL). "
+        "v18 MDM9x07 (v6 block +8: sp+32 b0..11 best-Rx / sp+40 b0..9; same-cycle "
+        "0xB17F within 1 LSB on 30,991/30,991, 17 models, 80.6 dB; own F3 "
+        "lte_ml1_mdb_idle.c:6637 Qrxlevmeas == floor(rsrp) 5,778/6,779, 998 of 1,001 "
+        "misses +-1 on the integer seam; AT+QENG medians within 0.4 dB); v22 MDM9240 EP06-A (v35 "
+        "slots; own F3 lte_ml1_md.c:5922 rx0/rx1/best max |d| 0.031 dB on 842/842; "
+        "0xB17F 3,181/3,181). "
+        "v22/v35/v36/v40/v48/v50/v56/v60 dBm is single-cell only. v48 also exposes valid_rx (sp+6) and "
         "SFN/SubFN (sp+16), byte-joined 21/21 against SCAT. SCAT does not "
         "decode v59. Records shorter than their declared subpacket size return "
         "None (registry warning)."
@@ -731,13 +977,15 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
         # + RM520N-GL — the same v56 stride as its 180 B single-cell form).
         # 544 = every v40 record (SDX24 EM120R-GL / EM160R-GL; 16 + a fixed
         # 4 x 132 cell array).
+        # 576 = every v41 record (Inseego M1000 SDX50M+SM8150; 572 B subpacket,
+        # single cell, zero-padded).
         # NOT 117: the one 117 B record in the corpus is a TRUNCATED v48 frame
         # — it declares subpacket size 156 (a 160 B record) and the
         # short-record guard returns None for it. A truncation is
         # not a size class; adding it would whitelist the damage.
         "payload_size": {
             "enum": [84, 100, 160, 164, 180, 300, 312, 344, 440, 460, 496, 512,
-                     528, 544, 580, 608],
+                     528, 544, 576, 580, 608],
         },
         # subpacket_version — THE structural discriminator (it tracks the
         # chipset). Corpus-attested set (full walk of 807 captures / 482 with
@@ -752,7 +1000,9 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
         # invariant makes the event VISIBLE instead of a silent partial decode.
         # + v40 (SDX24 EM120R-GL / EM160R-GL, 893 records).
         # + v60: SDX72 T99W640, 1,634 records, 164 B; v59 family.
-        "subpacket_version": {"enum": [3, 18, 22, 35, 36, 40, 48, 50, 56, 59, 60]},
+        # + v6: MDM9625 T77W595, 2,687 records, 84 B; v3 small-header family.
+        # + v41: SDX50M+SM8150 Inseego M1000, 555 records, 576 B; v35 +4 B.
+        "subpacket_version": {"enum": [3, 6, 18, 22, 35, 36, 40, 41, 48, 50, 56, 59, 60]},
     },
     # F3-sweep layout axis: byte 0 is 0x01 on every record, so the
     # unit of F3 work is (0xB193, v0x01, sp.vN) per subpacket_version.
@@ -808,20 +1058,31 @@ def parse_0xb193(
     # Subpacket data starts at offset 8
     sp = data[_SUBPACKET_DATA_OFFSET:]
 
-    # --- v3 (MDM9200) — the 4-byte carrier header, read BEFORE the u32 path ----
-    # v3's EARFCN is a u16 @sp+0, so the u32-low18 read below would corrupt it
-    # (67711, a band-66 EARFCN this MDM9200 part cannot emit). Serving cell is
-    # packed inline: earfcn u16 @sp+0, pci u16 @sp+2. Triple-anchored.
-    if subpacket_version == _V3_SUBPACKET:
-        if len(sp) < _CARRIER_HEADER_MDM9200:
+    # --- v3 (MDM9200) / v6 (MDM9625) — the 4-byte carrier header ----------
+    # Read BEFORE the u32 path: their EARFCN is a u16 @sp+0, so the u32-low18
+    # read below would fold the PCI's low bit in (v3 2175 -> 67711, a band-66
+    # EARFCN this MDM9200 part cannot emit). Serving cell is packed inline,
+    # earfcn u16 @sp+0 + pci u16 @sp+2, followed by the shared signal block.
+    if subpacket_version in (_V3_SUBPACKET, _V6_SUBPACKET):
+        if len(sp) < _V6_MIN_BODY:
             return None
         v3_earfcn = unpack_from('<H', sp, 0)[0]
         v3_pci = unpack_from('<H', sp, 2)[0]
         v3_entries: list[LteMl1ServingCellMeasEntry] = []
         if v3_pci <= 503:
-            # RSRP/RSRQ not RE'd for v3 -> None (not guessed).
+            rsrp_raw = unpack_from('<I', sp, _V6_RSRP_OFF)[0] & 0xFFF
+            rsrq_raw = unpack_from('<I', sp, _V6_RSRQ_OFF)[0] & 0x3FF
+            v3_rsrp = round(rsrp_raw / 16.0 - 180.0, 2) if rsrp_raw else None
+            v3_rsrq = round(rsrq_raw / 16.0 - 30.0, 2) if rsrq_raw else None
+            # Same plausibility gates as the main path, but an implausible dBm
+            # drops only the dBm, never the verified identity.
+            if v3_rsrp is not None and not (-140.0 <= v3_rsrp <= -30.0):
+                v3_rsrp = None
+            if v3_rsrq is not None and not (-34.0 <= v3_rsrq <= 2.5):
+                v3_rsrq = None
             v3_entries.append(LteMl1ServingCellMeasEntry(
-                pci=v3_pci, earfcn=v3_earfcn, rsrp=None, rsrq=None,
+                pci=v3_pci, earfcn=v3_earfcn, rsrp=v3_rsrp, rsrq=v3_rsrq,
+                rssi=_rssi_at(sp, _V6_RSSI_OFF, '<I'),
             ))
         return Diag0xB193(
             log_time=log_time,
@@ -848,9 +1109,20 @@ def parse_0xb193(
         v18_pci = unpack_from('<I', sp, 4)[0] & 0x1FF
         v18_entries: list[LteMl1ServingCellMeasEntry] = []
         if v18_pci <= 503:
-            # RSRP/RSRQ scale not yet RE'd for v18 -> None (not guessed).
+            v18_rsrp = v18_rsrq = None
+            if len(sp) >= _V18_MIN_BODY:
+                rsrp_raw = unpack_from('<I', sp, _V18_RSRP_OFF)[0] & 0xFFF
+                rsrq_raw = unpack_from('<I', sp, _V18_RSRQ_OFF)[0] & 0x3FF
+                v18_rsrp = round(rsrp_raw / 16.0 - 180.0, 2) if rsrp_raw else None
+                v18_rsrq = round(rsrq_raw / 16.0 - 30.0, 2) if rsrq_raw else None
+            # An implausible dBm drops only the dBm, never the verified identity.
+            if v18_rsrp is not None and not (-140.0 <= v18_rsrp <= -30.0):
+                v18_rsrp = None
+            if v18_rsrq is not None and not (-34.0 <= v18_rsrq <= 2.5):
+                v18_rsrq = None
             v18_entries.append(LteMl1ServingCellMeasEntry(
-                pci=v18_pci, earfcn=earfcn, rsrp=None, rsrq=None,
+                pci=v18_pci, earfcn=earfcn, rsrp=v18_rsrp, rsrq=v18_rsrq,
+                rssi=_rssi_at(sp, _V18_RSSI_OFF, '<H'),
             ))
         return Diag0xB193(
             log_time=log_time,
@@ -945,7 +1217,11 @@ def parse_0xb193(
     #     @cell+36 b0..9 (raw/16-30), grounded on SINGLE-cell records only.
     #   v40 (SDX24): fixed 132 B slots; RSRP@cell+36 b0..11 + RSRQ@cell+48
     #     b20..31, SINGLE-cell records only.
-    #   v22/v35: PCI@cell+0 (verified); signal scales REFUTED/ungrounded.
+    #   v35 (MDM9x50): PCI@cell+0; RSRP@cell+32 b0..11 (raw/16-180) + RSRQ
+    #     @cell+44 b0..9 (raw/16-30), SINGLE-cell records only.
+    #   v22 (MDM9240 EP06-A): v35's PCI/RSRP/RSRQ offsets, SINGLE-cell only.
+    #   v41 (SDX50M+SM8150): v35 +4 B — RSRP@cell+36 b0..11 + RSRQ@cell+48
+    #     b0..9, SINGLE-cell records only.
     # See the per-version constants block above for the full evidence trail.
     if subpacket_version in _V59_FAMILY:
         pci_off = 8
@@ -959,10 +1235,13 @@ def parse_0xb193(
     elif subpacket_version == _V40_SUBPACKET:
         pci_off = 0
         min_cell_record = _V40_RSRQ_WORD_OFF + 4  # need the full u32 at cell+48
-    else:
-        # v22 / v35 — PCI@cell+0 verified, no grounded signal scale.
+    elif subpacket_version == _V41_SUBPACKET:
         pci_off = 0
-        min_cell_record = 4                      # just enough to read the PCI u32
+        min_cell_record = _V41_RSRQ_WORD_OFF + 4  # need the full u32 at cell+48
+    else:
+        # v35 and v22 share PCI@cell+0 and the signal slots.
+        pci_off = 0
+        min_cell_record = _V35_RSRQ_WORD_OFF + 4  # need the full u32 at cell+44
 
     for i in range(num_cells):
         cell_offset = carrier_header_size + i * cell_record_size
@@ -978,6 +1257,7 @@ def parse_0xb193(
 
         serving_flag = None
         meas_type = None
+        rssi = None   # surfaced only by the arms below that set it (v39)
 
         if subpacket_version in _V59_FAMILY:
             mask = unpack_from('<I', sp, cell_offset)[0]
@@ -1078,6 +1358,7 @@ def parse_0xb193(
                         if rsrp_raw else None)
                 rsrq = (round(rsrq_raw / 16.0 + _V36_RSRQ_BASE, 2)
                         if rsrq_raw else None)
+                rssi = _rssi_at(sp, cell_offset + _V36_RSSI_OFF, '<H')
         elif subpacket_version == _V40_SUBPACKET:
             # SDX24 v40: RSRP within 1 LSB of
             # the same-tick 0xB17F on 551/551 records and RSRQ bit-exact 551/551
@@ -1093,15 +1374,46 @@ def parse_0xb193(
                     '<I', sp, cell_offset + _V40_RSRQ_WORD_OFF)[0] >> 20
                 rsrp = round(rsrp_raw / 16.0 - 180.0, 2) if rsrp_raw else None
                 rsrq = round(rsrq_raw / 16.0 - 30.0, 2) if rsrq_raw else None
+                rssi = _rssi_at(sp, cell_offset + _V40_RSSI_WORD_OFF, '<I')
+        elif subpacket_version in (_V35_SUBPACKET, _V22_SUBPACKET):
+            # MDM9x50 v35: own F3 lte_ml1_md.c:6128/:6138 within 1/16 dB on
+            # 978/978 tick pairs, and same-cycle 0xB17F within 1 LSB on
+            # 7,080/7,080. MDM9240 v22: own F3 lte_ml1_md.c:5922 max |d| 0.031 dB
+            # on 842/842, 0xB17F 3,181/3,181. See the _V35_* / _V22_* blocks.
+            # SINGLE-CELL ONLY, as for v36/v40/v48/v50.
+            if num_cells > 1:
+                rsrp = None
+                rsrq = None
+            else:
+                rsrp_raw = unpack_from(
+                    '<I', sp, cell_offset + _V35_RSRP_WORD_OFF)[0] & 0xFFF
+                rsrq_raw = unpack_from(
+                    '<I', sp, cell_offset + _V35_RSRQ_WORD_OFF)[0] & 0x3FF
+                rsrp = round(rsrp_raw / 16.0 - 180.0, 2) if rsrp_raw else None
+                rsrq = round(rsrq_raw / 16.0 - 30.0, 2) if rsrq_raw else None
+                rssi = _rssi_at(sp, cell_offset + (
+                    _V22_RSSI_OFF if subpacket_version == _V22_SUBPACKET
+                    else _V35_RSSI_OFF), '<H')
+        elif subpacket_version == _V41_SUBPACKET:
+            # SDX50M+SM8150 v41: v35 +4 B, same-cycle 0xB17F within 1 LSB on
+            # 134/134 (2 units, 2 networks) + TS 36.214 N_RB closure on 3
+            # bandwidths. PROVISIONAL. See the _V41_* block. SINGLE-CELL ONLY.
+            if num_cells > 1:
+                rsrp = None
+                rsrq = None
+            else:
+                rsrp_raw = unpack_from(
+                    '<I', sp, cell_offset + _V41_RSRP_WORD_OFF)[0] & 0xFFF
+                rsrq_raw = unpack_from(
+                    '<I', sp, cell_offset + _V41_RSRQ_WORD_OFF)[0] & 0x3FF
+                rsrp = round(rsrp_raw / 16.0 - 180.0, 2) if rsrp_raw else None
+                rsrq = round(rsrq_raw / 16.0 - 30.0, 2) if rsrq_raw else None
+                rssi = _rssi_at(sp, cell_offset + _V41_RSSI_WORD_OFF, '<I')
         else:
-            # v22 / v35 — the `-raw/10` u16 is REFUTED on both (it is wideband
-            # RSSI / a linear energy, not serving RSRP; see the per-version
-            # constants block for the F3/AT evidence), and the `(raw-60)/2` RSRQ
-            # is refuted alongside it. Emitting a plausible-but-wrong dBm is
-            # worse than emitting nothing — the VERIFIED pci/earfcn still
-            # ship. v22/v35 do NOT inherit the v36 branch above — their per-cell
-            # geometry is unvalidated and the v36 offsets must not be guessed
-            # onto them.
+            # No version reaches this today (every allowlisted version has its
+            # own arm or returns early). A version added to the allowlist for
+            # its identity alone lands here: emit the verified pci/earfcn and
+            # no dBm, never another version's offsets guessed onto it.
             rsrp = None
             rsrq = None
 
@@ -1124,6 +1436,7 @@ def parse_0xb193(
             rsrq=round(rsrq, 2) if rsrq is not None else None,
             serving_flag=serving_flag,
             meas_type=meas_type,
+            rssi=rssi,
         ))
 
     # v48 (SDX55) record-level enrichment: a valid-Rx mask at sp+6 and a

@@ -448,7 +448,44 @@ def _classify(data: bytes, registered_codes: set[int]) -> DiagFormat:
     if data[:_HDLC_HEAD_WINDOW].count(b"\x7e") >= _HDLC_MIN_DELIMS:
         return "hdlc"
 
+    if _looks_like_short_hdlc(data[:_HDLC_HEAD_WINDOW]):
+        return "hdlc"
+
     return "unknown"
+
+
+def _looks_like_short_hdlc(head: bytes) -> bool:
+    """True if ``head`` is a whole HDLC capture too short for the density arm.
+
+    A rayhunter recording that is started and stopped around one or two RRC
+    messages holds 1–3 frames, so fewer than ``_HDLC_MIN_DELIMS`` delimiters
+    . Accept it only on structure: **every** ``0x7E``-terminated
+    segment de-escapes into a CRC-valid frame whose opcode is a known DIAG
+    opcode. Leading bytes that are not a frame fuse into the first segment
+    and fail its CRC, so the stream must start with a frame. Bytes after the last
+    delimiter are a truncated tail and are not checked. A random body passes
+    one segment's CRC 1 time in 65536, and must also land on a known opcode,
+    so this keeps the density threshold's guard against misframes.
+    """
+    from diaggrok.hdlc import OPCODE_NAMES, crc16_ccitt, hdlc_unescape
+
+    if head.startswith(b"\x7e"):
+        head = head[1:]  # an opening flag (``7E body 7E``) is also framing
+    segments = head.split(b"\x7e")[:-1]  # drop the unterminated tail
+    if not segments:
+        return False
+    frames = 0
+    for segment in segments:
+        if not segment:
+            continue  # back-to-back delimiters (idle fill)
+        frame = hdlc_unescape(segment)
+        if len(frame) < _MIN_DIAG_FRAME_LEN or frame[0] not in OPCODE_NAMES:
+            return False
+        (crc_expected,) = struct.unpack_from("<H", frame, len(frame) - 2)
+        if crc16_ccitt(frame[:-2]) != crc_expected:
+            return False
+        frames += 1
+    return frames > 0
 
 
 def _leading_zero_run(data: bytes) -> int:
@@ -571,7 +608,9 @@ def is_probably_capture(
     if fmt != "hdlc":
         return False
 
-    return _has_crc_valid_frame(head)
+    # _has_crc_valid_frame skips the bytes before the first 0x7E, so a
+    # one-frame ``body 7E`` capture needs the whole-stream test.
+    return _has_crc_valid_frame(head) or _looks_like_short_hdlc(head)
 
 
 def _pcap_carries_dge1(head: bytes) -> bool:

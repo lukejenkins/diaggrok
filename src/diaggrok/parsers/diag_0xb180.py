@@ -35,9 +35,10 @@ their F3-grounded decode, with unpopulated padding slots flagged
 
 ### Record structure (version 4 — older MDM9200 / Sierra MC7700 packing)
 
-**v0x04 is a structurally distinct layout, seen only on the Sierra MC7700
+**v0x04 sub-layout byte 1 = 0x00 is a structurally distinct layout, seen only on the Sierra MC7700
 (SWI9200X, MDM9200-era firmware)** — 276 records across 9 captures, three
-firmware builds; no other modem in the corpus emits it. Like the sibling 0xB17F
+firmware builds. (A second v0x04 sub-layout, byte 1 = 0x01, comes from the Foxconn
+T77W595; see below.) Like the sibling 0xB17F
 v0x03, it uses **16-bit identity fields where v0x05 uses 32-bit**, with an
 8-byte header and a 28-byte (not 32-byte) block stride:
 
@@ -60,6 +61,33 @@ the v0x05 word layout minus w7 (structural transfer).
 Reading `earfcn` as v0x05's `u32@4` on a v0x04 frame yields a 7-digit garbage
 channel number (e.g. 4,720,892 / 8,915,196) on all 276 v0x04 records, so every
 field is version-gated.
+
+#### v0x04 with 32-byte blocks (Foxconn T77W595) — sub-layout tag byte 1 = 0x01
+
+Version 0x04 has **two** wire forms, told apart by byte 1 (the second byte of
+the header tag, which v0x05 carries as a constant 0x01):
+
+```
+byte 1 = 0x00 : MC7700 / SWI9200X  8B header + N x 28B blocks (above)       284/284 corpus records
+byte 1 = 0x01 : Foxconn T77W595    8B header + N x 32B blocks (v0x05 blocks) ~920 corpus records
+```
+
+The T77W595 (F0.0.0.6.5.VZ.017) form keeps the v0x04 header (u16 EARFCN @4 —
+2300 on every record, count byte @6 = `(8 + 64*N) & 0xFF`, byte 7 = 0) but its
+blocks are the full 32-byte v0x05 block, w7 trailer included (low byte
+0x45/0xC5 on every block). Sizes 40/72 B (N = 1/2). Unlike the MC7700 form, its
+count byte agrees with N on every record, so it gets the v0x05 `N mod 4` check.
+Before parser v9 all of these records failed the 28B-stride gate and were
+dropped.
+
+Block fields transfer structurally from the F3-grounded v0x05 decode. On a
+698-block sample, every block was in range (pci ≤ 503, rsrp in [-144,-40], rsrq in
+(-30,0], rssi plausible), and w5 == w6 held on every block. The T77W595 plaintext F3 has no `Ngbr Cell` print
+(those sites are legacy-QSR hashed). The serving cell's PCI is known
+(`lte_ml1_cdb.c` `CDB get status [ LTE: pci <pci> fcn 2300 ]`), so on this
+firmware the blocks are **measured** cells and can include the serving cell. Its block RSRP was compared with the nearest
+`ML1 ASDiv: Filtered RSRP0` print, which comes within ~9 ms: 183 of 209 blocks fall within 3 dB, and the difference is centred near 0. That corroborates the scale but is not a 1:1 ground: RSRP0 is a
+filtered rx0 value.
 
 #### v0x04 grounding: in-capture 0xB0C0 (no F3 plane on MDM9200)
 
@@ -143,6 +171,8 @@ Also known as: LOG_LTE_ML1_NEIGHBOR_MEASUREMENTS
 """
 from __future__ import annotations
 
+import logging
+from collections import Counter
 from dataclasses import dataclass
 from struct import unpack_from
 from typing import Any
@@ -158,13 +188,34 @@ _STRUCT_VERSION = 0x05
 _HEADER_LEN_V4 = 8
 _ENTRY_STRIDE_V4 = 28
 _STRUCT_VERSION_V4 = 0x04
+# v0x04 sub-layout tag (byte 1) -> block stride. 0x00 = MC7700 28B blocks;
+# 0x01 = Foxconn T77W595 32B (v0x05-shaped) blocks.
+_V4_STRIDE_BY_TAG = {0x00: _ENTRY_STRIDE_V4, 0x01: _ENTRY_STRIDE}
+
+logger = logging.getLogger(__name__)
+_LAYOUT_ALARMS: Counter = Counter()
+
+
+def _layout_alarm(data: bytes, why: str) -> None:
+    """WARN on a dropped record, naming its layout and the reason. The
+    registry's own WARN fires once per (code, version), so a new sub-layout of
+    an already-seen version would otherwise go unreported."""
+    key = (data[0], data[1] if len(data) > 1 else None, len(data), why)
+    _LAYOUT_ALARMS[key] += 1
+    n = _LAYOUT_ALARMS[key]
+    if str(n).rstrip("0") != "1":   # log the 1st, 10th, 100th, ... per key
+        return
+    logger.warning(
+        "diaggrok 0xB180 layout issue #%d: version=0x%02X len=%d — %s; "
+        "dropping", n, data[0], len(data), why,
+    )
 
 
 def _bits(word: int, lo: int, width: int) -> int:
     return (word >> lo) & ((1 << width) - 1)
 
 
-def _decode_block(block: bytes, version: int) -> dict[str, Any]:
+def _decode_block(block: bytes) -> dict[str, Any]:
     """Decode one neighbour block (F3-grounded, see module docstring).
 
     Shared word layout (v0x05 32 B = 8 u32 words; v0x04 28 B = words 0..6):
@@ -179,7 +230,7 @@ def _decode_block(block: bytes, version: int) -> dict[str, Any]:
       w5[11:30] ttl_ref_time_ant0    GROUND (F3 ``Ngbr meas req … ttl_ref_time ant0``)
       w6[11:30] ttl_ref_time_ant1    GROUND (F3 ``… ant1``)
       w5/w6[0:11], [30:32]           RAW (0x7FF / 2-bit flag)
-      w7 (v0x05 only)                RAW trailer (low byte 0x45/0xC5; upper bytes unstable)
+      w7 (32B blocks only)           RAW trailer (low byte 0x45/0xC5; upper bytes unstable)
     An all-zero leading 24 bytes marks an unpopulated (padding) slot -> ``populated=False``.
     """
     n = len(block) // 4
@@ -200,10 +251,10 @@ def _decode_block(block: bytes, version: int) -> dict[str, Any]:
         w5_flags_raw=(_bits(w[5], 0, 11), _bits(w[5], 30, 2)),
         w6_flags_raw=(_bits(w[6], 0, 11), _bits(w[6], 30, 2)),
     )
-    if version == _STRUCT_VERSION:
+    if n == 8:  # 32B block: v0x05, and v0x04 sub-layout 0x01 (T77W595)
         out["rssi_dbm"] = _bits(w[0], 9, 11) / 16 - 110
         out["w7_raw"] = w[7]
-    else:  # v0x04: bits 9..19 sit at a constant 0x640 on MC7700 — not RSSI-shaped
+    else:  # 28B MC7700 v0x04: bits 9..19 sit at a constant 0x640 — not RSSI-shaped
         out["w0_mid_raw"] = _bits(w[0], 9, 11)
     return out
 
@@ -260,17 +311,19 @@ class Diag0xB180:
     # 0xB0C0 SIB1 exactly like siblings 0xB192/0xB195 (v0x05 only).
     wigle_direct=True,
     wigle_roles=("signal", "pci-earfcn-bridge", "rat-context"),
-    description="0xB180 — LTE ML1 Neighbor Measurements packet (per-neighbour pci/rsrp/rsrq/rssi blocks, F3-grounded; v0x05: 12B header + N×32B blocks; v0x04: 8B header + N×28B blocks, MDM9200 u16 earfcn)",
-    version=8,
+    description="0xB180 — LTE ML1 Neighbor Measurements packet (per-neighbour pci/rsrp/rsrq/rssi blocks, F3-grounded; v0x05: 12B header + N×32B blocks; v0x04: 8B header + N×28B blocks (MC7700, byte 1 = 0x00) or N×32B blocks (T77W595, byte 1 = 0x01), u16 earfcn)",
+    version=9,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
         "Two layouts keyed on byte 0. v0x05: 12B header (u32@4 earfcn, first "
         "attributed by LM960A18 DIAG×AT correlation, 180/185) + N×32B blocks. "
-        "v0x04 (older MDM9200 / Sierra MC7700 packing, exclusively MC7700 / "
+        "v0x04 byte 1 = 0x00 (older MDM9200 / Sierra MC7700 packing, exclusively MC7700 / "
         "SWI9200X, 276 records / 9 captures): 8B header with a u16@4 EARFCN + "
-        "N×28B blocks. Each block is one NEIGHBOUR cell: pci w0[0:9], rssi "
+        "N×28B blocks; a second v0x04 sub-layout (byte 1 = 0x01, Foxconn "
+        "T77W595, ~920 records) has the same 8B header with v0x05-shaped 32B "
+        "blocks and the N-mod-4 count bits at byte 6. Each block is one NEIGHBOUR cell: pci w0[0:9], rssi "
         "w0[9:20]/16-110, rsrp w0[20:32]/16-180, rsrq w2[12:22]/16-30, "
         "ttl_ref_time w5/w6[11:30]; on v0x05 these are F3-grounded 1:1 on the "
         "same diag tick against lte_ml1_md.c 'Ngbr Cell' prints on MC7411 "
@@ -311,14 +364,25 @@ def parse_0xb180(log_time: int, data: bytes) -> Diag0xB180 | None:
     # block would be cut) — return None (registry warning) instead of a stub
     # record with num_cells=0. v0x05 additionally packs N mod 4 in bits [7:6]
     # of byte 8; a disagreement means whole blocks are missing -> None.
+    # v0x04 byte 1 selects the block stride (28B MC7700 / 32B T77W595); the
+    # 32B form carries the same N-mod-4 count bits as v0x05, at byte 6.
     if version == _STRUCT_VERSION:
-        hdr_len, stride = _HEADER_LEN, _ENTRY_STRIDE
+        hdr_len, stride, count_at = _HEADER_LEN, _ENTRY_STRIDE, 8
     else:
-        hdr_len, stride = _HEADER_LEN_V4, _ENTRY_STRIDE_V4
+        if len(data) < 2 or data[1] not in _V4_STRIDE_BY_TAG:
+            tag = "missing" if len(data) < 2 else f"0x{data[1]:02X}"
+            _layout_alarm(data, f"unknown v0x04 sub-layout tag {tag} (byte 1; "
+                                "known 0x00 = 28B blocks, 0x01 = 32B blocks)")
+            return None
+        hdr_len, stride = _HEADER_LEN_V4, _V4_STRIDE_BY_TAG[data[1]]
+        count_at = 6 if stride == _ENTRY_STRIDE else None
     if len(data) < hdr_len or (len(data) - hdr_len) % stride:
+        _layout_alarm(data, f"len is not {hdr_len} + N x {stride}B blocks (truncated or unknown size)")
         return None
     num_cells = (len(data) - hdr_len) // stride
-    if version == _STRUCT_VERSION and (data[8] >> 6) != num_cells % 4:
+    if count_at is not None and (data[count_at] >> 6) != num_cells % 4:
+        _layout_alarm(data, f"count byte @{count_at} = 0x{data[count_at]:02X} disagrees "
+                            f"with N={num_cells} (bits [7:6] != N mod 4)")
         return None
 
     # EARFCN — version-specific width. v0x05 (modern silicon) reads the
@@ -340,13 +404,13 @@ def parse_0xb180(log_time: int, data: bytes) -> Diag0xB180 | None:
     # offset 6 for v0x04's shorter header. The authoritative block count is
     # size-derived (a MECHANICAL slice count — for v0x04 the 92/120 B records
     # zero-pad, so it can over-count real neighbours; see docstring).
-    cell_count_field = data[8] if version == _STRUCT_VERSION else data[6]
+    cell_count_field = data[8] if version == _STRUCT_VERSION else data[6]  # raw
     cells: list[bytes] = [
         data[hdr_len + stride * k : hdr_len + stride * (k + 1)]
         for k in range(num_cells)
     ]
 
-    neighbors = [_decode_block(c, version) for c in cells]
+    neighbors = [_decode_block(c) for c in cells]
 
     return Diag0xB180(
         log_time=log_time,

@@ -74,7 +74,7 @@ records / 211 cell-entries joined to co-temporal ``$QCRSRP`` F3 truth
     = -0.020; per-cell-demeaned, -0.085 (all) / +0.011 (tight time-match).
     Earlier apparent fits across a few static cells were between-cluster
     leverage, not a per-cell law. The same ``-raw/10`` decode reads ~45-60 dB
-    high on SDX55/SDX62/MDM9207/MDM9230/SDX50M captures alike.
+    high on SDX55/SDX62/MDM9207/MDM9230/MDM9250 captures alike.
   * **No byte offset recovers RSRP cleanly.** Scanning every u16 offset 0..50
     of the 52 B record against the truth, the best-tracking region is +8 /
     +12 at r≈0.40-0.44, strengthening as the time-match tightens — a real but

@@ -7,6 +7,105 @@ re-typed fields are listed here, even when the new decode is more correct.
 Releases are tagged `vYYYY.MM.DD`. Releases before this file existed
 (`v2026.08.05`, `v2026.08.23`) carry no entries.
 
+## v2026.10.26
+
+191 log codes: the 187 of `v2026.10.12` plus four new parsers, `0xB169`,
+`0xB16A`, `0xB88A` and `0xB8DD`. No parser was removed. Two shared helper
+modules are new: `parsers/_pdsm_client_ids.py` and `parsers/_short_form_4b.py`.
+
+### New log codes
+
+| code | name | versions | record type |
+|---|---|---|---|
+| `0xB169` | LTE ML1 UE Identification Message (MSG3) Report | v0x01 (MDM9x07/9x30), v0x18 (SDX20/24), v0x28 (SDX55 onward); all 12 B | `Diag0xB169` |
+| `0xB16A` | LTE ML1 Contention Resolution Message (MSG4) Report | v0x01, 8 B (MDM9x07 to SDX6x) | `Diag0xB16A` |
+| `0xB88A` | NR5G MAC RACH Attempt | v0x07 (108 B, SDX55), v0x0a (180 B, SDX62), v0x0e (196 B, T99W640) | `Diag0xB88A` |
+| `0xB8DD` | NR5G LL1 FW Serving FTL (frequency-tracking loop) | v0x07 (544 B, SDX55), v0x06 (588 B, SDX62/SDX65) | `Diag0xB8DD` |
+
+`0xB169` / `0xB16A` complete the LTE RACH sequence after `0xB167` (MSG1) and
+`0xB168` (RAR). `0xB169` carries the RAR UL grant (TPC, MCS, RIV), the MSG3
+PUSCH allocation (start RB, RB count, TBS index, HARQ id) and the MSG3 time.
+It is grounded on the RAR transport block in `0xB063`, the TS 36.213 RIV and
+TBS tables and the firmware's MSG3 F3 text. `0xB16A` carries the MSG4 time,
+the contention-resolution result and the scheduled UL ACK time, grounded on
+the firmware's contention-resolution F3 text and FDD HARQ timing.
+`modulation_raw`, `grant_flags_raw` and the header bytes stay raw.
+
+`0xB8DD` is one record per NR serving-carrier frequency-tracking-loop update:
+SFN/slot, NR-ARFCN, RF frequency in kHz (v0x07), the XO frequency error (Q45
+and ppm) and four per-chain FTL SNR words. The frequency error and SFN are
+grounded on the firmware's F3 text, the SNR words on `0xB8D8` and the ARFCN on
+`0xB97F`. The SNR words are raw: their dB scale is not yet confirmed, so no dB
+value is emitted. A record whose size is not its version's exact layout is
+rejected (`None`, with a warning).
+
+`0xB88A` is one record per NR random-access attempt, Msg1 through Msg4: preamble, RA-RNTI,
+RAR window, the Msg2 RAR (RAPID, TC-RNTI, timing advance), the Msg3 identity
+(C-RNTI or the UL-CCCH SDU, decoded as RRC) and the RNTI the UE ends on. The
+firmware logs no F3 text for this record, so the layout is grounded on
+TS 38.211 / 38.321 identities instead (RA-RNTI, RAR window, cyclic shift, RAPID
+echo, Msg3 CCCH against the same capture's `0xB821`). `timing_advance`,
+`root_sequence_u` and `rar_ul_grant_raw` are not yet confirmed and are marked
+candidate in the module. Fields of a message that never arrived (per
+`msg_bitmask`) are `None`, not `0`.
+
+### ⚠️ Breaking: record-shape change in 1 parser
+
+Measured by comparing the dataclass fields of each parser as published in
+`v2026.10.12` with this release.
+
+| code | parser | removed | new |
+|---|---|---|---|
+| `0x1899` | v9 → v10 | `status_byte_2_name` | `sequence` |
+
+`0x1899`: bytes `[1:5]` are one u32 record sequence number. The old reading
+treated byte 2 as a small engine-state enum and named it; it is the count's
+second byte, so the name map is gone. `counter` and `status_byte_2` are kept
+(the sequence's low and second bytes). Long-uptime records that v9 dropped,
+because byte 3 was non-zero, now decode.
+
+### Additive field changes
+
+New fields only; no existing field was removed or re-typed.
+
+| code / type | parser | new |
+|---|---|---|
+| `0x1350` | v8 → v9 | `Diag0x1350V6.cfg_b27` |
+| `0x1D2E` | v3 → v4 | `n_groups`, `groups`, `hdr_11_18`; new `TrailerGroup` type |
+| `0x4177` | v7 → v8 | `num_peaks`, `peaks_capped`, `freq_word`, `freq_word_prev`, `hdr_i16_at2`, `hdr_const_ok`, `peaks`; new `Diag0x4177Step1Peak` type |
+| `0x4179` | v12 → v13 | `freq_word` |
+| `0xB0EE` | v3 → v4 | `emm_substate_name` |
+| `0xB11C` | v6 → v7 | `sfn` |
+| `0xB176` | v11 → v12 | `B176Cell.word8_raw` |
+| `0xB17F` | v13 → v14 | `serving_priority`, `srxlev`, `srxlev_raw`, `squal`, `squal_raw` |
+| `0xB183` | v12 → v13 | `sfn_tti_start` |
+| `0xB193` | v32 → v39 | `LteMl1ServingCellMeasEntry.rssi` |
+| `0xB197` | v4 → v5 | `sfn` |
+
+`0xB17F`: the new fields are the cell-reselection (S-criterion) evaluation:
+the serving cell's reselection priority and its Srxlev / Squal margins in dB.
+`0x1D2E`: records with a trailing group block, which were dropped before, now
+decode. `0xB193`: `rssi` is set on the layouts where it is verified and is
+`None` elsewhere.
+
+### Decode changes with no shape change
+
+- `0xB193` (v32 → v39): RSRP / RSRQ now decode on subpacket versions 3, 18,
+  22, 35 and 41, where they were `None`.
+- Older-chipset (MDM9200 / MDM9625) payload versions now decode: `0x14FD`
+  (v5 → v6), `0xB0C1` (v3 → v4), `0xB0C2` (v3 → v4), `0xB17C` (v7 → v8),
+  `0xB17E` (v6 → v7), `0xB18E` (v16 → v17), and the `0xB197` / `0xB183`
+  changes above.
+- `0xB180` (v8 → v9): the 32-byte-block sub-layout of payload version `0x04`
+  decodes; records it cannot decode are dropped with a logged reason.
+- `0x137A` (v1 → v2), `0x1482` (v11 → v12): the record gate is a shared list
+  of PDSM client IDs instead of a fixed magic value.
+- `0x192A` (v6 → v7), `0x197F` (v1 → v2), `0x1980` (v1 → v2): 4-byte records
+  are real events and decode through one shared short-form decoder.
+- `0x18AB` (v19 → v24): payload versions 5, 6, 7 and 9 decode as GNSS time
+  records.
+- `0xB063` (v4 → v5), `0xB064` (v4 → v5): field grounding; same fields.
+
 ## v2026.10.12
 
 Same 187 log codes as `v2026.10.04`; no parser was added or removed.

@@ -19,6 +19,21 @@ Payload structure (version 0x20 / 0x02, fixed 124 bytes; version 0x29 is
 
 Reverse-engineered from SDX20 (LM960) DLF captures.
 
+Version 0x01 (MDM9625 -- HP X5 / Foxconn T77W595) is a fixed 84 B
+buffer: the same 4 B header + 10 x 8 B entries in a different field order:
+        [0:2]    u16  band number
+        [2:4]    u16  EARFCN
+        [4:6]    u16  bandwidth enum (same 0..5 enum as above)
+        [6:8]    s16  RSSI (dBm)
+Entries are sorted strongest-first. Slots past num_entries are NOT zeroed --
+some single-entry records carry stale buffer bytes there, so only the declared
+entries are read. F3-grounded: earfcn by the 1:1 co-emitted
+lte_ml1_bplmn_int.c:1376 'LTE_ML1_BPLMN_INT_CB_SRCH_SYSSCAN, <earfcn>, 1'
+print (10/10, dt <= 0.3 ms); bw enum by the per-slot lte_ml1_sm_main.c:966
+'SM: RX Cfg Req freq %d BW %d' resource-block count (25/50/75/100 RB ==
+enum 2/3/4/5). Byte 1 takes values 0x00 and assorted nonzero bytes that track
+no scan property seen so far, so on v0x01 is_complete is CANDIDATE only.
+
 Techplayon's public log-packet field list names the 0xB18E fields:
     0xB18E — LTE ML1 System Scan Results
         earfcn, band, bandwidth_mhz, energy_dbm_per_100khz
@@ -45,6 +60,9 @@ _MAX_ENTRIES = 10
 # a v0x29 entry follow the same 12 B prefix and are not decoded.
 _FIXED_BUFFER_SIZE = _HEADER_SIZE + _MAX_ENTRIES * _ENTRY_SIZE  # 124
 _ENTRY_SIZE_V29 = 16
+# v0x01 (MDM9625) is a fixed 84 B buffer of 10 x 8 B {band, earfcn, bw, rssi}.
+_ENTRY_SIZE_V01 = 8
+_FIXED_BUFFER_SIZE_V01 = _HEADER_SIZE + _MAX_ENTRIES * _ENTRY_SIZE_V01  # 84
 
 # Bandwidth enum → MHz
 _BW_MHZ = {0: 1.4, 1: 3.0, 2: 5.0, 3: 10.0, 4: 15.0, 5: 20.0}
@@ -87,6 +105,21 @@ class Diag0xB18E:
         }
 
 
+def _parse_v01_entries(data: bytes, num_entries: int) -> list[LteMl1ScanEntry]:
+    """v0x01: 8 B entries, band first; only the declared slots are read."""
+    entries: list[LteMl1ScanEntry] = []
+    for i in range(num_entries):
+        band, earfcn, bw_enum, rssi = unpack_from(
+            '<HHHh', data, _HEADER_SIZE + i * _ENTRY_SIZE_V01)
+        entries.append(LteMl1ScanEntry(
+            earfcn=earfcn,
+            band=band,
+            bandwidth_mhz=_BW_MHZ.get(bw_enum, 0.0),
+            rssi=float(rssi),
+        ))
+    return entries
+
+
 # RM520N-GL SDX62 emits this at v=0x29 with the per-frequency scan entries
 # fully decoded (earfcn/band/bandwidth_mhz/rssi — verified against a live
 # RM520N-GL capture: earfcn=66786 band=66 rssi=-107.0). On the 16 B stride
@@ -100,7 +133,7 @@ class Diag0xB18E:
     wigle_direct=True,
     wigle_roles=("signal", "pci-earfcn-bridge"),
     description="Per-frequency scan results: EARFCN, band, bandwidth, RSSI from 0xB18E",
-    version=16,
+    version=17,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -127,8 +160,15 @@ class Diag0xB18E:
         "phase), FN980 (serving 66 == AT#RFSTS) and SIM8202G-M2 (32/32 "
         "EARFCN-to-band consistent). bandwidth_mhz (outside EM7565), rssi and "
         "num_entries remain partial (AT-anchored only on the serving entry). "
+        "Version 0x01 (MDM9625, HP X5 / Foxconn T77W595) is a fixed 84 B buffer "
+        "of 10 x 8 B entries {u16 band, u16 earfcn, u16 bandwidth enum, s16 "
+        "rssi}, sorted strongest-first; its earfcn is F3-grounded 10/10 by the "
+        "co-emitted lte_ml1_bplmn_int.c 'LTE_ML1_BPLMN_INT_CB_SRCH_SYSSCAN, "
+        "<earfcn>, 1' print and its bandwidth enum by the per-slot "
+        "lte_ml1_sm_main.c 'SM: RX Cfg Req freq %d BW %d' resource-block "
+        "count; band is EARFCN-consistent on all 40 corpus entries. "
         "Truncated payloads return None (registry warning): a v0x02/v0x20 buffer "
-        "shorter than 124 B, a v0x29 payload shorter than 4 + 16*num_entries or "
+        "shorter than 124 B, a v0x01 buffer shorter than 84 B, a v0x29 payload shorter than 4 + 16*num_entries or "
         "off the 4 + 16*k grid, or num_entries > 10."
     ),
     source_url="",
@@ -138,7 +178,7 @@ class Diag0xB18E:
     # earfcn/band/bandwidth_mhz/rssi (4) — total identified+parsed = 7.
     fields_identified=7, fields_parsed=7,
     field_invariants={
-        "version": {"enum": [0x02, 0x20, 0x29]},
+        "version": {"enum": [0x01, 0x02, 0x20, 0x29]},
     },
 )
 def parse_0xb18e(
@@ -147,7 +187,8 @@ def parse_0xb18e(
     """Parse 0xB18E -- LTE ML1 System Scan Results.
 
     Returns None if the version is unsupported or the payload is shorter than
-    its layout (fixed 124 B for v0x02/v0x20; 4 + 16*num_entries for v0x29), or
+    its layout (fixed 124 B for v0x02/v0x20; fixed 84 B for v0x01;
+    4 + 16*num_entries for v0x29), or
     declares more than 10 entries, or is a v0x29 payload off the
     4 + 16*k slot grid.
     """
@@ -157,7 +198,7 @@ def parse_0xb18e(
     version = data[0]
     # Layer-1 version gate. The docstring already promises this rejection;
     # this makes it explicit + audit-visible.
-    if version not in (0x02, 0x20, 0x29):
+    if version not in (0x01, 0x02, 0x20, 0x29):
         return None
     flags = data[1]
     num_entries = unpack_from('<H', data, 2)[0]
@@ -170,6 +211,16 @@ def parse_0xb18e(
     # payload shorter than 4 + 16*N is truncated/unknown -> None (registry warning).
     if num_entries > _MAX_ENTRIES:
         return None
+    if version == 0x01:
+        if len(data) < _FIXED_BUFFER_SIZE_V01:
+            return None
+        return Diag0xB18E(
+            log_time=log_time,
+            version=version,
+            is_complete=is_complete,
+            num_entries=num_entries,
+            entries=_parse_v01_entries(data, num_entries),
+        )
     if version == 0x29:
         stride = _ENTRY_SIZE_V29
         if len(data) < _HEADER_SIZE + num_entries * stride:

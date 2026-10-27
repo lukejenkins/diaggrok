@@ -21,6 +21,24 @@ does not). Layout::
     16 u8   paging_subfn_offset     F3 `subfn_off`; PO subframe (FDD 9 / TDD 0 @ Ns=1)
     17..19 reserved (0 on every corpus record)
 
+**v0x01 (16 B, MDM9200 / MDM9625 only)** is the same record with a u16
+EARFCN, so bytes 6..15 are v0x02's 8..17 shifted 2 B earlier::
+
+    0  u8   version (0x01)          1..3 reserved (0)
+    4  u16  earfcn                  6  u16 pci
+    8  u8   paging_cycle_idx        9  u8  nb_idx
+    10 u16  ue_id                   12 u16 paging_sfn_offset
+    14 u8   paging_subfn_offset     15 reserved (0)
+
+F3-grounded on all 4 corpus records (3 T77W595 MDM9625, 1 BandLuxe C505
+MDM9200). Each record is preceded, by under 0.05 ms, by the same two
+legacy-``0x92`` hashes on both builds: ``d65fc51d`` (6 args =
+``Paging DRX info: cell (earfcn,pci) cycle Nb UE id cycle idx``) and
+``e8a195c6`` (9 args = ``Paging Config: cycle Nb UEid T N Ns i_s sfn_off
+subfn_off``). Every field matches, e.g. ``[5035,158,640,2,·,1]`` and
+``[640,2,·,64,64,1,0,·,9]`` (UE_ID and PF redacted: IMSI-derived). The cell is also labeled by the ``0x60``
+``EVENT_LTE_RRC_NEW_CELL_IND`` payload (``u8 cause, u16 earfcn, u16 pci``).
+
 ``ue_id`` is IMSI-derived and is decoded; fixtures carry synthetic values
 only.
 
@@ -29,7 +47,7 @@ record's cell by DIAG×AT correlation on an LM960A18. `to_dict()` emits it
 under an `earfcn` key (never the generic `config_word`), so consumers
 keyed on `earfcn` keep working.
 
-Single observed size: 20 B (99.3% of records).
+Observed sizes: 20 B (v0x02, 1,517 records) and 16 B (v0x01, 4 records).
 
 Log name: LOG_LTE_ML1_NEIGHBOR_MEASUREMENTS_LOG_PACKET
 Also known as: LOG_LTE_NEIGHBOR_MEASUREMENTS_LOG_PACKET, LOG_LTE_ML1_PAGING_DRX_REQUEST
@@ -42,12 +60,17 @@ from typing import Any
 
 from diaggrok.registry import register
 
-# byte-0 version discriminator — corpus shows a single value
-# 0x02 across all 610 records (fixed size 20). Layer-1 gate rejects any other.
-_B17C_VERSIONS_OBSERVED = (0x02,)
+# byte-0 version → fixed record length. v0x02 (20 B) is every chipset from
+# MDM9x07 onward; v0x01 (16 B) is pre-Rel-12 silicon only (MDM9200 BandLuxe
+# C505, MDM9625 T77W595), which packs EARFCN as a u16, so every later field
+# sits 2 B earlier and the reserved tail is 1 B. No device emits both.
+# Layer-1 gate rejects any other byte 0.
+_B17C_RECORD_LEN = {0x01: 16, 0x02: 20}
+_B17C_VERSIONS_OBSERVED = tuple(_B17C_RECORD_LEN)
 
-# The full paging-DRX layout needs the whole fixed 20 B record.
-_B17C_RECORD_LEN = 20
+# earfcn, pci, paging_cycle_idx, nb_idx, ue_id, paging_sfn_offset,
+# paging_subfn_offset — all from byte 4.
+_B17C_BODY_FMT = {0x01: '<HHBBHHB', 0x02: '<IHBBHHB'}
 
 # SIB2 PCCH-Config nB enum → nB as a multiple of T (TS 36.331 / 36.304 §7.1).
 NB_ENUM = ("4T", "2T", "T", "T/2", "T/4", "T/8", "T/16", "T/32")
@@ -76,8 +99,9 @@ class Diag0xB17C:
     * `paging_cycle_idx` / `paging_cycle_rf` / `nb_idx` / `nb` / `ue_id` /
       `paging_sfn_offset` / `paging_subfn_offset` — bytes 10..16, the
       TS 36.304 §7.1 PF/PO computation (F3 `Paging DRX info` /
-      `Paging Config` grounded). A sub-20 B (truncated) frame returns None
-      from the parser.
+      `Paging Config` grounded). A frame shorter than its version's record
+      (v0x01 16 B, v0x02 20 B) is truncated and returns None from the parser.
+      v0x01 offsets are in the module docstring.
     """
     log_time: int
     version: int
@@ -119,8 +143,8 @@ class Diag0xB17C:
     name="0xB17C",
     wigle_direct=False,
     wigle_roles=("pci-earfcn-bridge",),
-    description="0xB17C — LTE ML1 Paging DRX info (fixed 20B; F3-grounded earfcn@4, pci@8, paging cycle/nB/UE_ID/PF/PO @10..16; legacy mislabel LtePdcpB17C)",
-    version=7,
+    description="0xB17C — LTE ML1 Paging DRX info (v0x02 fixed 20B: F3-grounded earfcn@4, pci@8, paging cycle/nB/UE_ID/PF/PO @10..16; v0x01 16B MDM9200/9625: u16 earfcn@4, pci@6, paging @8..14; legacy mislabel LtePdcpB17C)",
+    version=8,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -144,8 +168,14 @@ class Diag0xB17C:
         "recomputation from (T,nB,UE_ID) reproduces u16@14 and u8@16 on every "
         "corpus record; (c) bytes 1..3 and 17..19 are zero on every record. "
         "Max earfcn in the corpus is 68,911 (within the 18-bit width); "
-        "earfcn=0 search-mode records are valid. Payloads shorter than 20 B "
-        "return None (registry warning)."
+        "earfcn=0 search-mode records are valid. v0x01 (16 B; MDM9200 C505, "
+        "MDM9625 T77W595 only) is the same record with a u16 earfcn@4, so "
+        "pci@6, cycle idx@8, nB@9, ue_id@10, PF@12, PO@14: on all 4 corpus "
+        "records the co-emitted legacy-0x92 twins (hash d65fc51d `Paging DRX "
+        "info`, 6 args; e8a195c6 `Paging Config`, 9 args; same hashes on both "
+        "builds) match every field, and 0x60 EVENT_LTE_RRC_NEW_CELL_IND "
+        "matches (earfcn, pci). Payloads shorter than their version's record "
+        "(16/20 B) return None (registry warning)."
     ),
     source_url="",
     issues=(),
@@ -173,28 +203,17 @@ def parse_0xb17c(log_time: int, data: bytes) -> Diag0xB17C | None:
     # Layer-1 byte-0 version gate.
     if version not in _B17C_VERSIONS_OBSERVED:
         return None
-    # The record is a fixed 20 B layout; a shorter payload is truncated ->
-    # None (registry warning), not a part-filled record.
-    if len(data) < _B17C_RECORD_LEN:
+    # The record is a fixed per-version layout (v0x01 16 B, v0x02 20 B); a
+    # shorter payload is truncated -> None (registry warning), not a
+    # part-filled record.
+    if len(data) < _B17C_RECORD_LEN[version]:
         return None
-    if len(data) >= 8:
-        earfcn = unpack_from('<I', data, 4)[0]
-    elif len(data) >= 2:
-        earfcn = data[1]
-    else:
-        earfcn = 0
-    # pci = u16-LE @8 (F3-grounded PhysCellID). Absent on any
-    # sub-10B foreign frame → 0 (the version gate already rejects those,
-    # but keep the slice defensive to match the earfcn fallback style).
-    pci = unpack_from('<H', data, 8)[0] if len(data) >= 10 else 0
-    # Bytes 10..16 = paging-DRX config (F3-grounded).
-    cycle_idx = nb_idx = ue_id = sfn_off = subfn_off = None
-    cycle_rf = None
-    nb = None
-    if len(data) >= _B17C_RECORD_LEN:
-        cycle_idx, nb_idx, ue_id, sfn_off, subfn_off = unpack_from('<BBHHB', data, 10)
-        cycle_rf = 32 << cycle_idx if cycle_idx <= 3 else None
-        nb = NB_ENUM[nb_idx] if nb_idx < len(NB_ENUM) else None
+    # F3-grounded: earfcn/pci = the cell (EARFCN, PCI); the rest is the
+    # TS 36.304 §7.1 paging-DRX config.
+    earfcn, pci, cycle_idx, nb_idx, ue_id, sfn_off, subfn_off = unpack_from(
+        _B17C_BODY_FMT[version], data, 4)
+    cycle_rf = 32 << cycle_idx if cycle_idx <= 3 else None
+    nb = NB_ENUM[nb_idx] if nb_idx < len(NB_ENUM) else None
     if len(data) > 2:
         nonzero = sum(1 for b in data[2:] if b != 0)
         total = max(len(data) - 2, 1)

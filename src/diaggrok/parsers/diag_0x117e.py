@@ -31,7 +31,7 @@ in one of two element encodings (sampled over 26 chipsets, every pair class exac
 The descriptor selects the encoding. d58
 byte ``[57]`` is ``0`` for u16 samples and ``1`` for u8 + 4 B/row, exact on
 every paired descriptor/dump of 22 captures over 20 chipset families (MDM9x50,
-SDX20, MDM9150, MDM9250, SDX50M, SDX55, SDX62, SDX65, SDX72; e.g. RM500Q
+SDX20, MDM9150, MDM9250, SDX55, SDX62, SDX65, SDX72; e.g. RM500Q
 wardrive 3458/3458 and CFW-3212 3499/3499, each mixing both encodings in one
 capture). Every ``d55`` pair (MC7455, EG95, EP06, EG25-G; 4,854 pairs) is u16.
 On u8-only builds (EG18-NA) ``[57]`` is a constant 1. ``sample_encoding`` /

@@ -27,6 +27,9 @@ from diaggrok.registry import register
 #   serving cell's LEARNED (cell-database) position; v0x0a carries the GNSS fix
 #   the TLE received, tagged with the serving cell it was taken in. Never read
 #   one through the other's offsets.
+#   A third, older version — 197B / v=0x03 (236 rec / 4 caps, MDM9625: HP X5 /
+#   Foxconn T77W595) — is v0x08's struct with three cuts; see the
+#   v0x03 block below.
 #
 # byte1 (`state`) is an RF/session-state discriminator, not a counter (0x05 /
 #   0x02 dominant, 0x01 / 0x03 trace, intra-capture variance). byte2/byte3 mean
@@ -102,6 +105,41 @@ from diaggrok.registry import register
 #            byte was identified.)
 #   [106:108] u16 cell_pos_gps_week  == `tlm_ptm.c:6346` "GPS_WK" 366/366.
 #   B is all-zero (cell_pos_valid False) in 100 of 56,221 records.
+#
+# --- 197B / v0x03 body: the MDM9625 ancestor of v0x08 ----------------------
+# Same TLE serving-cell record as v0x08, three cuts (218 - 197 = 2 + 8 + 11):
+#   [0:38]   byte-identical to v0x08 — mcc [4:6], mnc [6:8], tac_lac [8:10],
+#            rat [10] (3 in every record), 0x07 [11], cell_id [12:16], 220
+#            [26:30], LTE pci [30:34] / earfcn [34:38]. All six equal the
+#            nearest-before F3 `tle_log.c:627` "MCC, MNC, CellId, Physical
+#            CellId, TAC, DL Freq" in 225/228 and are a printed tuple in
+#            228/228 (T77W595 PLMN-scan capture). 0x60
+#            EVENT_GNSS_TLE_CELL_CHANGE_C (1947) `00 00 | 04 | MCC | MNC | TAC |
+#            ECI` equals the identity in 236/236 (4/4 captures).
+#   cut -2   v0x08 [38:40] is absent; [38] = copy of byte2 (236/236, as v0x08
+#            [40]), [40] = 0x04 (v0x08 [42]), [41:43] = 0xffff (v0x08 [43:45]).
+#   [43:84]  Block A at v0x08 -2 — zero in every record (TLE "TimeValid:0"),
+#            so its offsets are UNVERIFIED and it is not decoded.
+#   [84:86]  u16 raw — 0x0001 with a cell position, 0xffff without (236/236).
+#   [86:90] / [90:94] / [94:96] cell_lat_deg / cell_lon_deg / cell_alt_m
+#            (v0x08 [88:98] encoding) — F3 "Serving cell position updated" Lat/
+#            Long/Alt, and the 230 "TPC: SendPosReport" Lat/Lon; the co-emitted
+#            (<= 10 ms, 228/228) 0x1476 lat/lon equal it in 227/228 (the miss is
+#            the no-position record); 0x60 EVENT_GNSS_TLE_POS_UPDATE_C (1948) f32
+#            radians [2:10] == it to 0.0 m. All on one TZ-seeded cell position
+#            (the 1948 tail f32 is its Punc); [96:99] raw, as v0x08 [98:101].
+#   [99]     cell_pos_time_type — 2 (227) / 0 with no position (9).
+#   [100:104] cell_pos_time_ms — type 2 modem ms tick: == the tick at the F3
+#            "Serving cell position updated" print to 0.3 ms. [104:106] week (0).
+#   cut -8   somewhere in the [106:173] zero run (zero in both versions, so it
+#            cannot be placed); the aux lat/lon slots are never populated and
+#            are not decoded.
+#   [173:177] v0x08 [183:187]; [177] aux_time_type (2, as v0x08 [187]);
+#   [178:182] aux_time_ms — modem ms tick == the co-emitted F3 "TPC:
+#            SendPosReport: TimeTickMsec" within 1 ms in 226/228 (126 exact);
+#            [182:184] aux_time_gps_week (0); [186:188] 0xffff (v0x08 [196:198]).
+#   cut -11  v0x08 [207:218] (incl. aux_tac_lac) is absent.
+#   Raw: byte2 (0 / 3, per cell), [1] state (2; 1 on one empty boot record).
 #
 #   Block C/D — auxiliary positions + area record (CANDIDATE semantics):
 #   [157:161]/[165:169] i32 aux1_lat_deg / aux1_lon_deg  (same encoding as B)
@@ -180,6 +218,16 @@ from diaggrok.registry import register
 #            iff bit2 (raw — not re-exposed).
 #   [114] == 2, [115] == 1 on every non-empty record (raw). [116:383] zero.
 #   [383:385] u16 raw — differs between otherwise-identical back-to-back copies.
+#
+#   390 B form (SDX24 EM120R-GL / EM160R-GL, SDX50M Inseego M1000): every v0x0a
+#   record those modems emit is 390 B, never beside a 391 B copy. It is the
+#   same layout with one byte fewer inside the zero run: the raw u16 sits at
+#   [382:384], not [383:385], and is followed by the same 6 zero bytes, so it is
+#   not a 391 B record with its last byte cut. [0:112] decodes unchanged on all
+#   35 corpus records: [12] == 0x04, [37:39] == tac_lac, and the PCI/EARFCN
+#   pairs are those modems' own 0xB193 serving cells. The 19 position-valid
+#   records are cell-only fixes (mask 1, contrib_pct [99] == 100). Raw bytes
+#   differ: [114:116] read 1, 0, and no record sets the velocity or time bit.
 #   No-fix record (mask 0): the serving-cell identity [2:13]/[35:43] is still
 #   present (every such record) and [43:383] is zero — the cell is known, the
 #   TLE has no fix to tag it with.
@@ -194,6 +242,9 @@ _LAT_SCALE = 180.0 / 2**32   # deg per LSB, v0x08 i32 latitude
 _LON_SCALE = 360.0 / 2**32   # deg per LSB, v0x08 i32 longitude
 _RAT_GSM = 1
 _RAT_LTE = 3
+# version -> minimum record size. v0x0a is 391 B on SDX55..SDX72 and 390 B on
+# SDX24 / SDX50M (see the v0x0a block); both decode through the same offsets.
+_RECORD_LEN = {0x03: 197, 0x08: 218, 0x0a: 390}
 
 
 @dataclass
@@ -207,12 +258,15 @@ class Diag0x14FD:
     391B variant (v=0x0a): the GNSS fix handed to the TLE, tagged with the
     serving cell (MCC/MNC/TAC/cell id/PCI/EARFCN) — ``latitude_deg`` /
     ``longitude_deg`` / ``altitude_m`` (the device fix), its uncertainties,
-    velocity, GPS time and a per-source contribution split. Fields that do not
-    apply to a record's version are ``None``; undecoded bytes stay in
-    ``body_raw``.
+    velocity, GPS time and a per-source contribution split.
+    197B variant (v=0x03, MDM9625): v0x08's record with three cuts — the same
+    serving-cell identity (LTE), cell position and its time, and the aux time;
+    its time anchor and aux positions are never populated and stay undecoded.
+    Fields that do not apply to a record's version are ``None``; undecoded bytes
+    stay in ``body_raw``.
     """
     log_time: int
-    version: int       # byte 0 — 0x08 on 218B variant, 0x0a on 391B variant
+    version: int       # byte 0 — 0x03 197B / 0x08 218B / 0x0a 391B variant
     state: int         # byte 1 — RF/session-state discriminator (0x05/0x02/0x01/0x03)
     byte2: int         # byte 2 — v0x0a: MCC low byte; v0x08: unknown (copied at [40])
     byte3: int         # byte 3 — v0x0a: MCC high byte; v0x08: 0x00
@@ -331,23 +385,79 @@ class Diag0x14FD:
             d['aux_time_ms'] = self.aux_time_ms
             d['aux_time_gps_week'] = self.aux_time_gps_week
             d['aux_tac_lac'] = self.aux_tac_lac
+        elif self.version == 0x03 and self.mcc is not None:
+            d['mcc'] = self.mcc
+            d['mnc'] = self.mnc
+            d['tac_lac'] = self.tac_lac
+            d['rat'] = self.rat
+            d['cell_id'] = self.cell_id
+            if self.rat == _RAT_LTE:
+                d['pci'] = self.pci
+                d['earfcn'] = self.earfcn
+            d['cell_pos_valid'] = self.cell_pos_valid
+            d['cell_lat_deg'] = self.cell_lat_deg
+            d['cell_lon_deg'] = self.cell_lon_deg
+            d['cell_alt_m'] = self.cell_alt_m
+            d['cell_pos_time_type'] = self.cell_pos_time_type
+            d['cell_pos_time_ms'] = self.cell_pos_time_ms
+            d['cell_pos_gps_week'] = self.cell_pos_gps_week
+            d['aux_time_type'] = self.aux_time_type
+            d['aux_time_ms'] = self.aux_time_ms
+            d['aux_time_gps_week'] = self.aux_time_gps_week
         return d
 
 
-def _decode_v08(rec: Diag0x14FD, data: bytes) -> None:
-    """Fill the 218B / v0x08 serving-cell record fields (offsets per the
-    field map above; fixed across every v0x08 chipset in the corpus)."""
+def _decode_identity(rec: Diag0x14FD, data: bytes, *, gsm: bool) -> None:
+    """Serving-cell identity [4:16] + RAT-specific [30:38] — shared by v0x08
+    and v0x03 (byte-identical heads). ``gsm`` is False for v0x03, where no
+    GSM record has been seen, so its GSM fields stay in body_raw."""
     rec.mcc, rec.mnc, rec.tac_lac = unpack_from('<HHH', data, 4)
     rec.rat = data[10]
     rec.cell_id = unpack_from('<I', data, 12)[0]
     if rec.rat == _RAT_LTE:
         rec.pci, rec.earfcn = unpack_from('<II', data, 30)
-    elif rec.rat == _RAT_GSM:
+    elif rec.rat == _RAT_GSM and gsm:
         rec.arfcn = unpack_from('<H', data, 30)[0]
         rec.bsic = data[32]
         rec.gsm_band = data[33]
     # Unrecognised RAT values: identity header still decoded; RAT-specific
     # [30:38] left in body_raw rather than guessed.
+
+
+def _decode_cell_pos(rec: Diag0x14FD, data: bytes, off: int) -> None:
+    """Block B — cell-DB position + its time, starting at ``off`` (v0x08 88,
+    v0x03 86); the same layout in both versions."""
+    lat_i, lon_i, alt = unpack_from('<iih', data, off)
+    rec.cell_lat_deg = lat_i * _LAT_SCALE
+    rec.cell_lon_deg = lon_i * _LON_SCALE
+    rec.cell_alt_m = alt
+    rec.cell_pos_valid = not (lat_i == 0 and lon_i == 0)
+    rec.cell_pos_time_type = data[off + 13]
+    rec.cell_pos_time_ms = unpack_from('<I', data, off + 14)[0]
+    rec.cell_pos_gps_week = unpack_from('<H', data, off + 18)[0]
+
+
+def _decode_aux_time(rec: Diag0x14FD, data: bytes, off: int) -> None:
+    """Aux time type + ms + week at ``off`` (v0x08 187, v0x03 177)."""
+    rec.aux_time_type = data[off]
+    rec.aux_time_ms = unpack_from('<I', data, off + 1)[0]
+    rec.aux_time_gps_week = unpack_from('<H', data, off + 5)[0]
+
+
+def _decode_v03(rec: Diag0x14FD, data: bytes) -> None:
+    """Fill the 197B / v0x03 (MDM9625) fields — v0x08's identity, Block B at
+    -2 and the aux time at -10. Block A (time anchor) and the aux positions
+    are zero in every corpus record, so their shifted offsets are unverified
+    and they are left in body_raw (fields stay None)."""
+    _decode_identity(rec, data, gsm=False)
+    _decode_cell_pos(rec, data, 86)
+    _decode_aux_time(rec, data, 177)
+
+
+def _decode_v08(rec: Diag0x14FD, data: bytes) -> None:
+    """Fill the 218B / v0x08 serving-cell record fields (offsets per the
+    field map above; fixed across every v0x08 chipset in the corpus)."""
+    _decode_identity(rec, data, gsm=True)
 
     rec.time_anchor_gps_ms = unpack_from('<I', data, 45)[0]
     rec.time_anchor_gps_week = unpack_from('<H', data, 49)[0]
@@ -356,23 +466,14 @@ def _decode_v08(rec: Diag0x14FD, data: bytes) -> None:
     rec.time_anchor_valid = not (rec.time_anchor_gps_ms == 0
                                  and rec.time_anchor_gps_week == 0)
 
-    lat_i, lon_i, alt = unpack_from('<iih', data, 88)
-    rec.cell_lat_deg = lat_i * _LAT_SCALE
-    rec.cell_lon_deg = lon_i * _LON_SCALE
-    rec.cell_alt_m = alt
-    rec.cell_pos_valid = not (lat_i == 0 and lon_i == 0)
-    rec.cell_pos_time_type = data[101]
-    rec.cell_pos_time_ms = unpack_from('<I', data, 102)[0]
-    rec.cell_pos_gps_week = unpack_from('<H', data, 106)[0]
+    _decode_cell_pos(rec, data, 88)
 
     a1_lat, a2_lat, a1_lon, a2_lon = unpack_from('<iiii', data, 157)
     rec.aux1_lat_deg = a1_lat * _LAT_SCALE
     rec.aux1_lon_deg = a1_lon * _LON_SCALE
     rec.aux2_lat_deg = a2_lat * _LAT_SCALE
     rec.aux2_lon_deg = a2_lon * _LON_SCALE
-    rec.aux_time_type = data[187]
-    rec.aux_time_ms = unpack_from('<I', data, 188)[0]
-    rec.aux_time_gps_week = unpack_from('<H', data, 192)[0]
+    _decode_aux_time(rec, data, 187)
     rec.aux_tac_lac = unpack_from('<H', data, 207)[0]
 
 
@@ -420,11 +521,12 @@ def _decode_v0a(rec: Diag0x14FD, data: bytes) -> None:
 @register(
     0x14FD, domain="gnss",
     name="0x14FD",
-    description=("GNSS data report (0x14FD) — two TLE serving-cell records: v0x08 218B "
-                 "(cell identity + time anchor + cell-DB position) / v0x0a 391B (the "
-                 "GNSS fix tagged with the serving cell: identity + position + "
-                 "uncertainty + velocity + fix time)"),
-    version=5,
+    description=("GNSS data report (0x14FD) — TLE serving-cell records: v0x08 218B "
+                 "(cell identity + time anchor + cell-DB position) / v0x03 197B "
+                 "(its MDM9625 ancestor: identity + cell-DB position + times) / "
+                 "v0x0a 391B / 390B (the GNSS fix tagged with the serving cell: identity + "
+                 "position + uncertainty + velocity + fix time)"),
+    version=7,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -433,9 +535,13 @@ def _decode_v0a(rec: Diag0x14FD, data: bytes) -> None:
                    "same-fixtime 0x1476, its cell identity to F3 tle_base.cpp and the "
                    "co-emitted 0x1748; 218B serving-cell record byte-joined to F3 "
                    "tle_log.c/tlm_ptm.c/ale_getpt.c/mc_clock.c prints and 0x60 "
-                   "EVENT_GNSS_TLE_POS_UPDATE_C / EVENT_GNSS_TLE_TIME_TAG_C payloads. "
-                   "A payload shorter than its version's fixed record (v0x08 218 B / "
-                   "v0x0a 391 B) returns None (registry WARN)."),
+                   "EVENT_GNSS_TLE_POS_UPDATE_C / EVENT_GNSS_TLE_TIME_TAG_C payloads; 197B "
+                   "v0x03 (T77W595 MDM9625) byte-joined to F3 tle_log.c, the co-emitted "
+                   "0x1476 and 0x60 TLE_CELL_CHANGE_C / TLE_POS_UPDATE_C. The 390 B "
+                   "v0x0a form (SDX24, SDX50M) is the 391 B layout with one byte fewer "
+                   "in its zero run; identity and position decode at the same offsets. "
+                   "A payload shorter than its version's minimum record (v0x03 197 B / "
+                   "v0x08 218 B / v0x0a 390 B) returns None (registry WARN)."),
     source_url="",
     issues=(),
     primary_issue=None,
@@ -455,8 +561,9 @@ def _decode_v0a(rec: Diag0x14FD, data: bytes) -> None:
     # (cell_lat_deg/_lon_deg/_alt_m, cell_pos_time_type, cell_pos_time_ms,
     # cell_pos_gps_week) and auxiliary block (aux1/aux2 lat/lon, aux_time_type,
     # aux_time_ms, aux_time_gps_week, aux_tac_lac). The *_valid flags are
-    # derived (not on-wire fields, so not counted). Raw/unnamed bytes of both
-    # variants stay in body_raw and are NOT in the denominator — 44/44 means
+    # derived (not on-wire fields, so not counted). v0x03 adds no new names (it
+    # reuses v0x08's identity / cell_pos_* / aux_time_* fields). Raw/unnamed
+    # bytes of all variants stay in body_raw and are NOT in the denominator — 44/44 means
     # "everything identified is parsed", not "100% of bytes decoded".
     fields_identified=44,
     fields_parsed=44,
@@ -464,23 +571,31 @@ def _decode_v0a(rec: Diag0x14FD, data: bytes) -> None:
     # 310-316, 0x02 for e.g. 724), so an enum [0x00, 0x01] would reject every
     # MCC outside 256..511.
     field_invariants={
-        "version": {"enum": [0x08, 0x0a]},
-        "payload_size": {"enum": [218, 391]},
+        "version": {"enum": [0x03, 0x08, 0x0a]},
+        "payload_size": {"enum": [197, 218, 390, 391]},
     },
 )
 def parse_0x14fd(log_time: int, data: bytes) -> Diag0x14FD | None:
     if len(data) < 4:
         return None
-    # Layer-1 enforcement of field_invariants version=[0x08, 0x0a].
-    # Clean 1:1 (version, payload_size): v=0x08 @ 218B (SDX20/MDM9x07/MDM9x30
-    # era), v=0x0a @ 391B (SDX55/SDX62 5G-NR era).
-    if data[0] not in (0x08, 0x0a):
+    # Layer-1 enforcement of field_invariants version=[0x03, 0x08, 0x0a].
+    # Clean 1:1 (version, payload_size): v=0x03 @ 197B (MDM9625), v=0x08 @
+    # 218B (SDX20/MDM9x07/MDM9x30 era), v=0x0a @ 391B (SDX55/SDX62 5G-NR era).
+    min_len = _RECORD_LEN.get(data[0])
+    if min_len is None:
         return None
-    # Each version is a fixed-offset record (v0x08 218 B, v0x0a 391 B). A
-    # shorter payload is truncated and returns None (registry WARN) rather than
-    # degrading to a header-only record. Longer payloads are accepted (body
-    # offsets are fixed).
-    if len(data) < (391 if data[0] == 0x0a else 218):
+    # Each version is a fixed-offset record. A shorter payload is truncated and
+    # returns None (registry WARN) rather than degrading to a header-only
+    # record. Longer payloads are accepted (body offsets are fixed).
+    if len(data) < min_len:
+        return None
+    # A 391 B v0x0a record cut by one byte is 390 B long. The native 390 B form
+    # carries its raw tail u16 at [382:384]; the 391 B form keeps [382] zero and
+    # its u16 at [383:385]. So a 390 B record with [382] == 0 and a non-zero
+    # [383:385] is a cut 391 B record and returns None. When the u16 is zero the
+    # two differ only by a dropped trailing zero, and no decoded field changes.
+    if (data[0] == 0x0a and len(data) == 390 and data[382] == 0
+            and (data[383] or data[384])):
         return None
     rec = Diag0x14FD(
         log_time=log_time,
@@ -495,6 +610,8 @@ def parse_0x14fd(log_time: int, data: bytes) -> Diag0x14FD | None:
     # record length was validated above.
     if data[0] == 0x0a:
         _decode_v0a(rec, data)
+    elif data[0] == 0x03:
+        _decode_v03(rec, data)
     else:
         _decode_v08(rec, data)
     return rec

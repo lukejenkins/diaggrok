@@ -46,6 +46,26 @@ assessed separately. All F3-bearing captures (``0x79`` / ``0x99`` /
   autopin calibration prints (``rflm_autopin_proc.cc`` ``... done_handler``,
   7 captures, control 0): an RF-PA context, not GNSS. No print carries the
   body's values.
+* **v0x1c: event grounded (the value is a per-build constant).** 195 records /
+  27 captures, SDX55 only. Every record carries one word per firmware build:
+  ``0xD801861C`` (R500L5, 168) or ``0xD801841C`` (RM500Q-AE, 26), so byte 0 is
+  again the low byte of a data word. On the 119 records of qdb-resolved
+  captures, all of them (both builds) sit within +/-1 ms of the LTE Tx-chain
+  de-init (``rfcommon_xpt_deinit_tx``, ``rflm_vswr_capt_deinit``,
+  ``[PA] sleep()``; control 0), emitted between ``rflte_core_xpt_deinit_tx``
+  and ``rfcommon_xpt_deinit_tx``. The word does not follow the Tx handle
+  those prints carry. Where only plaintext F3 is present, 78 % sit within
+  +/-10 ms of the LTE ML1 tune manager ``FW_EXEC -> INACTIVE``. 101 records
+  are followed within 1 ms by a 0x1980 4 B record carrying the same word or 0.
+
+## What the 4 B word is (CANDIDATE)
+
+Two words found on R500L5 records fall inside the modem image's code, and
+both are return addresses: each is the instruction packet right after a
+``call`` (one call targets a short wrapper with 405 call sites). The
+``0xD80xxxxx`` words lie outside every loaded segment, in the demand-paged
+code region, and are not resolved. So the word is most likely the return
+address of the call site that emitted the record. It is kept raw.
 """
 from __future__ import annotations
 
@@ -53,6 +73,7 @@ from dataclasses import dataclass
 from struct import unpack_from
 from typing import Any
 
+from diaggrok.parsers._short_form_4b import ShortForm4B, parse_short_form_4b
 from diaggrok.registry import register
 
 
@@ -75,7 +96,7 @@ class Diag0x197F:
     0x197F, domain="gnss",
     name="0x197F",
     description="GNSS/RF state flag (0x197F) — 4B fixed, constant u32 during mode transitions",
-    version=1,
+    version=2,
     issues=(),
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
@@ -85,7 +106,9 @@ class Diag0x197F:
         "all-constant payload 0xC002F2A0. F3 by byte-0 key: v0xa0 has no "
         "F3-bearing capture; the v0x00 (all-zero) form is event-locked to RRC "
         "connection release / RF sleep (95% vs 0% control, 17-18 captures); the "
-        "v0x02 form co-fires with PA autopin prints (inconclusive)."
+        "v0x02 form co-fires with PA autopin prints (inconclusive); the v0x1c "
+        "form (per-build constant word, SDX55) sits on the LTE Tx-chain de-init "
+        "(119/119 qdb-resolved records within 1 ms, control 0)."
     ),
     # Payload is a single u32 (state_word). Every observed record has
     # identical value 0xC002F2A0 across 39 EM7511 samples; "constant field"
@@ -100,12 +123,14 @@ class Diag0x197F:
 
     version_less=True,
 )
-def parse_0x197f(log_time: int, data: bytes) -> Diag0x197F | None:
+def parse_0x197f(log_time: int, data: bytes) -> Diag0x197F | ShortForm4B | None:
     if len(data) < 4:
         return None
     state_word = unpack_from('<I', data, 0)[0]
     if state_word != 0xC002F2A0:
-        return None
+        # Any other 4 B word is the shared short form, a real teardown
+        # event record; longer payloads are other layouts.
+        return parse_short_form_4b(0x197F, log_time, data)
     return Diag0x197F(
         log_time=log_time,
         state_word=state_word,

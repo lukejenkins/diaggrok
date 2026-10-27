@@ -9,14 +9,16 @@ modem lies" (``no_time_solution``). Collapsing those into one number hides
 a chipset defect behind a benign-sounding count.
 
 Gate order is load-bearing: plausible degrees, then placeholder, then time
-solution. A seed position passes the first two, so reordering relabels every
-``no_time_solution`` as something else.
+solution, then altitude, then staleness, then jump. A seed position passes the
+first two, so reordering relabels every ``no_time_solution`` as something else.
 
 This is DIAG decode semantics, not transport, so every consumer that geo-tags
 records from a GNSS fix (a Kismet bridge, a WiGLE exporter) shares this one
 copy.
 """
 from __future__ import annotations
+
+import math
 
 
 def is_placeholder_position(lat, lon):
@@ -107,6 +109,21 @@ GPS_DECLINE_NO_TIME = "no_time_solution"
 #: accepted records were **13.68 h** stale and every existing gate passed them,
 #: correctly on its own terms.
 GPS_DECLINE_STALE = "stale_fix"
+#: Altitude outside ``[MIN_PLAUSIBLE_ALT_M, MAX_PLAUSIBLE_ALT_M]`` (or NaN): a
+#: ground receiver cannot be there. Measured on an LM960A18 re-acquiring on a
+#: stationary bench: 28 accepted fixes at -806 ... -3,866 m, part of a
+#: WLS cold-start trajectory up to 146 km from truth. Per-record, so it is the
+#: only plausibility guard on a stream's FIRST fix, which the jump gate cannot
+#: judge.
+GPS_DECLINE_ALTITUDE = "implausible_altitude"
+#: The implied speed from the last ACCEPTED fix to this one exceeds
+#: ``max_speed_mps``. Same LM960 burst: every one of the 50 bad WLS
+#: records implies >= 212 m/s against the last accepted fix, while the good-fix
+#: ceiling on that tee is 41.7 m/s. No record field separates the burst (DOP,
+#: ``pos_source``, ``is_cold_start_seed`` and the constellation counts were all
+#: compared), so geometry is the gate. ⛔ DISARMED BY DEFAULT -- see
+#: ``DEFAULT_MAX_SPEED_MPS``: only a caller passing a finite bound can see it.
+GPS_DECLINE_JUMP = "implausible_jump"
 
 
 #: Milliseconds in a GPS week -- the (week, tow) pair's radix.
@@ -120,7 +137,77 @@ _MS_PER_GPS_WEEK = 604_800_000
 #: violently bound-sensitive -- 224 rejects at 60 s vs 106 at 300 s -- so the
 #: choice of primitive, not the choice of number, is what makes this gate
 #: stable.
+#:
+#: Why 60 s and not tighter or looser, measured over a stratified corpus sample
+#: (118 captures, 66 modem/firmware families, 98,605 records, 78,914 of them
+#: accepted per record):
+#:
+#: * at 60 s the running reference refuses 529 records in exactly three
+#:   captures, and every one is a ``pos_source=4`` copy of a position whose
+#:   own clock is 60 s to 13.7 h behind the stream -- a re-served fix, not a
+#:   live one (RM500Q-AE 106 at 13.68 h; RM520N-GL 412 at 60-614 s and 11 at
+#:   283-293 s). Nothing else in the sample is refused;
+#: * at 10 s it also refuses 229 LIVE fixes, of every ``pos_source``, in two
+#:   captures where one record's clock ran ahead of the stream and the live
+#:   ones took that long to catch up: up to 33 s (EG95-NA, airplane-mode
+#:   cycle) and 51 s (RM520N-GL, right after a full reboot). 60 s clears the
+#:   worst of those with 9 s to spare;
+#: * at 300 s, 368 of the re-served copies get through (161 refused), and at
+#:   1 h only the 13.68 h ones are caught.
+#:
+#: So 60 s is the tightest of the tested bounds that refuses no live fix. Where
+#: it errs -- a clock glitch more than 60 s ahead -- it refuses live fixes
+#: until the stream catches up, and an un-tagged cell is the safe failure: a
+#: wrongly-tagged one is the failure this gate exists to stop.
 DEFAULT_MAX_FIX_AGE_MS = 60_000
+
+#: Plausible altitude band for a ground receiver, metres, on the record's own
+#: altitude (``alt_m``, height above the ellipsoid). The Dead Sea shore (-430 m)
+#: and Everest (8,849 m) with a geoid margin. Written into the gate as
+#: ``not (MIN <= alt <= MAX)``, so a NaN altitude is declined, not accepted.
+MIN_PLAUSIBLE_ALT_M = -500.0
+MAX_PLAUSIBLE_ALT_M = 9000.0
+
+#: Jump-gate bound: implied ground speed from the last accepted fix, m/s.
+#: ⛔ DISARMED (``inf``) until the anchor is redesigned. The mechanism
+#: is right for the LM960 burst (50 bad records at >= 212 m/s vs a 41.7 m/s
+#: good ceiling), but ONE anchor fed by every source is wrong on a drive:
+#: measured on a CFW-3212 (SDX62) survey, ``pos_source`` 8/4 kept re-serving the
+#: PARKED position with fresh clocks while ``pos_source`` 2 moved at 11.8 m/s
+#: (its own ``speed_mps`` agreeing). Each frozen record re-anchored the gate, so
+#: at 150 m/s it refused 410 records of the REAL moving track and kept the frozen
+#: one -- pinning every later cell to the parking spot, worse than the defect it
+#: fixes. 150.0 is the working number for when the anchor is fixed; callers and
+#: tests pass it explicitly.
+DEFAULT_MAX_SPEED_MPS = math.inf
+
+#: Floor on the jump gate's time step, seconds. Two GNSS engines can emit at
+#: once, so consecutive accepted fixes can be ~0.3 s apart or even run
+#: BACKWARDS in GNSS time; |dt| is taken and floored so sub-metre jitter
+#: over a tiny dt cannot read as a jump.
+_JUMP_MIN_DT_S = 1.0
+
+#: Mean Earth radius for the haversine, metres.
+_EARTH_RADIUS_M = 6371000.0
+_DEG_TO_RAD = math.pi / 180.0
+
+
+def haversine_m(lat1, lon1, lat2, lon2):
+    """Great-circle distance in metres between two (deg, deg) points.
+
+    The operation order is part of the C++ leg's byte-parity contract
+    (``diag_0x1476_gpsfix::haversine_m``): degrees times ``pi / 180``, squares
+    as ``s * s`` (not ``** 2``, which goes through ``pow``), ``h`` clamped to 1
+    so a rounding overshoot cannot leave ``asin``'s domain, then
+    ``2 * R * asin(sqrt(h))``. Change it on both legs or neither."""
+    p1 = lat1 * _DEG_TO_RAD
+    p2 = lat2 * _DEG_TO_RAD
+    s_lat = math.sin((lat2 - lat1) * _DEG_TO_RAD / 2.0)
+    s_lon = math.sin((lon2 - lon1) * _DEG_TO_RAD / 2.0)
+    h = s_lat * s_lat + math.cos(p1) * math.cos(p2) * s_lon * s_lon
+    if h > 1.0:
+        h = 1.0
+    return 2.0 * _EARTH_RADIUS_M * math.asin(math.sqrt(h))
 
 
 def gnss_time_ms(log_code, d):
@@ -148,7 +235,8 @@ def gnss_time_ms(log_code, d):
 
 
 def gps_gate_verdict(log_code, result, reference_gnss_ms=None,
-                     max_fix_age_ms=DEFAULT_MAX_FIX_AGE_MS):
+                     max_fix_age_ms=DEFAULT_MAX_FIX_AGE_MS, anchor=None,
+                     max_speed_mps=DEFAULT_MAX_SPEED_MPS):
     """``(accepted, reason)`` for a decoded GNSS result: the accepted
     ``(lat, lon, alt)`` and ``None``, or ``None`` and the ``GPS_DECLINE_*``
     constant naming the gate that refused it.
@@ -161,23 +249,29 @@ def gps_gate_verdict(log_code, result, reference_gnss_ms=None,
     its justification attached.
 
     Order is load-bearing: coordinate plausibility, then placeholder, then
-    time solution, then staleness. A seed position passes the first two, so
-    reordering would relabel every ``no_time_solution`` as something else --
-    and staleness must come LAST, because a record with no time solution has no
-    meaningful age and must be reported as ``no_time_solution``, not as stale.
+    time solution, then altitude, then staleness, then jump. A seed position
+    passes the first two, so reordering would relabel every
+    ``no_time_solution`` as something else. Staleness follows the time gate,
+    because a record with no time solution has no meaningful age and must be
+    reported as ``no_time_solution``, not as stale. Jump comes after staleness:
+    a re-served old fix is the stale finding, and judging its position against
+    a live anchor would relabel it a jump.
 
-    STALENESS IS OPT-IN, and the default keeps this function identical to the
-    three-gate form. ``reference_gnss_ms=None`` makes the staleness arm inert,
-    which is not timidity: ``gps_fix_for`` is held to a C++ byte-parity
-    contract, and turning a gate on in one leg scores the *correct* other leg
-    as the deviant. More fundamentally: the C++ seam is a **pure per-record
-    function of a payload**, and staleness is not a per-record property. It
-    needs a reference the seam has no way to carry, so supporting it there is
-    a **signature** change, not a predicate change, and it is deliberately not
-    smuggled in under a default.
+    ``anchor`` is ``(lat, lon, gnss_ms)`` of the stream's last ACCEPTED fix,
+    or ``None`` (the default), which leaves the jump arm inert. Like the
+    reference, only :class:`GnssFreshnessTracker` supplies one. The altitude
+    arm is per-record and always on.
 
-    Callers that want the gate hold the reference themselves -- see
-    :class:`GnssFreshnessTracker`, which is the supported way to obtain one.
+    THIS FUNCTION IS PER-RECORD, so ``reference_gnss_ms=None`` (the default)
+    leaves the staleness arm inert and the function identical to the
+    three-gate form. Staleness is not a per-record property: it needs a
+    reference only a STREAM can supply. The stream-level gate is
+    :class:`GnssFreshnessTracker`, the one supported way to obtain a reference;
+    a consumer that geo-tags from these fixes holds one per capture source.
+    Its C++ mirror (``diag_0x1476_gpsfix::FreshnessTracker``) is held equal to
+    it record by record over ordered streams, so neither leg can turn the gate
+    on, or move it, alone -- the failure where the *correct* leg scores as the
+    deviant.
     """
     d = result.to_dict()
     latlonalt = gps_latlonalt(log_code, d)
@@ -190,10 +284,17 @@ def gps_gate_verdict(log_code, result, reference_gnss_ms=None,
         return None, GPS_DECLINE_PLACEHOLDER
     if not gps_time_is_valid(log_code, d):
         return None, GPS_DECLINE_NO_TIME
+    if not (MIN_PLAUSIBLE_ALT_M <= alt <= MAX_PLAUSIBLE_ALT_M):
+        return None, GPS_DECLINE_ALTITUDE
+    own = gnss_time_ms(log_code, d)
     if reference_gnss_ms is not None:
-        own = gnss_time_ms(log_code, d)
         if own is not None and (reference_gnss_ms - own) > max_fix_age_ms:
             return None, GPS_DECLINE_STALE
+    if anchor is not None and own is not None:
+        a_lat, a_lon, a_ms = anchor
+        dt_s = max(abs(own - a_ms) / 1000.0, _JUMP_MIN_DT_S)
+        if haversine_m(a_lat, a_lon, lat, lon) / dt_s > max_speed_mps:
+            return None, GPS_DECLINE_JUMP
     return (lat, lon, alt), None
 
 
@@ -225,11 +326,32 @@ class GnssFreshnessTracker:
     *correct* records are all ``pos_source=4, hdop=0.0`` too. A
     discriminator that is perfect on one modem and inverted on another is worse
     than none. The clock generalises; the source field does not.
+
+    **The jump anchor** is ``(lat, lon, gnss_ms)`` of the last ACCEPTED fix
+    with a clock, and it advances only on acceptance, so a declined outlier can
+    never seed it. Lock-in self-heals: if the anchor is itself bad,
+    ``dt`` grows while the anchor stands still, so the first real fix is
+    accepted after ``distance / max_speed_mps`` seconds (146 km -> ~16 min).
+    There is deliberately no count-based re-seed: on the measured LM960 tee the
+    bad WLS runs between good records are 18 and 20 records long, so any re-seed
+    after K <= 20 declines would anchor ON the burst.
     """
 
-    def __init__(self, max_fix_age_ms=DEFAULT_MAX_FIX_AGE_MS):
+    def __init__(self, max_fix_age_ms=DEFAULT_MAX_FIX_AGE_MS,
+                 max_speed_mps=DEFAULT_MAX_SPEED_MPS):
         self.max_fix_age_ms = max_fix_age_ms
+        self.max_speed_mps = max_speed_mps
+        self.reset()
+
+    def reset(self):
+        """Forget the reference, the jump anchor and the warm-up count -- a
+        source restart.
+
+        The C++ mirror's ``FreshnessTracker::reset`` does the same, so the two
+        legs share one lifecycle."""
         self.newest_gnss_ms = None
+        #: ``(lat, lon, gnss_ms)`` of the last accepted fix, or None.
+        self.anchor = None
         #: Records that arrived before any reference existed and so were
         #: accepted unjudged. Counted, not hidden -- a reader comparing
         #: `fixes` against `stale_fix` is entitled to know the gate was blind
@@ -252,10 +374,15 @@ class GnssFreshnessTracker:
             log_code, result,
             reference_gnss_ms=self.newest_gnss_ms,
             max_fix_age_ms=self.max_fix_age_ms,
+            anchor=self.anchor,
+            max_speed_mps=self.max_speed_mps,
         )
         if own is not None:
             if self.newest_gnss_ms is None or own > self.newest_gnss_ms:
                 self.newest_gnss_ms = own
+            accepted = verdict[0]
+            if accepted is not None:
+                self.anchor = (accepted[0], accepted[1], own)
         return verdict
 
 
@@ -278,7 +405,8 @@ def gps_fix_for(log_code, result):
     This DELEGATES to ``gps_gate_verdict`` rather than repeating the gate
     sequence. The gates it applies are, in order: plausible degrees (which also
     rejects the (0,0) sentinel), then ``is_placeholder_position``, then
-    ``gps_time_is_valid`` -- a seed position looks like perfectly plausible
+    ``gps_time_is_valid``, then the altitude band (the staleness and jump arms
+    need a stream, so they are inert here) -- a seed position looks like perfectly plausible
     degrees, so only the time solution catches it, and that one matters more
     than a normal reject because a geo-tagging consumer tags EVERY DIAG cell
     observation from the last fix, so one bad fix relocates the whole run.

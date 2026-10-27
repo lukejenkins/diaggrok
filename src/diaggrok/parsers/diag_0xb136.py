@@ -7,7 +7,7 @@ N <= 20 on SDX55+). Four record layouts share the header, keyed by version:
   * v0xa1 (SDX55 / SDX62 / SDX65 / SDX72) — 88 B records;
   * v0x8f (EM120R-GL SDX24; one lone T99W175 SDX55 packet) — 80 B records:
     the v0xa1 layout without its trailing time_80 / time_84;
-  * v0x7c / v0x7d (MDM9x50 / SDX20 / SDX50M) — 92 B records;
+  * v0x7c / v0x7d (MDM9x50 / SDX20) — 92 B records;
   * v0x29 / v0x65 / v0x01 (MDM9x30 / QCM2290 / MDM9x35 / MDM9x40-class) —
     60 / 64 / 48 B records, "legacy" layout: shared prefix decoded, tail kept
     raw (v0x29 also decodes its RX-config action / state slots).

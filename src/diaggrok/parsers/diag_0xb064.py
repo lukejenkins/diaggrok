@@ -14,7 +14,7 @@ through SDX62 RM520N-GL / SDX65 EM9291). The modern DL entry-list versions
     @2   2B   hdr_raw            raw
     per subpacket:
     +0   u8   subpacket_id       0x08 (UL transport block)
-    +1   u8   subpacket_version  1 (MDM9x07/MDM9x30/MDM9x50), 2 (SDX20/SDX24/SDX50M/SDX55), 3 (SDX62/SDX65)
+    +1   u8   subpacket_version  1 (MDM9x07/MDM9x30/MDM9x50), 2 (SDX20/SDX24/MDM9250 MC7411/SDX55), 3 (SDX62/SDX65)
     +2   u16  subpacket_size     includes this 4-byte header
     +4   u8   num_samples
     then num_samples packed samples, then 0..3 alignment bytes to the subpacket end.
@@ -57,12 +57,20 @@ in any capture. That Msg3 is in 0xB062, which SCAT reads it from.
 * **F3, sver 1, EG25-G MDM9207:** the Msg3 C-RNTI CE ==
   `lte_ml1_dlm_schd.c:375 DLM->LL: PDCCH RNTI CHANGE REQ ... C# %d`, before and
   after (1/1).
-* **F3, sver 3, RM520N-GL SDX62:** silent. The QSR4 builds checked carry no
-  MAC-UL / RACH-internal print, and the RRC-side `LTE_MAC_RRC_MSG3_SENT_IND`
-  marks the initial-access Msg3, which this log does not carry.
+* **F3, sver 3, RM520N-GL SDX62 (R03A04 build, 3 captures):** the MAC-UL
+  print `lte_mac_ul_data.c:6616 Get Cancel current TB = %u, ll_id, harq = %u,
+  tag_mac = %u, tag_l1 = %u` names each UL TB by tag_mac = 10*sfn + subframe.
+  Every cancel-0 print with a sample at that sfn/subframe has harq ==
+  harq_id: 231/231 (116 + 111 + 4). The same join at tag_mac +-1/2/4/10
+  subframes agrees on harq 0 times. 41 cancel-0 prints have no sample, which
+  is a logging gap (32 are on a capture with 27 records in 293 s). A
+  cancelled TB (cancel 1, at tag_l1 = tag_mac - 1) is never logged (0/56), so
+  this log holds transmitted TBs only. The two captures checked earlier
+  (5govalidate-conn-f3 / -nr-f3) carry no MAC-UL print.
 * **Black-box, SCAT MAC-LTE UL (all three subpacket versions):** at every
   SCAT frame whose sfn/subframe has a 0xB064 sample, the PDU == mac_hdr
-  138/138 (EG25-G 26, M2000 92, RM520N-GL 20). SCAT maps rnti_type 0 ->
+  138/138 (EG25-G 26, M2000 92, RM520N-GL 20), and 129/129 more sver-3
+  frames on a second RM520N-GL capture. SCAT maps rnti_type 0 ->
   C-RNTI 128/128 and 3 -> RA-RNTI 10/10, the 0xB063 enum.
 * **RACH, in-capture:** every rnti_type-3 sample (45) carries a C-RNTI CE, and
   the C-RNTI CE occurs on no other TB (45/45). Each follows a 0xB061 trigger,
@@ -77,7 +85,7 @@ in any capture. That Msg3 is in 0xB062, which SCAT reads it from.
 * **harq_id:** FDD UL HARQ is synchronous, process = (10*sfn + subframe) mod 8.
   sver 3 holds it on 43,769/43,775 samples. sver 2 holds it with offset 0 on
   most captures (SDX55 M2000/LV55/RM500Q/FN980/T99W175: all), mixed on some
-  SDX20/SDX50M/X16 captures (TDD or carrier-aggregation, not resolved).
+  SDX20/MDM9250 (X16) captures (TDD or carrier-aggregation, not resolved).
   sver 1 holds it at a constant offset of 4 on most captures: there the
   timing is the PDCCH grant subframe, n, of a TB sent at n+4.
 * **Raw:** sub_id_raw (1; 0 on SWI9X50 Sierra builds), cell_id_raw (0),
@@ -270,7 +278,7 @@ def _parse_subpackets(data: bytes) -> tuple[list[dict[str, Any]], int] | None:
     0xB064,
     name="0xB064",
     description="0xB064 — LTE MAC UL Transport Block: per-TB HARQ id, RNTI type (C-RNTI / RA-RNTI Msg3), SFN/subframe, grant size, RLC PDU count, padding, BSR trigger, UL-SCH MAC subheaders + CEs (BSR, PHR, C-RNTI, DC-PHR)",
-    version=4,
+    version=5,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -281,8 +289,10 @@ def _parse_subpackets(data: bytes) -> tuple[list[dict[str, Any]], int] | None:
         "0 none/3 short/4 long, UL-SCH MAC header + CEs). Grounding: LM960 SDX20 F3 "
         "lte_mac_rach.c:1060 rnti_typ/trblk_size 5/5, :1255 PKT_BUILD_IND (rnti, "
         "grnt) 5/5 + next TB 4/5, C-RNTI CE == lte_mac_ctrl.c:2776 new_rnti 5/5; "
-        "EG25-G C-RNTI CE == lte_ml1_dlm_schd.c:375 C# 1/1; SCAT MAC-LTE UL PDU == "
-        "mac_hdr 138/138; Msg3 == 0xB168 RAR + 6 subframes 40/45; across 54,920 "
+        "EG25-G C-RNTI CE == lte_ml1_dlm_schd.c:375 C# 1/1; RM520N-GL SDX62 "
+        "lte_mac_ul_data.c:6616 tag_mac == 10*sfn+sf, harq == harq_id 231/231 "
+        "(shifted-tag control 0); SCAT MAC-LTE UL PDU == "
+        "mac_hdr 138/138 + sver-3 129/129; Msg3 == 0xB168 RAR + 6 subframes 40/45; across 54,920 "
         "samples: tbs arithmetic, rlc_pdus == SDU subheaders, bsr_trig <-> BSR CE "
         "all exact. Truncated payloads return None (registry WARN): a subpacket "
         "whose subpacket_size overruns the record, or a sample overrunning its "

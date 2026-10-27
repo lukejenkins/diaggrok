@@ -27,7 +27,7 @@ from diaggrok.parsers.diag_0xb97f import Diag0xB97F
 
 
 def provenance(origin: str, imei: str, captured_at: float,
-               log_tick: float | None = None) -> dict:
+               log_tick: int | None = None) -> dict:
     """Build the data-lineage provenance block stamped on every observation.
 
     ``captured_at`` is a Unix epoch (seconds) - the wall-clock at which this
@@ -38,9 +38,15 @@ def provenance(origin: str, imei: str, captured_at: float,
     anchor, which a passive bridge does not carry. Fed as an absolute timestamp,
     the raw tick produces values like 60345938315396.0 - nonsense as an epoch. The raw tick is preserved as
     ``log_tick`` for lineage / intra-capture ordering.
+
+    ``log_tick`` is written as an integer. An SDX55/SDX62 tick (~7.7e16) is past a
+    double's 53-bit mantissa, so a float would lose up to ~8 counts and could
+    reorder records a few ticks apart. Pass the ts64 as an ``int``; a
+    float from an older caller is converted, but its lost bits stay lost.
     """
     return {"src": "diag", "origin": origin, "imei": imei,
-            "captured_at": captured_at, "log_tick": log_tick}
+            "captured_at": captured_at,
+            "log_tick": None if log_tick is None else int(log_tick)}
 
 
 def result_to_observations(log_type, result, imei, sib1_map, captured_at,
@@ -80,6 +86,11 @@ def result_to_observations(log_type, result, imei, sib1_map, captured_at,
                 o["rsrp"] = e.rsrp
             if e.rsrq is not None:
                 o["rsrq"] = e.rsrq
+            # Wideband RSSI (parser v39): single-cell v3/v6/v18/v22/v35/v36/
+            # v40/v41 only, each within 1 LSB of same-tick 0xB17F rssi. None
+            # elsewhere (multi-cell, v48, the v59 family), so omit the key.
+            if e.rssi is not None:
+                o["rssi"] = e.rssi
             # Serving identification: prefer the parser's grounded serving_flag
             # (v59 bit15 of the PCI word; and the single-cell v50/v56 serving
             # cell) over positional inference — cell[0] is not always serving.
@@ -198,8 +209,8 @@ def result_to_observations(log_type, result, imei, sib1_map, captured_at,
         # LTE ML1 per-cell measurement. Unlike 0xB193's entries[] list,
         # ONE 0xB17F record IS one cell: it carries (earfcn, pci) identity plus
         # rsrp/rsrq/rssi in the same record, for serving AND neighbour cells.
-        # This is the DIAG path's per-cell `rssi` source -- 0xB193
-        # forwards only rsrp/rsrq, and its per-RX rssi is a decode gap. rssi is
+        # This is the DIAG path's NEIGHBOUR-cell `rssi` source -- 0xB193
+        # forwards rssi only on single-cell records (its serving cell). rssi is
         # SCAT-oracle grounded (MAE 0.46 dB) and AT+QENG-cross-checked across
         # three chipset generations (EG25-G / CFW-3212 / MC7411), so it is
         # forwarded as decoded -- no cross-mapping. Same-record emit: never a
@@ -321,6 +332,9 @@ def result_to_observations(log_type, result, imei, sib1_map, captured_at,
                 # observation of it (serving or neighbour). Keyed by (pci, arfcn)
                 # == this observation's (pci, earfcn), so it is the same cell.
                 add_nr_scs(o, sib1_map)
+                # NR band / carrier SCS / bandwidth from the cell's SIB1
+                # servingCellConfigCommon, on the same footing as scs.
+                add_nr_cell_config(o, sib1_map)
                 out.append(o)
 
     elif isinstance(result, Diag0xB821):
@@ -362,11 +376,13 @@ def result_to_observations(log_type, result, imei, sib1_map, captured_at,
                     o["rsrq"] = result.meas_report_serving_rsrq
                 if result.meas_report_serving_sinr is not None:
                     o["sinr"] = result.meas_report_serving_sinr
-                # Full-identity enrich + per-cell SCS if a SIB1/MIB for this NR
-                # cell was already cached (keyed by (pci, arfcn) == this obs's
-                # (pci, earfcn)); both no-op when nothing is cached.
+                # Full-identity enrich + per-cell SCS + SIB1 cell config if a
+                # SIB1/MIB for this NR cell was already cached (keyed by
+                # (pci, arfcn) == this obs's (pci, earfcn)); each is a no-op when
+                # nothing is cached.
                 enrich(o, sib1_map)
                 add_nr_scs(o, sib1_map)
+                add_nr_cell_config(o, sib1_map)
                 out.append(o)
 
     elif isinstance(result, Diag0x512F):
@@ -702,6 +718,29 @@ def add_nr_scs(obs, sib1_map):
         obs["scs"] = scs
 
 
+def add_nr_cell_config(obs, sib1_map):
+    """Attach an NR cell's SIB1 servingCellConfigCommon headline.
+
+    0xB821's SIB1 decode carries the cell's first DL ``freqBandIndicatorNR``,
+    the first ``scs-SpecificCarrier``'s subcarrier spacing and
+    ``carrierBandwidth`` (PRB), and the TS 38.101-1/-2 Table 5.3.2-1 channel
+    bandwidth those imply. Like ``scs`` (:func:`add_nr_scs`) they are
+    per-cell CONFIGURATION constants, so a cached value attached to a later
+    observation of the SAME cell is grounded, not the stale-measurement join the
+    signal keys forbid. :func:`update_sib1_map` caches them under
+    ``("nr_cfg", pci, arfcn)``, a namespace enrich() never reads, so they cannot
+    ride an LTE row that collides with the cell on (pci, earfcn).
+
+    Keys, in this order and each omitted when unbound: ``band`` (NR band
+    number), ``carrier_scs`` (kHz; the carrier's numerology, a different field
+    from the MIB ``scs``), ``bandwidth_rb`` (carrier PRBs) and ``bandwidth``
+    (MHz, absent for an N_RB that is not a table entry). ``band``, ``bandwidth``
+    and ``bandwidth_rb`` are the keys the LTE path already uses."""
+    cfg = sib1_map.get(("nr_cfg", obs["pci"], obs["earfcn"]))
+    if cfg:
+        obs.update(cfg)
+
+
 # Contract-relevant per-beam keys: the SSB index and the RSRP/RSRQ a/b
 # pairs. beam_id_a/b, filtered_* and word*_raw are grounded-NAME but
 # no-grounded-SEMANTIC -- their names come from SCAT output but no observed
@@ -764,6 +803,27 @@ def _cache_lte_cell_config(sib1_map, result):
     if result.num_antennas is not None:
         cfg.setdefault("tx_antennas", result.num_antennas)
 
+
+def _cache_nr_cell_config(sib1_map, result):
+    """Cache one SIB1-bearing 0xB821's cell config for add_nr_cell_config.
+
+    One SIB1 is cached as one snapshot, first write wins: the four values are
+    mutually consistent (``bandwidth`` is derived from the other three), so they
+    are never mixed across SIB1s. A field the servingCellConfigCommon walk did
+    not reach is None in the parser and is left out. A SIB1 that reached none of
+    them (no servingCellConfigCommon, or a walk that stopped before
+    FrequencyInfoDL-SIB) writes nothing, so a later complete SIB1 of the same
+    cell can still be cached."""
+    cfg = {}
+    for key, value in (("band", result.sib1_band),
+                       ("carrier_scs", result.sib1_scs_khz),
+                       ("bandwidth_rb", result.sib1_carrier_bandwidth_prb),
+                       ("bandwidth", result.sib1_channel_bandwidth_mhz)):
+        if value is not None:
+            cfg[key] = value
+    if cfg:
+        sib1_map.setdefault(("nr_cfg", result.pci, result.arfcn), cfg)
+
 def update_sib1_map(sib1_map, log_type, result):
     """Record cell identity from a SIB1-bearing RRC OTA result.
 
@@ -782,6 +842,11 @@ def update_sib1_map(sib1_map, log_type, result):
     gate below, because subCarrierSpacingCommon rides in the MIB and can arrive
     on a 0xB821 record that carries no SIB1. The 3-tuple namespace keeps it out of enrich()'s
     identity merge; :func:`add_nr_scs` reads it explicitly on the NR path.
+    A SIB1-bearing 0xB821 also feeds the NR cell config (band, carrier SCS,
+    carrier bandwidth) under ``("nr_cfg", pci, arfcn)``, read by
+    :func:`add_nr_cell_config`. It is written behind the SIB1 gate but
+    before the identity's first-write-wins return, so it is independent of
+    whether the identity key was already taken.
     0xB197 feeds a third: LTE serving-cell config (DL bandwidth, Tx antenna
     ports) under ``("lte_cfg", pci, earfcn & 0xFFFF)``, read by
     :func:`add_lte_cell_config`.
@@ -805,6 +870,7 @@ def update_sib1_map(sib1_map, log_type, result):
             sib1_map.setdefault(("scs", result.pci, result.arfcn), scs_khz)
         if result.sib1_tac is None:
             return
+        _cache_nr_cell_config(sib1_map, result)
         key = (result.pci, result.arfcn)
     else:
         return
