@@ -186,7 +186,7 @@ class Diag0x7160:
     description=(
         "LOG_UMTS_NAS_PPLMN_LIST — NAS preferred-PLMN list, full decode "
         ". Header (version, sub_flag, entry_count) + 1000-slot entry "
-        "table, stride 8 B (v1, 8004 B, SDX20: LM960/MC7411/EM7565) / 9 B "
+        "table, stride 8 B (v1, 8004 B, SDX20/MDM9250: LM960/MC7411/EM7565) / 9 B "
         "(v2, 9004 B, SDX55+: RM520N-GL/RG520N/FN980/FT980/LV55/EM9291/"
         "SIM8202G). Entry: BCD PLMN (FFFFFF = unset SIM record), list "
         "category (2 UPLMN / 3 OPLMN), num_rats, rat[] (0 GSM 1 UMTS 2 LTE "

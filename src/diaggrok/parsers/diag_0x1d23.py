@@ -7,7 +7,7 @@ It sits between ``LOG_GNSS_POWER_STATUS_REPORT_C`` (0x1D22) and
 not NR5G ML1 despite its position in the code range.
 
 Layout — v0x04, fixed 54 B, corpus-wide (847/847 records, 19 captures,
-7 firmware builds on RM520N-GL SDX62, EM9291 SDX65, T99W640, T99W373 and
+7 firmware builds on RM520N-GL SDX62, EM9291 SDX62, T99W640, T99W373 and
 Inseego M3100):
 
   [0]       u8    version = 4

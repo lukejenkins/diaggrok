@@ -15,10 +15,10 @@ subsystem. See the per-version F3 grounding below.
 
 | byte[0]      | Observed size | Chipset / modem family                              | Records    | Status     |
 |--------------|---------------|-----------------------------------------------------|-----------:|------------|
-| ``0x04`` (4) | 52 B          | SDX20 LM960, MDM9x07 EG18-NA, Quectel SDX24 EG12-GT |     66,997 | ✅ decoded |
+| ``0x04`` (4) | 52 B          | SDX20 LM960 / EG18-NA / EG12-GT                     |     66,997 | ✅ decoded |
 | ``0x06`` (6) | 247 B         | SDX55 FN980 / EM9190 / LV55 / Inseego M2000         |  4,134,104 | ✅ decoded |
 | ``0x0c`` (12)| 50 B          | SDX62 RM520N-GL, Casa CFW-3212 (Quectel RG520N-NA)  | 14,684,720 | ✅ GROUND v0x0c |
-| ``0x6b`` (107)| 56 B         | MDM9650 Sierra EM7511 / EM7565 / MC7411, Fibocom FM101-GL |     56,745 | ✅ decoded |
+| ``0x6b`` (107)| 56 B         | MDM9250 Sierra EM7511 / EM7565 / MC7411, Fibocom FM101-GL |     56,745 | ✅ decoded |
 | ``0x05`` (5) | 76 B          | SDX24 Quectel EM120R-GL / EM160R-GL (3 fw builds)   |      7,611 | ✅ GROUND v0x05 |
 | ``0x11`` (17)| 58 B head + body_type tail (12 sizes, 58..343 B) | SDX72 Foxconn T99W640 / Dell DW5934e | 113,005 | ✅ GROUND v0x11 |
 | ``0x0d`` (13)| 50 B head + body_type tail (7 sizes, 50..576 B) | SDX62 Orbic R562L5 (MeiG ODM)       |     77,525 | ✅ GROUND v0x0d |
@@ -109,11 +109,18 @@ structurally.
     Bytes 1..2:   u16  header_filler (always 0xffff — exposed + name-locked)
     Byte  3:      u8   band_or_subtype (observed {0x04,0x09,0x0d,0x0e,0x10,0x18})
     Byte  4:      u8   entry_count (observed {0x00,0x01,0x04..0x07})
-    Bytes 5..6:   zeros
-    Byte  7:      u8   subtype_a (observed {0x00,0x30,0x50})
+    Byte  5:      zero
+    Byte  6:      u8   flag_6 (observed {0x00,0x0c}; 0x0c on 2.3 % of 15.6 M
+                       corpus records. Exposed in v15: an audit of unnamed bytes
+                       found it live; v0d names the same byte of the shared head)
+    Byte  7:      u8   subtype_a (observed {0x00,0x10,0x20,0x30,0x50,0xc0})
     Bytes 8..9:   zeros
-    Byte 10:      u8   flags (observed {0x00,0x60,0xa0})
-    Bytes 11..12: zeros
+    Byte 10:      u8   flags (observed {0x00,0x60,0x80,0xa0})
+    Byte 11:      u8   flag_11 (observed {0x00,0x01}; 0x01 on 2.9 %. v15, as flag_6)
+                       The two are independent and cross-vendor: EM9291 sets
+                       only [6], FX3100 only [11], RM520N-GL / T99W373 both,
+                       CFW-3212 neither (per-capture byte histograms).
+    Byte 12:      zero
     Byte 13:      u8   subtype_b (observed {0x04,0x06})
     Byte 14:      zero
     Byte 15:      u8   rare_flag (observed {0x00,0x03}; 0x00 in 99.96 %)
@@ -411,7 +418,7 @@ histogram over all 77,525 records (3 captures, one firmware build):
       N/A (0x1874 not in their tables — internal MCPM log); 0x60 = present
       (1085) but NAS/RRC events, not MCPM-field-relevant.
 
-## Layout for version=0x6b (56 bytes, MDM9650 Sierra + Fibocom FM101-GL)
+## Layout for version=0x6b (56 bytes, MDM9250 Sierra + Fibocom FM101-GL)
 
     Byte  0:      u8   version (always 0x6b)
     Bytes 1..3:   u24  counter_a (partial free-running counter; ~70 % monotone)
@@ -570,6 +577,10 @@ class Diag0x1874V0c:
     window_start: int       # u64 LE @ 34 (measurement-window START timestamp)
     window_end: int         # u64 LE @ 42 (measurement-window END timestamp)
     payload_size: int
+    # v15: live on 2.3 % / 2.9 % of corpus v0c records,
+    # discarded before; v0d names the same two bytes of the shared 50 B head.
+    flag_6: int = 0         # u8 @ 6 ({00,0c})
+    flag_11: int = 0        # u8 @ 11 ({00,01})
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -579,8 +590,10 @@ class Diag0x1874V0c:
             'header_filler': self.header_filler,
             'band_or_subtype': self.band_or_subtype,
             'entry_count': self.entry_count,
+            'flag_6': self.flag_6,
             'subtype_a': self.subtype_a,
             'flags': self.flags,
+            'flag_11': self.flag_11,
             'subtype_b': self.subtype_b,
             'rare_flag': self.rare_flag,
             'freq_field': self.freq_field,
@@ -595,7 +608,7 @@ class Diag0x1874V0c:
 @dataclass
 class Diag0x1874V04:
     """LTE ML1 DL power/quality measurement (0x1874) — version=0x04 layout
-    (SDX20 LM960 / SDX24 EG12-GT / MDM9x07 EG18-NA)."""
+    (SDX20: LM960 / EG12-GT / EG18-NA)."""
     log_time: int
     version: int
     header_counter: int     # u24 @ 1 (partial free-running counter)
@@ -638,7 +651,7 @@ class Diag0x1874V04:
 @dataclass
 class Diag0x1874V6b:
     """LTE ML1 DL power/quality measurement (0x1874) — version=0x6b layout
-    (MDM9650 Sierra EM7511 / MC7411).
+    (MDM9250 Sierra EM7511 / MC7411).
 
     Only offsets 0..3 and 52..55 carry data in the corpus (idle / stationary
     captures); bytes 4..51 are a validated-zero measurement region whose
@@ -882,8 +895,10 @@ def _parse_v0c(log_time: int, data: bytes) -> Diag0x1874V0c | None:
         header_filler=unpack_from('<H', data, 1)[0],
         band_or_subtype=data[3],
         entry_count=data[4],
+        flag_6=data[6],
         subtype_a=data[7],
         flags=data[10],
+        flag_11=data[11],
         subtype_b=data[13],
         rare_flag=data[15],
         freq_field=unpack_from('<H', data, 22)[0],
@@ -897,7 +912,7 @@ def _parse_v0c(log_time: int, data: bytes) -> Diag0x1874V0c | None:
 
 def _parse_v04(log_time: int, data: bytes) -> Diag0x1874V04 | None:
     # Per-version consequence check: every v=0x04 record observed
-    # (67K across SDX20 LM960 / SDX24 EG12-GT / MDM9x07 EG18-NA) is 52 bytes.
+    # (67K across SDX20 LM960 / EG12-GT / EG18-NA) is 52 bytes.
     if len(data) != _V04_PAYLOAD_SIZE:
         return None
     return Diag0x1874V04(
@@ -922,7 +937,7 @@ def _parse_v04(log_time: int, data: bytes) -> Diag0x1874V04 | None:
 
 def _parse_v6b(log_time: int, data: bytes) -> Diag0x1874V6b | None:
     # Per-version consequence check: every v=0x6b record observed
-    # (85K across MDM9650 Sierra EM7511 / MC7411) is 56 bytes.
+    # (85K across MDM9250 Sierra EM7511 / MC7411) is 56 bytes.
     if len(data) != _V6B_PAYLOAD_SIZE:
         return None
     return Diag0x1874V6b(
@@ -1115,10 +1130,10 @@ def _parse_v0d(log_time: int, data: bytes) -> Diag0x1874V0d | None:
         "LTE ML1 DL power/quality measurement (0x1874) — version-dispatched. "
         "Decodes version=0x04 (52B), 0x05 (SDX24, 76B), 0x06 (SDX55, 247B), "
         "0x0c (SDX62, 50B), 0x0d (SDX62 R562L5, 50B head + body_type tail), "
-        "0x11 (SDX72, 58B head + body_type tail) and 0x6b (MDM9650, 56B); "
+        "0x11 (SDX72, 58B head + body_type tail) and 0x6b (MDM9250, 56B); "
         "refuses unknown versions pending RE."
     ),
-    version=14,
+    version=15,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -1128,7 +1143,7 @@ def _parse_v0d(log_time: int, data: bytes) -> Diag0x1874V0d | None:
         "SDX20/SDX24/MDM9x07), 0x05 (76B, SDX24 EM120R-GL/EM160R-GL), 0x06 "
         "(247B, SDX55), 0x0c (50B, SDX62), 0x0d (SDX62 Orbic R562L5, 50B head + "
         "body_type tail), 0x11 (SDX72 T99W640, 58B head + body_type tail) and "
-        "0x6b (56B, MDM9650). Clean-room RE from per-byte histograms, offsets "
+        "0x6b (56B, MDM9250). Clean-room RE from per-byte histograms, offsets "
         "cross-validated across >=2 chipset generations per version; every "
         "data-carrying byte is a named field. Identity: an MCPM session-power "
         "log (LTE ML1 is the requesting subsystem). On v0x04 the mcpm.c "
@@ -1150,10 +1165,10 @@ def _parse_v0d(log_time: int, data: bytes) -> Diag0x1874V0d | None:
     ),
     source_url="",
     # v=0x0c (the RM520N-GL primary / recipe target) is byte-complete: the
-    # primary layout is 14/14 structurally. The semantic meaning of the
+    # primary layout is 16/16 structurally (flag_6 / flag_11 since v15). The semantic meaning of the
     # ×75-quantised measurement words remains open.
-    fields_parsed=14,
-    fields_identified=14,
+    fields_parsed=16,
+    fields_identified=16,
     issues=(),
     field_invariants={"version": {"enum": [0x04, 0x05, 0x06, 0x0C, 0x0D, 0x11, 0x6B]}},
 )

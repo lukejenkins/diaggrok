@@ -12,7 +12,7 @@ so each version has its own offset table (`_LAYOUT`).
 
     v0x07  108 B  SDX55 (M2000, RXM-G1, RM500Q, LV55, SIM8202G-M2)
     v0x0a  180 B  SDX62 (RM520N-GL R03A03/R03A04)
-    v0x0e  196 B  SDX6x Foxconn T99W640 (FDE2.F0.0.0.1.2)
+    v0x0e  196 B  SDX72 Foxconn T99W640 (FDE2.F0.0.0.1.2)
 
 v0x0e is v0x0a plus 16 B ahead of the Msg1 block. Its RAR UL grant sits right
 after the Msg2 time instead of after the Msg3 time.

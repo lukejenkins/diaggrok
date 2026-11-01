@@ -138,9 +138,9 @@ constellation / band labels.
 The same 4 + 141 × 28 shape, with ``+7/+11/+15/+19`` = 0, u22 top bits = 0,
 and a binary trailer, holds on every family in the corpus (sidecar offset
 histograms, slots 0–1, 902 captures / 342,959 records): MDM9x07 (EG25-G,
-EG18-NA, EP06, EG12, EG95), SDX20 (LM960), SDX55 (EM9190, EM7511, FN980,
-RM500Q, T99W175, SIM8202G, M2000), SDX62 (RM520N-GL), SDX65 (EM9291), MDM9650
-(MC7411), MDM9x30 (MC7455), and MDM9150-class (81UMV91B1).
+EG18-NA, EG12, EG95), MDM9240 (EP06), SDX20 (LM960), SDX55 (EM9190, FN980,
+RM500Q, T99W175, SIM8202G, M2000), SDX62 (RM520N-GL, EM9291), MDM9250
+(MC7411, EM7511), MDM9x30 (MC7455), and MDM9150-class (81UMV91B1).
 
 The USTMR rate lock on other silicon uses entry 140 vs the DIAG
 timestamp mod 2²². The offset is constant per capture: 0 on the EM9190, a
@@ -154,7 +154,7 @@ whole capture proves a 19.2 MHz lock. Entry 70 is the null control:
 | SDX20 LM960 (drive) | 266 | 0.95 | 0.18 |
 | SDX55 T99W175 (GNSS comparison) | 113 | 0.97 | 0.25 |
 | SDX55 SIM8202G (drive) | 240 | 0.92 | 0.07 |
-| MDM9650 MC7411 (warm GNSS restart) | 91 | 0.99 | 0.38 |
+| MDM9250 MC7411 (warm GNSS restart) | 91 | 0.99 | 0.38 |
 | SDX62 RM520N-GL (F3 validation, LTE) | 448 | 0.99 | 0.83 — weak null |
 | MDM9150-class 81UMV91B1 (C-V2X channel) | 140 | 1.00 | 1.00 — non-discriminating |
 

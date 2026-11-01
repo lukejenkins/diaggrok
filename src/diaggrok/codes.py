@@ -147,7 +147,7 @@ LOG_LTE_NAS_ESM_PLAIN_OTA_OUT_MSG   = 0xB0E3
 LOG_LTE_NAS_EMM_PLAIN_OTA_IN_MSG    = 0xB0EC
 LOG_LTE_NAS_EMM_PLAIN_OTA_OUT_MSG   = 0xB0ED
 
-# Log codes observed on an EM7511 (MDM9650/SDX20) during airplane-mode and
+# Log codes observed on an EM7511 (MDM9250) during airplane-mode and
 # SIM power-cycle transitions.
 LOG_MISC_18F8                       = 0x18F8  # v0x01 20B + v0x02 dual-shape; subsystem is not GNSS per F3
 LOG_GNSS_STATE_197F                 = 0x197F  # 4B fixed, RF state flag
@@ -235,6 +235,9 @@ LOG_NR5G_ML1_1CE5                   = 0x1CE5  # 24B v=0x01 NR5G ML1 sleep-state 
 LOG_NR5G_ML1_1D1E                   = 0x1D1E  # 117B v=0x00 NR5G ML1, length-prefixed APN @78
 LOG_NR5G_ML1_1D31                   = 0x1D31  # 31B v=0x01 NR5G ML1 boot/cycle state
 LOG_FRAME_TELEMETRY_1D3D            = 0x1D3D  # 18+79k v=0x02 per-frame telemetry array, 10 Hz; range is NR5G ML1 but emitter unpinned
+LOG_1D63                            = 0x1D63  # trace-buffer packet: 16B envelope + packed entries w/ 48-bit 19.2 MHz tick, v=0x00 (FX3100 SDX62)
+LOG_1D64                            = 0x1D64  # trace-buffer packet, sibling of 0x1D63
+LOG_1D65                            = 0x1D65  # trace-buffer packet, sibling of 0x1D63
 LOG_ML1_1DD9                        = 0x1DD9  # 16+88*N v=0x00 ML1 count-prefixed entry array (EM9291 SDX62); F3 co-temporal output is GNSS ML1, not NR5G
 LOG_NR5G_ML1_1DDF                   = 0x1DDF  # 317B v=0x00 NR5G ML1 RAT-switch report
 LOG_LTE_NR5G_SIG_B364               = 0xB364  # var 4+N*16 freq-measurement container, marker=0x4000
@@ -284,6 +287,8 @@ LOG_NR5G_ML1_MEAS_B95B              = 0xB95B  # structural
 LOG_NR5G_L1_MEAS_STATUS             = 0xB8C5
 LOG_NR5G_ML1_MEAS_DB                = 0xB8CB
 LOG_NR5G_ML1_MEAS_DB_UPDATE         = 0xB97F
+LOG_NR5G_ML1_ACQ_TIMELINE_B9A6      = 0xB9A6  # NR cell acq timeline: config_id + 7 stage frame/USTMR stamps + target SSB/UL-centre ARFCN, v1 256/272B, v2 264/280B
+LOG_NR5G_ML1_HANDOVER_B952          = 0xB952  # PSCell add/change: target C-RNTI+ARFCN+PCI / target cell config, v6/v9, SDX55/65
 LOG_NR5G_ML1_ACQ_REQ_B9BE           = 0xB9BE  # NR cell acq request: SSB ARFCN+PCI+band, 32B v1/v2/v4, SDX55/65/72
 LOG_NR5G_ML1_ACQ_CONFIRM_B9BF       = 0xB9BF  # NR cell acq confirm: ARFCN+PCI+RSRP/RSRQ, 48B v5/v6, SDX55/65
 LOG_NR5G_RRC_OTA_MSG                = 0xB821

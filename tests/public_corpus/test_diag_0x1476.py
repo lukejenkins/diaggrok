@@ -65,9 +65,11 @@ def _synthetic_1476() -> bytes:
       [40:48] f64 lat_rad         = 0.5 (fabricated)
       [48:56] f64 lon_rad         = -1.0 (fabricated)
 
-    Float block (48 floats, bytes 56..247): index0 = alt_m = 100.0, indices
-    1..44 zero-filled, index45 = pdop = 2.0, index46 = hdop = 1.0,
-    index47 = vdop = 1.5. (No pythagorean-identity check applies on this
+    Float block (48 floats, bytes 56..247): index0 = alt_m = 100.0, the rest
+    zero-filled except the DOP triple at index43 = pdop = 2.0 (@228),
+    index44 = hdop = 1.0, index45 = vdop = 1.5. A v7 record carries the DOP 8
+    bytes earlier than the _POS_FMT struct does (as every real v7 / v8 / v10
+    record does); since diaggrok v26 that holds at every length. (No pythagorean-identity check applies on this
     dispatch path -- that guard is MDM9600-specific.)
 
     Tail (18 fields, bytes 248..290): only the SV-count bytes at the end
@@ -98,9 +100,9 @@ def _synthetic_1476() -> bytes:
 
     floats = [0.0] * 48
     floats[0] = _ALT_M       # alt_m
-    floats[45] = _PDOP       # pdop
-    floats[46] = _HDOP       # hdop
-    floats[47] = _VDOP       # vdop
+    floats[43] = _PDOP       # pdop @228 (v7 / v8 / v10)
+    floats[44] = _HDOP       # hdop @232
+    floats[45] = _VDOP       # vdop @236
 
     tail_values = (
         0,          # ellipse_confidence

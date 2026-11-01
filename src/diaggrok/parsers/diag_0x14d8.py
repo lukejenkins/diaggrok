@@ -105,18 +105,18 @@ class Diag0x14D8:
     ``f4`` = temperature_c, ``engine_state`` / ``es`` = field_1. A "stage" or
     "burst" is one pass of the thermal monitor's per-build **sensor poll
     order**, and the ``field_3_high16`` values are **sensor sub-group ids**.
-    The SDX62 ``high16`` 8/10 pair is two adjacent slots (``8:0``, ``10:0``);
-    EM9291 SDX65 polls five (``8:0..8:3``, ``10:0``), so the pairing is
-    sensor config, not a flag. The SIM7600NA "bimodal field_4" is two
+    The RM520N-GL ``high16`` 8/10 pair is two adjacent slots (``8:0``, ``10:0``);
+    EM9291 polls five (``8:0..8:3``, ``10:0``) on the same SDX62 silicon, so the
+    pairing is per-build sensor config, not a flag or a chipset trait. The SIM7600NA "bimodal field_4" is two
     different physical sensors.
 
     ### Size forms
 
     - **20 B short form** (SDX55, SDX62, SDX72): 5 x u32 header at offsets
       0, 4, 8, 12, 16. ~6 Hz on FN980m (1761 records in a 5-minute capture).
-    - **104 B long form** (EG18-NA SDX20 V2, EM7511 SDX20/MDM9650, MC7455
-      MDM9x30, MC7411 MDM9250, SIM7600NA-H MDM9x07, LM960 SDX20, EG25-G /
-      EC25 / EP06A / EG12-GT MDM9207, MDM9150 C-V2X roadside unit): the same
+    - **104 B long form** (EG18-NA SDX20 V2, EM7511 MDM9250, MC7455
+      MDM9x30, MC7411 MDM9250, SIM7600NA-H MDM9x07, LM960 / EG12-GT SDX20, EG25-G /
+      EC25 MDM9207, EP06A MDM9240, MDM9150 C-V2X roadside unit): the same
       20-byte header followed by 84 zero bytes. The tail is **always zero**
       on **12,047 records / 35 chipset+firmware buckets / 5 vendors**,
       including every LM960 firmware build, both EM7511 builds, both
@@ -134,7 +134,7 @@ class Diag0x14D8:
 
     ### Poll order per chipset — tuples are ``(f2, f3, f4)``
 
-    **EM7511 SDX20/MDM9650** (295 records, 44 bursts, 5 stages)::
+    **EM7511 MDM9250** (295 records, 44 bursts, 5 stages)::
 
         1. (0, 1, -50)
         2. (6, 0,   0)
@@ -171,7 +171,7 @@ class Diag0x14D8:
     bucket ({0x00, 0x01, 0x04}) and the EG25-G/EP06A/SIM7600NA bucket
     ({0x00, 0x01, 0x02}).
 
-    **EP06A SDX20** (145 records): ``(0,1)``, ``(6,0)``, ``(6,1)``, ``(1,2)``
+    **EP06A MDM9240** (145 records): ``(0,1)``, ``(6,0)``, ``(6,1)``, ``(1,2)``
     plus ``(0,0)``.
 
     **MC7411 MDM9250** (617 records across three firmware builds, 6 stages)::
@@ -203,7 +203,7 @@ class Diag0x14D8:
 
     - ``field_1`` (offset +4) takes values in {1, 2} on every SDX55-class
       capture (~82% 2, ~17% 1 corpus-wide), usually varying within a
-      capture. SDX20-class chipsets (LM960, EG18-NA, EG25-G, EP06A, EM7511,
+      capture. SDX20 / MDM9250 / MDM9240-class chipsets (LM960, EG18-NA, EG25-G, EP06A, EM7511,
       EG12-GT, SIM7600NA, M2000) emit ``field_1 == 1`` on 100% of records,
       so ``field_1 == 2`` anywhere in a capture marks the SDX55 family.
     - Offset +14 (``field_3`` byte 2) takes a stable 6-value distribution
@@ -334,7 +334,7 @@ class Diag0x14D8:
         Chipset / build             Value   Tuple signature                           Count
         --------------------------  ------  ----------------------------------------  -----
         SDX20 LM960                 (none)  uses the (6, 0, 0) zero channel           -
-        SDX20 EM7511                -50     (es=1, f2=0, f3_low=1, f3_hi=0)           see EM7511 order
+        MDM9250 EM7511                -50     (es=1, f2=0, f3_low=1, f3_hi=0)           see EM7511 order
         SDX55 EM9190                -45     (es=2, f2=1, f3_low in {0, 1}, f3_hi=0)   88
         SDX55 FN980m                -40     mixed signatures, small sample            3
         SDX62 RM520N-GL             -40     (es=1, f2=0, f3_low=2, f3_hi=0)           293
@@ -470,7 +470,7 @@ class Diag0x14D8:
         Discriminators in priority order:
 
         1. ``payload_size == 104`` -> ``sdx20``. SDX20 V2 (EG18-NA,
-           EM7511, LM960, EP06A, EG25-G OCPU - anything MDM9x07 /
+           EM7511, LM960, EP06A, EG25-G OCPU - anything MDM9x07 / MDM9240 /
            MDM9650 era) emits the 104-byte padded form exclusively.
            Across the fixture corpus every SDX20 record is 104 bytes and
            no SDX55/SDX62 record ever is.
@@ -565,7 +565,7 @@ class Diag0x14D8:
           Wistron LV55          44/91    (48.4%)
           RM520N-GL (2 builds) ~21-22/~400 (~5-6%)
 
-        On SDX20 chipsets (LM960, EG18-NA, EM7511, etc.) the value is
+        On SDX20 / MDM9250 chipsets (LM960, EG18-NA, EM7511, etc.) the value is
         never observed - zero occurrences across 2,000+ records. -273 degC
         is 0 K: the slot's sensor is not present.
         """
@@ -621,7 +621,7 @@ class Diag0x14D8:
           ``2`` is the modal value (~47% on EM9190).
         - **SDX62** (RM520N-GL): high16 in {0, 4, 8, 10} with ``0`` modal
           (~95%); {8, 10} recur once per 293-count poll cycle.
-        - **SDX20** (LM960, EG18-NA, EM7511, EP06A): always 0 - field_3
+        - **SDX20 / MDM9250 / MDM9240** (LM960, EG18-NA, EM7511, EP06A): always 0 - field_3
           stays small (0..7) on this generation.
         """
         return (self.field_3_u32 >> 16) & 0xFFFF

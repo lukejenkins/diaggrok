@@ -4,7 +4,7 @@ The body is the MAC downlink transport block log, one sample per received TB.
 
 ### Layout (body decoded on all three wire versions)
 
-**v0x01** (MDM9200 MC7700 → SDX20/SDX24 LM960 / EM7565 / EM120R / EG25-G …):
+**v0x01** (MDM9200 MC7700 → SDX20/MDM9250/SDX24 LM960 / EM7565 / EM120R / EG25-G …):
 the classic LTE-MAC subpacket container.
 
     @0   u8   version            0x01

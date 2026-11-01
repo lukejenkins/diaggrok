@@ -1,6 +1,6 @@
 """Converged GPS Medium Grid (0x13C7): multi-size, self-describing u16 body_len.
 
-Chipset-gated to the MDM9x00 / MDM9x07 / MDM9x30 generations (MC7700,
+Chipset-gated to the MDM9x00 / MDM9x07 / MDM9x30 / MDM9240 generations (MC7700,
 EG25-G, EG95, EP06, SIM7600, MC7455, EM7455). It emits zero records on SDX20
 (LM960, FN980), SDX55 (FN980 SDX55, RM500Q SDX55, EM9190), SDX62
 (RM520N-GL), and X12 (Inseego M2000).

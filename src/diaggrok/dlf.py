@@ -71,7 +71,7 @@ DiagFormat = Literal["dlf", "hdlc", "qmdl2-v2", "pcap", "unknown"]
 
 ``"pcap"`` covers **both** container variants — pcapng and the four classic
 libpcap magics. They are one verdict because the only walker that reads either
-is the DGE1-over-UDP deframe (``diaggrok.diag_source.iter_dge1_payloads``),
+is the DGE1-over-UDP deframe (``diagmunge.diag_source.iter_dge1_payloads``),
 which sniffs the container itself; a caller routing on the label needs a single
 "carry this through the pcap deframer" branch, not two.
 """
@@ -618,9 +618,9 @@ def _pcap_carries_dge1(head: bytes) -> bool:
 
     The pcap arm's structural accept, the analogue of :func:`_has_crc_valid_frame`
     for the ``"hdlc"`` arm. This module does not deframe a pcap — the DGE1
-    deframer (:func:`diaggrok.diag_source.iter_dge1_payloads`) reads from a
+    deframer (:func:`diagmunge.diag_source.iter_dge1_payloads`) reads from a
     path — but it does not need to: every firehose datagram is prefixed with
-    the literal ``b"DGE1"`` magic (:func:`~diaggrok.diag_source.parse_dge1_header`),
+    the literal ``b"DGE1"`` magic (:func:`~diagmunge.diag_source.parse_dge1_header`),
     and a UDP payload is copied verbatim into the pcap's raw bytes, so the magic
     survives into ``head``. A single ``in`` scan therefore distinguishes a
     DGE1-over-UDP DIAG capture from an arbitrary non-DIAG pcap (HTTP, DNS, syslog)
@@ -705,7 +705,7 @@ def iter_records(data: bytes) -> Iterator[tuple[int, int, bytes]]:
         yield from _iter_hdlc_log_records(data[prologue:])
     elif fmt == "pcap":
         # This reader stays dependency-free. Deframing a pcap needs the DGE1
-        # deframer (diaggrok.diag_source), which reads from a *path* and
+        # deframer (diagmunge.diag_source), which reads from a *path* and
         # decompresses .zst parts one at a time — a dependency dlf.py does not
         # take. So pcap is "recognized but not walkable here":
         # UnsupportedFormatError, which callers already catch alongside

@@ -30,7 +30,7 @@ assessed separately. All F3-bearing captures (``0x79`` / ``0x99`` /
 ±10 ms of each record against the same rate at record time ±5 s:
 
 * **v0xa0: no F3 available.** The ``0xC002F2A0`` state-word form lives on 6
-  captures (EM7511 / MC7411 MDM9x50 + one RM520N fragment), none of which
+  captures (EM7511 / MC7411 MDM9250 + one RM520N fragment), none of which
   carries F3.
 * **v0x00: event grounded (the value is a constant).** 125 records /
   31 captures, overwhelmingly ``00 00 00 00``: the same 4 B state word holding
@@ -102,7 +102,7 @@ class Diag0x197F:
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Clean-room RE from 39 EM7511 MDM9650 records (airplane + SIM cycle): "
+        "Clean-room RE from 39 EM7511 MDM9250 records (airplane + SIM cycle): "
         "all-constant payload 0xC002F2A0. F3 by byte-0 key: v0xa0 has no "
         "F3-bearing capture; the v0x00 (all-zero) form is event-locked to RRC "
         "connection release / RF sleep (95% vs 0% control, 17-18 captures); the "

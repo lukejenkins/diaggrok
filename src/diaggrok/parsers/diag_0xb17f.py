@@ -148,6 +148,30 @@ class Diag0xB17F:
     (`squal` None) or an unrelated value on MDM9625. The v0x03 (MDM9200)
     srxlev shares the layout but has no F3 to check against. `srxlev_raw` /
     `squal_raw` keep the 7-bit fields as read.
+
+    **Raw words (v15).** Every word after the identity is also kept
+    whole, as read at its own layout's offset, beside the values decoded from
+    it. Before v15 the undecoded bits were reachable only by slicing
+    `body_raw`, whose offsets shift by 4 bytes between layouts (an error
+    class seen before). The Kaitai per-version audit found four of those regions
+    live, zero on one chipset and non-zero on another:
+
+        field           v0x05  v0x04  v0x03  decoded from it
+        aux_b1_raw      b1     b1     b1     nothing (0x01 on v0x04/v0x05, 0x00 on v0x03)
+        rsrp_word       @12    @8     @8     rsrp = bits 0..11 (12..23 a copy)
+        rsrp_avg_word   @16    @12    @12    rsrp_avg = bits 0..11 (12..23 a copy)
+        rsrq_word       @20    @16    @16    rsrq = 0..9 (10..19 a copy), rsrq_avg = 20..29
+        rssi_word       @24    @20    @20    rssi = 10..21; 0..9 equal rsrq_avg
+        srxlev_word     @28    @24    @24    srxlev_raw = 19..25; 0..18 unnamed, live
+        aux_word_raw    @32    @28    @28    nothing (0 on MC7411, non-zero elsewhere)
+        squal_word      @36    @32    absent squal_raw = 7..13; 0..6 unnamed, live
+
+    The "a copy" / "equal" / zero-bit statements hold on all eight committed
+    fixtures (6 chipsets). They are observations, not corpus claims. Bytes
+    2..3 are zero on all eight and stay in `body_raw` only. No semantics are
+    assigned to the unnamed bits. F3 prints constant qrxlevmin / Sintra /
+    Snonintra / pmax beside these records, and a constant fits many bit
+    positions by coincidence.
     """
     log_time: int
     version: int
@@ -167,6 +191,15 @@ class Diag0xB17F:
     srxlev_raw: int | None = None
     squal: int | None = None
     squal_raw: int | None = None
+    # v15 raw words, each at its own layout's offset; defaulted like v14.
+    aux_b1_raw: int | None = None
+    rsrp_word: int | None = None
+    rsrp_avg_word: int | None = None
+    rsrq_word: int | None = None
+    rssi_word: int | None = None
+    srxlev_word: int | None = None
+    aux_word_raw: int | None = None
+    squal_word: int | None = None   # None on v0x03 (its 32 B layout ends first)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -185,6 +218,14 @@ class Diag0xB17F:
             "srxlev_raw": self.srxlev_raw,
             "squal": self.squal,
             "squal_raw": self.squal_raw,
+            "aux_b1_raw": self.aux_b1_raw,
+            "rsrp_word": self.rsrp_word,
+            "rsrp_avg_word": self.rsrp_avg_word,
+            "rsrq_word": self.rsrq_word,
+            "rssi_word": self.rssi_word,
+            "srxlev_word": self.srxlev_word,
+            "aux_word_raw": self.aux_word_raw,
+            "squal_word": self.squal_word,
             "data_density": self.data_density,
             "payload_size": self.payload_size,
             "body_raw": self.body_raw,
@@ -199,7 +240,7 @@ class Diag0xB17F:
     wigle_direct=True,
     wigle_roles=("signal", "pci-earfcn-bridge", "rat-context"),
     description="0xB17F — LTE ML1 per-cell measurement record (fixed 32/36/40 B by version; earfcn+pci identity + rsrp/rsrp_avg/rsrq/rsrq_avg/rssi + S-criterion serving_priority/srxlev/squal; canonical name contested, see docstring; legacy mislabel LtePdcpB17F)",
-    version=14,
+    version=15,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -251,6 +292,10 @@ class Diag0xB17F:
         "Srxlev) 320/320 over MDM9607/SDX20/MDM9625; squal = "
         "((u32@36>>7)&0x7F)-35 (u32@32 on v0x04, absent v0x03) == F3 Squal "
         "179/179 v0x05 (trunc) + 47/47 v0x04 (round), 0x7F = saturated. "
+        "Raw words (v15): aux_b1_raw and every u32 after the identity "
+        "(rsrp/rsrp_avg/rsrq/rssi/srxlev/squal_word, aux_word_raw) kept as read "
+        "at each layout's offset; byte 1, srxlev bits 0..18, the aux word and "
+        "squal bits 0..6 are live across chipsets with no label yet. "
         "Payloads shorter than the fixed layout return None (registry warning)."
     ),
     source_url="",
@@ -288,7 +333,6 @@ def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
     # with the measurement block silently None.
     if len(data) < _B17F_SIZES[version]:
         return None
-    rsrp = rsrp_avg = rsrq = rsrq_avg = rssi = None
     # v0x03 and v0x04 share the 16-bit identity packing; v0x05 widens it to u32
     # and moves the measurement block down 4 bytes.
     if version in (0x03, 0x04):
@@ -310,27 +354,32 @@ def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
     # priority (F3 "Serv cell (%d,%d) prio %d"); 0 can also mean "not yet known",
     # and 15 (4-bit all-ones, no oracle label) is kept raw.
     serving_priority = pci_word >> 9
-    # Measurement block — subfields of u32 words at base, base+4, base+8,
-    # base+12, the same 1/16-LSB fixed-point convention as sibling 0xB193.
-    # rsrp = best rx branch (max(rx0, rx1), v0x04 0xB196 join);
+    # After the identity the record is whole u32 words at base, base+4, ...:
+    # rsrp, rsrp_avg, rsrq, rssi, srxlev, aux, then squal (absent on v0x03,
+    # whose 32 B layout ends after the aux word). Each is kept raw (v15) and
+    # every decoded value below is a bit-field of one of them.
+    (rsrp_word, rsrp_avg_word, rsrq_word, rssi_word, srxlev_word,
+     aux_word_raw) = unpack_from('<6I', data, base)
+    squal_word = None if version == 0x03 else unpack_from('<I', data, base + 24)[0]
+    # Measurement block — the same 1/16-LSB fixed-point convention as sibling
+    # 0xB193. rsrp = best rx branch (max(rx0, rx1), v0x04 0xB196 join);
     # rsrp_avg = the slower filter tap (u32@base+4). On memcpy chipsets
     # (MDM9200 v0x03, ...) rsrp_avg == rsrp. MDM9625 v0x04 writes two taps:
     # equal 235/235 on a 1.28 s DRX camp, distinct on 104/188 at 640 ms DRX.
-    rsrp = (unpack_from('<I', data, base)[0] & 0xFFF) / 16 - 180
-    rsrp_avg = (unpack_from('<I', data, base + 4)[0] & 0xFFF) / 16 - 180
+    rsrp = (rsrp_word & 0xFFF) / 16 - 180
+    rsrp_avg = (rsrp_avg_word & 0xFFF) / 16 - 180
     # The rsrq word holds three 10-bit fields: bits 0..9 == bits 10..19
     # are the rsrq that 0xB196 carries; bits 20..29 is a slower tap.
-    rsrq_word = unpack_from('<I', data, base + 8)[0]
     rsrq = (rsrq_word & 0x3FF) / 16 - 30
     rsrq_avg = ((rsrq_word >> 20) & 0x3FF) / 16 - 30
-    rssi = ((unpack_from('<I', data, base + 12)[0] >> 10) & 0xFFF) / 16 - 110
+    rssi = ((rssi_word >> 10) & 0xFFF) / 16 - 110
     # S-criterion evaluation, 7-bit offset fields (F3 lte_ml1_mdb_idle.c
-    # "S thresh check"). v0x03 ends before the squal word.
-    srxlev_raw = (unpack_from('<I', data, base + 16)[0] >> 19) & 0x7F
+    # "S thresh check").
+    srxlev_raw = (srxlev_word >> 19) & 0x7F
     srxlev = srxlev_raw - 50
     squal_raw = squal = None
-    if version != 0x03:
-        squal_raw = (unpack_from('<I', data, base + 24)[0] >> 7) & 0x7F
+    if squal_word is not None:
+        squal_raw = (squal_word >> 7) & 0x7F
         # 0x7F = saturated: Squal past the field's range (no q-QualMin).
         squal = None if squal_raw == 0x7F else squal_raw - 35
     if len(data) > 2:
@@ -354,6 +403,14 @@ def parse_0xb17f(log_time: int, data: bytes) -> Diag0xB17F | None:
         srxlev_raw=srxlev_raw,
         squal=squal,
         squal_raw=squal_raw,
+        aux_b1_raw=data[1],
+        rsrp_word=rsrp_word,
+        rsrp_avg_word=rsrp_avg_word,
+        rsrq_word=rsrq_word,
+        rssi_word=rssi_word,
+        srxlev_word=srxlev_word,
+        aux_word_raw=aux_word_raw,
+        squal_word=squal_word,
         data_density=density,
         payload_size=len(data),
         body_raw=data[1:],

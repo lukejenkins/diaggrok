@@ -132,7 +132,7 @@ _V4_MEAS_HIGH_BYTE_OFF = 11   # IEEE 754 byte-3 of an f32-LE at +8..+11
 _V4_STATE_BYTE_19_OFF = 19    # cross-vendor anchor candidate (∈ {0x3e, 0x3f, 0x40})
 
 # v=1 framing constants. Validated on 18,561 records across 4 captures / 3
-# chipset families (LM960 Telit SDX20, MC7411 Sierra MDM9x07, EG18-NA Quectel
+# chipset families (LM960 Telit SDX20, MC7411 Sierra MDM9250, EG18-NA Quectel
 # SDX20 V2): every anchor below holds at 100.0% on every capture.
 _V1_RECORD_SIZE = 70
 _V1_OUTER_HEADER_SIZE = 2
@@ -228,7 +228,7 @@ class LteMl1InterFreqV1Cell:
     The GTS fields are F3-grounded byte-exact against gts.c on LM960 SDX20
     (348/348), the RIS-9260 MDM9150 (477/477) and EG18-NA SDX20 (27/32).
     The structural anchors (intra +0 == 0x01, intra +16 == 0x01) hold on
-    18,561 v=1 records across LM960 Telit SDX20, MC7411 Sierra MDM9x07 and
+    18,561 v=1 records across LM960 Telit SDX20, MC7411 Sierra MDM9250 and
     EG18-NA Quectel SDX20 V2.
 
     `meas_high_byte` / `meas_raw` / `meas_f32` (intra +8..+11) are legacy
@@ -490,7 +490,7 @@ def parse_0x18ac(log_time: int, data: bytes) -> Diag0x18AC | None:
         # magic_b (intra+20) == 0x01. On single-populated-cell records one
         # 58B slot is zero-padding whose anchors are BOTH 0x00 — perfectly
         # correlated (intra+3==0x00 iff intra+20==0x00 on the empty slot;
-        # e.g. an EM9291 SDX65 build emits records that use only the cell-2
+        # e.g. an EM9291 (SDX62) build emits records that use only the cell-2
         # slot). Each slot is one of:
         #   POPULATED — magic_b == 0x01 (magic_a is the GPS-week high byte —
         #               data, not an anchor)

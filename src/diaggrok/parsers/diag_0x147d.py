@@ -19,7 +19,7 @@ from diaggrok.registry import register
 # Record forms, keyed by the version byte [0]:
 #     v=0x00  1957 B fixed               Sierra MC7700 (SWI9200X platform)
 #     v=0x04  3185 B fixed               MC7455 / EM7455 (MDM9x30)
-#     v=0x05  3665 B fixed               MDM9x07 (EP06A, EG18-NA), SDX20 (LM960),
+#     v=0x05  3665 B fixed               MDM9240 (EP06A), SDX20 (EG18-NA, LM960),        
 #                                        MDM9650 (WNC 81UMV91B1), MDM9607 (EG25-G)
 #     v=0x06  4717 B fixed               SDX55 (FN980m, EM9190, RM500Q-AE)
 #     v=0x07  variable, len % 46 == 33   SDX65 (Inseego M3100)
@@ -166,7 +166,7 @@ _NAVDB147D_SIG_1091 = 0x1091
 # data (uniform-256 byte distribution); structure unknown.  Slots 2-3 and 8+
 # are usually empty/zero.
 #
-# On MDM9x07 fixtures (ep06a, eg18na) the slot-0 offsets hold entirely
+# On the MDM9240 / SDX20 fixtures (ep06a, eg18na) the slot-0 offsets hold entirely
 # different values (no cross-chipset invariance at these positions),
 # indicating the 46-byte-stride layout is an SDX55-family format choice.
 # Validators therefore return None on non-SDX55 size classes.

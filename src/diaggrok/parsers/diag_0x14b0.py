@@ -17,7 +17,7 @@ class Diag0x14B0:
     """GNSS data report (0x14B0) — 166 bytes fixed size.
 
     Clean-room RE across 6 DLF captures / 4 chipset generations (1514
-    records total, including EM7511/MDM9650); the header time-tag is
+    records total, including EM7511/MDM9250); the header time-tag is
     F3-grounded — see below.
 
         [0]        u8   version = 0x32 (50) — const across all captures
@@ -73,7 +73,7 @@ class Diag0x14B0:
         [136]      u8   tag_04 = 0x04  (const all)
         [137:141]  f32  param_4 — const=1.0 across all records
         [141:165]  24B  trailing SV/slot status region — structurally
-                        decoded (EM7511/MDM9650 + the other fixtures) as
+                        decoded (EM7511/MDM9250 + the other fixtures) as
                         **6 × 4-byte slots**:
                           slot_N at [141+4N:145+4N], for N in 0..5
                         Each slot's 4th byte (abs [144,148,152,156,160,164])
@@ -89,8 +89,8 @@ class Diag0x14B0:
                         slot count)
 
     The tag bytes at [115], [116], [121], [126], [131], [136] are 100 %
-    stable across the RE corpus (EP06A/EG18-NA MDM9x07, MC7455 MDM9x30,
-    LM960/FN980m SDX55, EM7511 MDM9650) — a fixed GNSS configuration /
+    stable across the RE corpus (EP06A MDM9240, EG18-NA SDX20, MC7455 MDM9x30,
+    LM960/FN980m SDX55, EM7511 MDM9250) — a fixed GNSS configuration /
     parameter frame (tags 1-5 identify the 5 tagged parameter slots).
 
     Identity note: the canonical log name is ``LOG_MOBISENS_OUTPUT_C``
@@ -202,8 +202,8 @@ class Diag0x14B0:
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Clean-room RE across 1514 records from EP06A + EG18-NA (MDM9x07) + "
-        "MC7455 (MDM9x30) + LM960 + FN980m (SDX55) + EM7511 (MDM9650) "
+        "Clean-room RE across 1514 records from EP06A (MDM9240) + EG18-NA (SDX20) + "
+        "MC7455 (MDM9x30) + LM960 + FN980m (SDX55) + EM7511 (MDM9250) "
         "captures. version == 0x32 on every record and is a hard gate; "
         "payloads shorter than the fixed 166 B layout return None. The [1:7] "
         "header is a GPS time-tag — gps_ms (u32 LE @1) + gps_week (u16 LE "

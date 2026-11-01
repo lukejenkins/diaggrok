@@ -91,7 +91,7 @@ layout (it is not parsed with the v=2 struct).
 | 4    | 1  | `signal_marker` lo   | confirmed  | 0x02 always |
 | 5    | 1  | `signal_marker` hi   | confirmed  | 0x00 single-signal (9104), 0x03 dual-signal (2094) |
 | 6-7  | 2  | `meas_age_companion` | partial    | block-level state (paired with b18-19) |
-| 8-27 | 20 | reserved / partial   | unmapped   | middle region; b10-13/b27 zero; b22-25 vary; awaits MDM9200 ground truth |
+| 8-27 | 20 | `aux_b8_27_raw`      | raw        | middle region, surfaced raw since v9 (Kaitai audit): b10-13/b27 zero; b22-25 vary; semantics await MDM9200 ground truth |
 | 28-31| 4  | `cn0_dbhz`           | verified   | primary C/N0 in dB-Hz (f32); 0x00000000 => absent => None. GSV-corroborated (mean 35.6, range 19.4-46.1 vs the modem's own GSV mean 38.4) |
 | 32-35| 4  | `cn0_adj_dbhz`       | verified   | adjusted C/N0 = `cn0_dbhz - k*0.1` dB; present iff `cn0_dbhz` present |
 | 36-39| 4  | `cn0_sig2_dbhz`      | verified   | 2nd-signal C/N0 (f32); present iff `signal_marker` hi == 0x03 (2094/2094 bijection) |
@@ -334,6 +334,7 @@ class Diag0x1526V01:
     cn0_adj_dbhz: Optional[float]       # b32-35 f32 - adjusted C/N0
     cn0_sig2_dbhz: Optional[float]      # b36-39 f32 - 2nd-signal C/N0 (dual-signal only)
     cn0_sig2_adj_dbhz: Optional[float]  # b40-43 f32 - 2nd-signal adjusted C/N0
+    aux_b8_27_raw: bytes = bytes(20)    # b8-27 - middle region, semantics unknown, surfaced raw (v9)
 
     @property
     def has_measurement(self) -> bool:
@@ -362,6 +363,7 @@ class Diag0x1526V01:
             'cn0_sig2_dbhz': self.cn0_sig2_dbhz,
             'cn0_sig2_adj_dbhz': self.cn0_sig2_adj_dbhz,
             'has_measurement': self.has_measurement,
+            'aux_b8_27_raw': self.aux_b8_27_raw.hex(),
         }
 
 
@@ -400,7 +402,7 @@ def _opt_f32(data: bytes, off: int) -> Optional[float]:
         "engine-reported C/N0, measurement-age accumulator). sv_id/rcvr_time/"
         "cn0_adj F3-verified (mc_peak.c / mc_multipath.c exact join)"
     ),
-    version=8,
+    version=9,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -508,4 +510,5 @@ def _parse_v01(log_time: int, data: bytes) -> Optional[Diag0x1526V01]:
         cn0_adj_dbhz=_opt_f32(data, 32),
         cn0_sig2_dbhz=_opt_f32(data, 36),
         cn0_sig2_adj_dbhz=_opt_f32(data, 40),
+        aux_b8_27_raw=bytes(data[8:28]),
     )

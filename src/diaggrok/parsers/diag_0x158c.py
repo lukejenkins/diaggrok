@@ -23,7 +23,7 @@ Fixed 49-byte payload, one record per channel (``seq_num``), emitted at
   seq 0). The 28.611 ratio is 515/18 exactly at low precision — a
   chipset-generation-dependent fixed-point scaling.
 - ``metric_d / metric_b`` splits by chipset:
-    - **SDX20 / MDM9650** (em7511, lm960, eg18na, MC7411): ``d = round(b / 4)``
+    - **SDX20 / MDM9250** (lm960, eg18na / em7511, MC7411): ``d = round(b / 4)``
       (exact on every active record; ratio = 0.250 ± 0.00002).
     - **SDX55** (fn980m, em9190, RM500Q-AE, RXM-G1): ``d / b ≈ 0.441``
       (no exact integer ratio found).
@@ -52,7 +52,7 @@ Fixed 49-byte payload, one record per channel (``seq_num``), emitted at
 
     chipset           seq=1       seq=4       seq=6/7/8   seq=9
     ----------------- ----------- ----------- ----------- -----------
-    em7511 MDM9650    25k-26k     25k-26k     24..25      -50 (const)
+    em7511 MDM9250    25k-26k     25k-26k     24..25      -50 (const)
     fn980m SDX55      40k (avg)   36k (avg)   -40 (const) 33 (avg)
     lm960 SDX20       28k (avg)   25k (avg)   n/a         24 (const)
     eg18na SDX20 V2   34k (avg)   31k (avg)   n/a         30/125 (var)

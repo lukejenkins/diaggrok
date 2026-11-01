@@ -29,8 +29,8 @@ from diaggrok.registry import register
 # ---------------------------------------------------------------------------
 # 0x1899 — GNSS geofence status tick (108B fixed, 104/108 bytes constant)
 # ---------------------------------------------------------------------------
-# Cross-chipset corpus: LM960 SDX20, EG18-NA SDX20 V2, EP06A MDM9x07, FN980m
-# SDX55, EM7511 MDM9650, RM520N-GL SDX62, plus long-uptime units: the Kapsch
+# Cross-chipset corpus: LM960 SDX20, EG18-NA SDX20 V2, EP06A MDM9240, FN980m
+# SDX55, EM7511 MDM9250, RM520N-GL SDX62, plus long-uptime units: the Kapsch
 # RIS-9260 (same 81UMV91M21 modem as the 81umv91m21 captures, same physical
 # unit; it adds only uptime, not a second device), the Ficosa CarCom
 # MDM9250 and the Casa CFW-3212 (RG520N). Only [1:5] varies.

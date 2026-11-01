@@ -16,10 +16,11 @@ Payload structure:
                   SFN of 1023)
     [4]      u8   subpacket_id (25)
     [5]      u8   *** subpacket_version — THE structural discriminator ***
-    [6:8]    u16  subpacket_size (includes the 4-byte subpacket header). NB the
-                  parser deliberately does NOT bound the body with it — the body
-                  runs to end-of-payload and the per-cell stride is DERIVED from
-                  that length, so honouring sp_size here would change the stride.
+    [6:8]    u16  subpacket_size (includes the 4-byte subpacket header). The
+                  body is the subpacket_size - 4 bytes after it (== the rest of
+                  the payload on every corpus record); every structural minimum
+                  below is checked against THAT length (parser v41), and surplus
+                  past it is trailing, never read.
 
 Subpacket data (payload offset 8):
     [0:4]    u32  EARFCN (low 18 bits) — verified on every version, and the ONLY
@@ -75,8 +76,21 @@ constants block). The bar v36 met: 45 dB of sweep, own-F3 pairing on the raw
 tick, AND a truth-free TS 36.214 closure. Meeting two of the three is not
 meeting it.
 
-Per-cell stride: DERIVED as (len(body) - 8) / num_cells — the wire carries no
-stride field (v48 uses its 12 B header instead of 8; v40 is a fixed array).
+Per-cell stride: v22 / v35 / v36 / v40 / v41 are a FIXED array of four slots
+(120 / 124 / 128 / 132 / 140 B, unused slots zero-filled; parser v40); a body
+short of the four slots is refused. Every other version is count-driven with a
+CONSTANT per-version cell size (v48 140, v50 / v56 164, v59 / v60 148; parser
+v41 — through v40 the stride was DERIVED as (len(body) - hdr) // num_cells,
+which equals the constant on every corpus record, each of which tiles exactly);
+a count the declared body cannot hold is refused (None), never floor-divided
+into a shorter stride.
+
+Refused records (None, registry WARN): shorter than the minimum, outer
+version != 1, num_subpackets == 0 (there is no subpacket to read; v41), shorter
+than the declared subpacket_size (v30), a declared body short of its version's
+header / four slots / num_cells cells (v41). These are the per-version .ksy's
+structural refusals: spec, carved
+C++ leg and this parser accept and refuse the same records.
 
 Techplayon's public log-packet field list names the 0xB193 fields:
     0xB193 — LTE ML1 Serving Cell Meas Response
@@ -187,6 +201,16 @@ class LteMl1ServingCellMeasEntry:
     # None on v48 and the v59 family (their surfaced RSRP is the
     # FILTERED tap; no counted RSSI oracle) and wherever rsrp is gated off.
     rssi: float | None = None
+    # v40: the RAW view behind `pci`, so a filtered entry list can
+    # be matched to the bytes. `cell_index` is the slot the entry was read from
+    # (0-based, counting every walked slot, including the ones the pci <= 503 /
+    # RSRP-band filters drop); None on the inline-serving v3 / v6 / v18 record,
+    # which has no cell array. `pci_word` is the whole word `pci` is masked out
+    # of: the u32 at the version's in-cell PCI offset (its high bits carry v59's
+    # bit15 primary flag and the bit12 that v36 / v40 set on serving slots), the
+    # u32 @sp+4 on v18, the u16 @sp+2 on v3 / v6 (there `pci_word == pci`).
+    cell_index: int | None = None
+    pci_word: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -197,6 +221,8 @@ class LteMl1ServingCellMeasEntry:
             'rssi': self.rssi,
             'serving_flag': self.serving_flag,
             'meas_type': self.meas_type,
+            'cell_index': self.cell_index,
+            'pci_word': self.pci_word,
         }
 
 
@@ -224,6 +250,17 @@ class Diag0xB193:
     valid_rx: int | None = None      # sp+6 u16: valid-Rx-antenna mask (0x3 = 2 Rx, 0xF = 4 Rx)
     sfn: int | None = None           # sp+16 bits0..9: LTE system frame number (0..1023)
     sub_fn: int | None = None        # sp+16 bits10..13: subframe number (0..9)
+    # v40: the header bytes the parser read past or never read,
+    # and the subpacket body as one overlapping raw view, so every payload byte
+    # is reachable. num_subpackets is data[1] (1 on every corpus record);
+    # subpacket_id (data[4], 25) and subpacket_size (data[6:8], counting its own
+    # 4 B header) are None only on the num_subpackets < 1 path, which reads no
+    # subpacket. body_raw is data[8:] (the parser's `sp`, to the end of the
+    # payload) on every return path. Additive; no decode changes.
+    num_subpackets: int | None = None
+    subpacket_id: int | None = None
+    subpacket_size: int | None = None
+    body_raw: bytes = b""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -238,6 +275,10 @@ class Diag0xB193:
             'valid_rx': self.valid_rx,
             'sfn': self.sfn,
             'sub_fn': self.sub_fn,
+            'num_subpackets': self.num_subpackets,
+            'subpacket_id': self.subpacket_id,
+            'subpacket_size': self.subpacket_size,
+            'body_raw': self.body_raw.hex(),
             'entries': [e.to_dict() for e in self.entries],
         }
 
@@ -283,12 +324,16 @@ _CARRIER_HEADER_SIZE = 8
 # past the whole entry and discards the VERIFIED pci/earfcn with it — so the
 # multi-cell signal gate in parse_0xb193 is what lets the identity survive.
 _V48_CARRIER_HEADER_SIZE = 12
-# Smallest sane DERIVED per-cell stride. The wire carries no stride field — it is
-# floor((len(body) - 8) / num_cells) — so a garbage num_cells drives the stride
-# toward 0, at which point every "cell" re-reads cell_offset 0 and the parser
-# emits num_cells IDENTICAL duplicates. 4 B is the minimum that can hold the PCI
-# u32 every layout starts from; anything smaller means num_cells is not a count.
-_MIN_STRIDE = 4
+# The count-driven versions' CONSTANT per-cell size since parser v41. The wire
+# carries no stride field; through v40 it was DERIVED as floor((len(body) - hdr)
+# / num_cells), which equals these constants on every corpus record (each tiles
+# exactly: body == hdr + num_cells x cell) and on nothing else — a garbage
+# num_cells drove it toward 0 (duplicate flood, guarded by a 4 B floor), a
+# surplus grew it. Now a count the declared body cannot hold is refused.
+# Measured: v48 on the 1- / 2- / 3-cell fixtures (152 / 292 / 432 = 12 + n x
+# 140), v50 / v56 164 (the 344 B two-cell RM520N-GL record), v59 148 (serving +
+# 3 neighbours at 148 B on a correlate capture), v60 148 (v59's cell).
+_COUNT_DRIVEN_CELL_STRIDE = {48: 140, 50: 164, 56: 164, 59: 148, 60: 148}
 
 # v59 (SDX62 RM520N-GL / RG520N) per-cell BITFIELD layout, RE'd from a
 # 28,879-record capture by bit-slice correlation against time-aligned AT
@@ -314,7 +359,6 @@ _MIN_STRIDE = 4
 _V59_SUBPACKET = 59
 _V59_RSRP_WORD_OFF = 44   # u32 whose bits 12..23 carry combined RSRP
 _V59_RSRQ_WORD_OFF = 56   # u32 whose bits 20..31 carry RSRQ
-_V59_MIN_CELL_RECORD = 60  # need the full u32 at cell+56
 
 # v48 (SDX55: RM500Q-AE / LV55 / EM9190) — the 12 B carrier header (EARFCN u32
 # @sp+0, num_cells u16 @sp+4, then 4 more bytes), so the per-cell array starts
@@ -375,9 +419,9 @@ _V48_PCI_OFF = 0
 #     on the integer seam (-1 at frac ~0, +1 at frac ~15/16), so F3 floors a
 #     value a fraction of a dB from the logged one; 3 are >= 2 dB.
 #     floor(rx0) / floor(rx1) reach only 46/48%.
-# The 2026-06 note that the field "cannot be located without a wide sweep"
-# came from one 245-record stable-signal capture against AT; the corpus now
-# holds the sweep, and same-cycle 0xB17F is a sharper oracle than AT.
+# One stable-signal capture (245 records) checked against AT cannot locate
+# the field; a wide RSRP sweep can, and same-cycle 0xB17F is a sharper oracle
+# than AT.
 _V18_SUBPACKET = 18
 _V18_RSRP_OFF = 32        # u32 bits0..11, raw/16 - 180 dBm (best Rx)
 _V18_RSRQ_OFF = 40        # u32 bits0..9,  raw/16 -  30 dB
@@ -755,6 +799,40 @@ _V40_RSRP_WORD_OFF = 36         # u32 bits0..11,  raw/16 - 180 dBm
 _V40_RSRQ_WORD_OFF = 48         # u32 bits20..31, raw/16 -  30 dB
 _V40_RSSI_WORD_OFF = 60         # u32 bits0..11,  raw/16 - 110 dBm
 
+# THE FIXED-SLOT FAMILY (v40 is not alone: v22 / v35 / v36 / v41, since
+# parser v40). Each of these versions is ONE record size whatever
+# num_cells says (496 / 512 / 528 / 544 / 576 B), and that size is
+# 16 + 4 x slot: the cell array is FOUR fixed slots, unused ones zero-filled.
+# The derived stride (len(sp) - 8) // num_cells equals the slot only when all
+# four are filled, so on a 2-cell record it reads cell[1] out of the zero tail
+# and ships a fabricated PCI 0 neighbour (v39 and earlier did exactly that):
+#
+#     ver  record  slot   measured on
+#     22   496 B   120    inferred (every corpus v22 record is single-cell)
+#     35   512 B   124    the EM7511 2-cell record (tests _SAMPLE_V35_2CELL):
+#                         cell[1] = PCI 236 @slot 124, derived 248 read PCI 0
+#     36   528 B   128    all 23 multi-cell records of an LM960
+#                         grounding drive: cell[1] @slot 128 is the drive's other
+#                         cell (471 / 346, the pair that trades serving), derived
+#                         256 read PCI 0 on 23 / 23. On 16 / 23 the slot-1 cell
+#                         is one the same modem SERVED on in the same drive
+#                         ((66786, 346) on 210 single-cell records and in its own
+#                         F3 lte_ml1_md.c:6186, (66786, 471) on 166); the other
+#                         7 hold (900, 171). :6186 itself does not print around
+#                         a multi-cell record (0 / 23 within 100 ms; single-cell
+#                         control 1431 / 2055), so it cannot tick-pair slot 1
+#     40   544 B   132    the EM120R-GL 2-cell record
+#     41   576 B   140    inferred (every corpus v41 record is single-cell)
+#
+# On every measured record cell[1]'s +8 word repeats cell[0]'s, as v40's does.
+# v22 / v41 are inferred from the same law: the record size never varies and
+# 480 / 560 are 4 x 120 / 4 x 140, and their single cell's last non-zero byte
+# (+111 / +129) sits inside the slot. A count above the four slots is not a
+# count (the array cannot hold it): the record ships its header and no cells,
+# as the derived-stride floor does for a count-driven version.
+_FIXED_SLOTS = 4
+_FIXED_SLOT_STRIDE = {22: 120, 35: 124, 36: 128, 40: _V40_CELL_STRIDE, 41: 140}
+
 # The v59 FAMILY (SDX55 FN980/EM9190 v50; SDX62 v56/v59) — one per-cell layout:
 #   cell+0  u32 valid-RX-antenna mask (0x3 = 2-RX intra, 0xF = 4-RX inter)
 #   cell+4  u8[4] antenna indices (ffff0100 on 2-RX, 03020100 on 4-RX)
@@ -914,7 +992,7 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
 @register(LOG_LTE_ML1_SERVING_CELL_MEAS_RSP, domain="lte-signal",
     name="0xB193",
     description="Serving cell PCI, EARFCN, RSRP, RSRQ, RSSI from the 0xB193 subpacket — outer v=1 corpus-wide; per-cell layout keyed on subpacket_version {3,6,18,22,35,36,40,41,48,50,56,59,60}. pci/earfcn grounded on every version; RSRP/RSRQ decoded only where an x16 fixed-point scale is grounded (v3, v6, v18, v22, v35, v36, v40, v41, v48 RSRP, v50/v56/v59/v60 — filtered on the v59 family), single-cell or serving-cell only.",
-    version=39,
+    version=41,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -955,7 +1033,9 @@ _DECODED_SUBPACKET_VERSIONS = frozenset({
         "misses +-1 on the integer seam; AT+QENG medians within 0.4 dB); v22 MDM9240 EP06-A (v35 "
         "slots; own F3 lte_ml1_md.c:5922 rx0/rx1/best max |d| 0.031 dB on 842/842; "
         "0xB17F 3,181/3,181). "
-        "v22/v35/v36/v40/v48/v50/v56/v60 dBm is single-cell only. v48 also exposes valid_rx (sp+6) and "
+        "v22/v35/v36/v40/v48/v50/v56/v60 dBm is single-cell only. v22/v35/v36/v40/v41 are FIXED "
+        "4-slot cell arrays (120/124/128/132/140 B; v35 + v36 measured on real multi-cell "
+        "records, v22/v41 inferred). v48 also exposes valid_rx (sp+6) and "
         "SFN/SubFN (sp+16), byte-joined 21/21 against SCAT. SCAT does not "
         "decode v59. Records shorter than their declared subpacket size return "
         "None (registry warning)."
@@ -1032,31 +1112,40 @@ def parse_0xb193(
     # short/degenerate payloads), read once here and carried on every return path
     # so it is never dropped. Exposed for 0xB192-sibling parity.
     counter = unpack_from('<H', data, 2)[0]
+    # v40: the raw view rides every return path (see Diag0xB193.body_raw).
+    raw: dict[str, Any] = dict(
+        num_subpackets=num_subpackets,
+        body_raw=bytes(data[_SUBPACKET_DATA_OFFSET:]),
+    )
 
+    # num_subpackets == 0: there is no subpacket to read, so there is no record
+    # to return (v41; through v40 this shipped a header-only record with
+    # subpacket_version 0 / earfcn 0). The per-version .ksy reads no body for
+    # it and the carved C++ leg gates on this byte first. 1 on every corpus
+    # record.
     if num_subpackets < 1:
-        return Diag0xB193(
-            log_time=log_time,
-            version=version,
-            subpacket_version=0,
-            counter=counter,
-            earfcn=0,
-            num_cells=0,
-            payload_size=len(data),
-        )
+        return None
 
     # Subpacket header: id(u8), version(u8), size(u16)
     subpacket_version = data[5]
     subpacket_size = unpack_from('<H', data, 6)[0]
     # The subpacket size counts its own 4-byte header (id/version/size) and runs
     # to the end of the record: len(data) == 4 + subpacket_size on every corpus
-    # record. A record shorter than the size it declares was truncated — the
-    # derived per-cell stride below would silently floor-divide the loss away,
-    # so decline it (registry warning) instead.
+    # record. A record shorter than the size it declares was truncated, so
+    # decline it (registry warning) instead of reading a partial body.
     if len(data) < _SUBPACKET_HDR_OFFSET + subpacket_size:
         return None
+    raw.update(subpacket_id=data[_SUBPACKET_HDR_OFFSET], subpacket_size=subpacket_size)
 
-    # Subpacket data starts at offset 8
+    # Subpacket data starts at offset 8. `sp` is read to the end of the payload
+    # (the optional inline signal words and the RSSI slots are bounded by it, as
+    # the carved leg bounds them), but every STRUCTURAL minimum — the inline
+    # body, the carrier header, the four slots, num_cells cells — is checked
+    # against the DECLARED body length, subpacket_size - 4 (v41). The two are
+    # equal on every corpus record; a declared size short of the version's body
+    # is refused, and surplus past the declared size is trailing (never a cell).
     sp = data[_SUBPACKET_DATA_OFFSET:]
+    body_len = subpacket_size - _SUBPACKET_HDR_OFFSET
 
     # --- v3 (MDM9200) / v6 (MDM9625) — the 4-byte carrier header ----------
     # Read BEFORE the u32 path: their EARFCN is a u16 @sp+0, so the u32-low18
@@ -1064,7 +1153,7 @@ def parse_0xb193(
     # EARFCN this MDM9200 part cannot emit). Serving cell is packed inline,
     # earfcn u16 @sp+0 + pci u16 @sp+2, followed by the shared signal block.
     if subpacket_version in (_V3_SUBPACKET, _V6_SUBPACKET):
-        if len(sp) < _V6_MIN_BODY:
+        if body_len < _V6_MIN_BODY:
             return None
         v3_earfcn = unpack_from('<H', sp, 0)[0]
         v3_pci = unpack_from('<H', sp, 2)[0]
@@ -1082,7 +1171,7 @@ def parse_0xb193(
                 v3_rsrq = None
             v3_entries.append(LteMl1ServingCellMeasEntry(
                 pci=v3_pci, earfcn=v3_earfcn, rsrp=v3_rsrp, rsrq=v3_rsrq,
-                rssi=_rssi_at(sp, _V6_RSSI_OFF, '<I'),
+                rssi=_rssi_at(sp, _V6_RSSI_OFF, '<I'), pci_word=v3_pci,
             ))
         return Diag0xB193(
             log_time=log_time,
@@ -1093,9 +1182,10 @@ def parse_0xb193(
             num_cells=len(v3_entries),
             payload_size=len(data),
             entries=v3_entries,
+            **raw,
         )
 
-    if len(sp) < _CARRIER_HEADER_SIZE:
+    if body_len < _CARRIER_HEADER_SIZE:
         return None
 
     # Carrier header. The u32-low18 read is structurally bounded to a valid
@@ -1106,7 +1196,8 @@ def parse_0xb193(
     # v18 (MDM9207) has no num_cells at sp+4 — that u32 is the serving PCI.
     # Decode the serving cell inline from the carrier header.
     if subpacket_version == _V18_SUBPACKET:
-        v18_pci = unpack_from('<I', sp, 4)[0] & 0x1FF
+        v18_pci_word = unpack_from('<I', sp, 4)[0]
+        v18_pci = v18_pci_word & 0x1FF
         v18_entries: list[LteMl1ServingCellMeasEntry] = []
         if v18_pci <= 503:
             v18_rsrp = v18_rsrq = None
@@ -1122,7 +1213,7 @@ def parse_0xb193(
                 v18_rsrq = None
             v18_entries.append(LteMl1ServingCellMeasEntry(
                 pci=v18_pci, earfcn=earfcn, rsrp=v18_rsrp, rsrq=v18_rsrq,
-                rssi=_rssi_at(sp, _V18_RSSI_OFF, '<H'),
+                rssi=_rssi_at(sp, _V18_RSSI_OFF, '<H'), pci_word=v18_pci_word,
             ))
         return Diag0xB193(
             log_time=log_time,
@@ -1133,6 +1224,7 @@ def parse_0xb193(
             num_cells=len(v18_entries),
             payload_size=len(data),
             entries=v18_entries,
+            **raw,
         )
 
     # --- unknown subpacket version -> carrier header ONLY, never guessed cells --
@@ -1150,6 +1242,7 @@ def parse_0xb193(
             earfcn=earfcn,
             num_cells=unpack_from('<H', sp, 4)[0],
             payload_size=len(data),
+            **raw,
         )
 
     num_cells = unpack_from('<H', sp, 4)[0]
@@ -1160,16 +1253,36 @@ def parse_0xb193(
     entries: list[LteMl1ServingCellMeasEntry] = []
 
     # v48 is the ONLY version with a 12 B carrier header, so its cell array starts
-    # — and its stride is measured — 4 bytes later than every other version's.
-    # See the _V48_CARRIER_HEADER_SIZE block for why this must drive the stride
-    # divisor and not just the in-cell offsets.
+    # 4 bytes later than every other version's (see the _V48_CARRIER_HEADER_SIZE
+    # block). A declared body short of the header is refused by the array checks
+    # below (hdr + 0 cells is still hdr: v48's valid_rx / antenna_idx words are
+    # part of the body whatever num_cells says), so no separate header minimum.
     carrier_header_size = (
         _V48_CARRIER_HEADER_SIZE
         if subpacket_version == _V48_SUBPACKET
         else _CARRIER_HEADER_SIZE
     )
 
-    if num_cells == 0 or len(sp) <= carrier_header_size:
+    # The per-cell stride is a CONSTANT of the version (v41) — never derived from
+    # the record length. v22 / v35 / v36 / v40 / v41 are a FIXED 4-slot array
+    # (see the _FIXED_SLOT_STRIDE block): the body must hold all four slots, and
+    # a count above four is not a count (header, no cells). v48 / the v59 family
+    # are num_cells cells of _COUNT_DRIVEN_CELL_STRIDE: a count the declared
+    # body cannot hold is refused — through v40 the derived stride floor-divided
+    # it into a shorter cell (a garbage count toward 0, a surplus into a longer
+    # one), reading cell[1..] from inside cell 0.
+    fixed_slot = _FIXED_SLOT_STRIDE.get(subpacket_version)
+    if fixed_slot is not None:
+        if body_len < carrier_header_size + _FIXED_SLOTS * fixed_slot:
+            return None
+        cell_record_size = fixed_slot
+        count_fits = 0 < num_cells <= _FIXED_SLOTS
+    else:
+        cell_record_size = _COUNT_DRIVEN_CELL_STRIDE[subpacket_version]
+        if body_len < carrier_header_size + num_cells * cell_record_size:
+            return None
+        count_fits = num_cells > 0
+    if not count_fits:
         return Diag0xB193(
             log_time=log_time,
             version=version,
@@ -1178,30 +1291,7 @@ def parse_0xb193(
             earfcn=earfcn,
             num_cells=num_cells,
             payload_size=len(data),
-        )
-
-    # Calculate per-cell record size from remaining subpacket data. The stride is
-    # DERIVED (the wire carries no stride field), so a garbage num_cells would
-    # otherwise floor-divide to a nonsense stride — at num_cells > cell_data_len
-    # the stride hits 0 and every "cell" re-reads cell_offset 0, emitting
-    # num_cells IDENTICAL duplicate entries. Guard it the way the 0xB195 sibling
-    # guards its own count, and reject rather than emit fabricated duplicates.
-    cell_data_len = len(sp) - carrier_header_size
-    cell_record_size = cell_data_len // num_cells
-    if subpacket_version == _V40_SUBPACKET:
-        # v40 is a FIXED 4 x 132 B array; the derived stride is wrong for any
-        # num_cells > 1 (see the _V40_* block). Slots past the record end are
-        # cut off by the per-cell bounds check below.
-        cell_record_size = _V40_CELL_STRIDE
-    if cell_record_size < _MIN_STRIDE:
-        return Diag0xB193(
-            log_time=log_time,
-            version=version,
-            subpacket_version=subpacket_version,
-            counter=counter,
-            earfcn=earfcn,
-            num_cells=num_cells,
-            payload_size=len(data),
+            **raw,
         )
 
     # Per-cell field layout is keyed on the subpacket version (which tracks the
@@ -1223,30 +1313,14 @@ def parse_0xb193(
     #   v41 (SDX50M+SM8150): v35 +4 B — RSRP@cell+36 b0..11 + RSRQ@cell+48
     #     b0..9, SINGLE-cell records only.
     # See the per-version constants block above for the full evidence trail.
-    if subpacket_version in _V59_FAMILY:
-        pci_off = 8
-        min_cell_record = _V59_MIN_CELL_RECORD
-    elif subpacket_version == _V48_SUBPACKET:
-        pci_off = _V48_PCI_OFF
-        min_cell_record = _V48_RSRP_OFF + 2      # need the full u16 at cell+24
-    elif subpacket_version == _V36_SUBPACKET:
-        pci_off = 0
-        min_cell_record = _V36_RSRQ_OFF + 2      # need the full u16 at cell+36
-    elif subpacket_version == _V40_SUBPACKET:
-        pci_off = 0
-        min_cell_record = _V40_RSRQ_WORD_OFF + 4  # need the full u32 at cell+48
-    elif subpacket_version == _V41_SUBPACKET:
-        pci_off = 0
-        min_cell_record = _V41_RSRQ_WORD_OFF + 4  # need the full u32 at cell+48
-    else:
-        # v35 and v22 share PCI@cell+0 and the signal slots.
-        pci_off = 0
-        min_cell_record = _V35_RSRQ_WORD_OFF + 4  # need the full u32 at cell+44
+    # Every slot / cell is whole (the body holds all of them, checked above) and
+    # every version's last signal word sits inside its slot / cell, so no
+    # per-cell bounds check is needed. PCI@cell+8 on the v59 family, cell+0
+    # (_V48_PCI_OFF) everywhere else.
+    pci_off = 8 if subpacket_version in _V59_FAMILY else _V48_PCI_OFF
 
     for i in range(num_cells):
         cell_offset = carrier_header_size + i * cell_record_size
-        if cell_offset + min_cell_record > len(sp):
-            break
 
         # PCI: low 9 bits of u32 at the version-dependent cell offset
         pci_raw = unpack_from('<I', sp, cell_offset + pci_off)[0]
@@ -1432,6 +1506,8 @@ def parse_0xb193(
         entries.append(LteMl1ServingCellMeasEntry(
             pci=pci,
             earfcn=earfcn,
+            cell_index=i,
+            pci_word=pci_raw,
             rsrp=round(rsrp, 2) if rsrp is not None else None,
             rsrq=round(rsrq, 2) if rsrq is not None else None,
             serving_flag=serving_flag,
@@ -1472,4 +1548,5 @@ def parse_0xb193(
         valid_rx=valid_rx,
         sfn=sfn,
         sub_fn=sub_fn,
+        **raw,
     )

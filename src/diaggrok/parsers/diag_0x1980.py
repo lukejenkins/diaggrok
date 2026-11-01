@@ -29,12 +29,19 @@ a **second, entirely distinct 0x1980 payload** on newer chipsets that this
 parser does not decode and — correctly — rejects (`state_word != 0xC002F2A0`
 ⇒ `None`, no mis-parse):
 
-    byte0 = chipset-gen version ladder:  0x03 = SDX20 (LM960)
+    byte0 = version, first read as a chipset ladder:  0x03 = SDX20 (LM960)
                                          0x05 = SDX55 (RXM-G1, LV55, RM500Q,
                                                        SIM8202G-M2, M2000)
-                                         0x06 = SDX65 (EM9291)
-    byte1 ∈ {0x0b (SDX55/65), 0x0f (SDX20)},  bytes[2:4] = 0x0000
+                                         0x06 = EM9291 (SDX62)
+    byte1 ∈ {0x0b (SDX55, EM9291), 0x0f (SDX20)},  bytes[2:4] = 0x0000
     size  = variable, 336 B → 3964 B (NOT the 4 B legacy form)
+
+⚠️ Correction: byte0 is **not** a per-chipset ladder. EM9291
+is SDX62; its SWIX65C firmware family was misread as SDX65 silicon. In the
+corpus byte0 0x06 also occurs on T99W373 (SDX62) and T99W640 (SDX72)
+captures, 0x03 on M3100 (SDX65) and SIM8202G-M2 (SDX55) beside LM960, and
+RM520N-GL / M3100 captures carry dozens of distinct byte0 values. Read byte0 as
+a wire-format version only.
 
 Both RXM-G1 (SDX55) records share an **identical fixed 14-byte header**
 (`05 0b 00 00 0a 00 00 00 c6 94 0d 01 00 0e`) across a 1084 B and a 3604 B
@@ -76,7 +83,7 @@ RF record, not one format. Per-version field maps (corpus-attested; LE u32):
       [12:16] 0x00000004  INVARIANT constant = 4  (v05's "10" analog, moved)
       [16:20] ~0x00c994c0 signature (shares the middle `94` byte with v05's tag)
 
-    v06 (SDX65) — EM9291, gate byte1=0x0b, byte2:4=0x0000 (layout ~v05; thin sample)
+    v06 (SDX62) — EM9291, gate byte1=0x0b, byte2:4=0x0000 (layout ~v05; thin sample)
 
 The small invariant constant (10 @ v05[4], 4 @ v03[12]) and the `…94…` signature
 exist in both gens but at **different offsets** — same fields, relocated. Both
@@ -163,7 +170,7 @@ class Diag0x1980:
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Clean-room RE from 39 EM7511 MDM9650 records (airplane + SIM cycle): "
+        "Clean-room RE from 39 EM7511 MDM9250 records (airplane + SIM cycle): "
         "all-constant payload 0xC002F2A0, same as 0x197F. F3 by byte-0 key: "
         "the v0x00 (all-zero) form is event-locked to LTE Tx de-init (95% vs "
         "0% control, 58/63 captures), so it is not tail-fragment residue; the "

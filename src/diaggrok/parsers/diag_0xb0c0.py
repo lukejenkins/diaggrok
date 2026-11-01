@@ -8,7 +8,9 @@ Version 20 layout (SDX20/SDX55/MDM9607):
     [0]     u8   version (20)
     [1]     u8   rrc_release (14 = Rel-14)
     [2]     u8   constant 0x30 (not the channel; see [12])
-    [3]     u8   reserved
+    [3]     u8   live 0 / 1 / 2 (surfaced raw as aux_b3_raw since v35; the
+                 0/1/2 shape of the v7 / v24 bearer partition, not
+                 correlated against the channel here)
     [4:6]   u16  physical_cell_id
     [6:10]  u32  earfcn (u32 - carries >65535 EARFCNs, e.g. B66)
     [10:12] u16  sfn_subfn: subfn(4b) | sfn(10b) | reserved(2b)
@@ -23,7 +25,8 @@ Version 27 layout (SDX62/SDX55, the NR-capable header - RM520N-GL, RM500Q):
     [1]     u8   rrc_release
     [2]     u8   rrc_ver_major
     [3]     u8   rrc_ver_minor
-    [4]     u8   log-encoding constant (0x60 SDX62 / 0x90 SDX55; NOT the bearer)
+    [4]     u8   log-encoding constant (0x60 SDX62 / 0x90 SDX55; NOT the bearer;
+                 surfaced raw as bearer_word_lo since v35)
     [5]     u8   radio_bearer_id (0=common/SRB0, 1=SRB1, 2=SRB2)
     [6:8]   u16  physical_cell_id
     [8:12]  u32  earfcn (u32 - carries >65535 EARFCNs, e.g. B66)
@@ -39,8 +42,14 @@ plus a 3-byte pad, so the header is 24 bytes, not 21:
     [21:24] 3 zero bytes (723/723)
     [24:]   bytes msg_data
 The sib_mask sits in the 4 bytes immediately after channel_type on every
-version, always followed by msg_length (u16). See the sib_mask field docstring
-for the bit=SIB mapping and the "mask=0 means unpopulated" caveat.
+version but v2, always followed by msg_length (u16). v2 (0x02, MDM9600 MC7700)
+has no mask: msg_length follows channel_type directly (byte[11]). Presence is
+a property of the VERSION (measured over every 0xB0C0 record in the
+corpus: v2 never has it, every other version always has it), so it is read
+by version, not by the old length probe (test_len != remaining), which would
+also have parsed a truncated zero-mask record as a valid empty-PDU one. See
+the sib_mask field docstring for the bit=SIB mapping and the "mask=0 means
+unpopulated" caveat.
 
 The v20 channel selector is raw byte[12], not byte[2]. byte[2] is a constant
 0x30 on every observed v20 record (290/290 across EG18-NA + EG25-G, both wire
@@ -253,9 +262,25 @@ _NONV20_CHANNEL_NAMES_BY_VERSION: dict[int, dict[int, str]] = {
     # == sib_mask and 689/689 PCCH with their paging records; SCAT 23/23 byte-identical; F3
     # lte_rrc_stm.c LTE_MAC_RRC_PCCH_DL_DATA_IND 30/30 on ct=7; 0x60
     # EVENT_LTE_RRC_DL_MSG (ch 1=BCCH with the SIB number / ch 2=PCCH) on
-    # ct=3 / ct=7. Idle only: no DL/UL CCCH/DCCH event appears in any T99W640
-    # capture, so connected-mode channels remain unobserved.
-    30: {3: "BCCH-DL-SCH", 7: "PCCH"},
+    # ct=3 / ct=7.
+    # Connected mode
+    # A donated Quectel RG650V-NA (SDX72, GL.iNet Mudi 7)
+    # capture carries ct 8/9/10/11 on 3,653 records. Stock tshark 4.6 on the PDU
+    # at [24:], dissector forced per channel: ct=8 DL-CCCH RRCConnectionSetup
+    # 366/366, ct=9 DL-DCCH 1,344/1,348 clean (Reconfig / DLInfoTransfer / SMC /
+    # Release / UEInfoRequest), ct=10 UL-CCCH RRCConnectionRequest 364/364,
+    # ct=11 UL-DCCH 1,569/1,575 clean (ReconfComplete / SetupComplete /
+    # SMComplete / UEInfoResponse / MeasReport). Request/response pairs match
+    # one-for-one across directions (539 Reconfig <-> 539 ReconfComplete, 181
+    # SMC <-> 181 SMComplete, 174 UEInfoReq <-> 174 UEInfoResp). Independently,
+    # the T99W640's own October attach captures (4 of them) carry 98 records on
+    # ct 8..11; stock tshark decodes 98/98 clean, each with a message its channel
+    # allows (ct=8 RRCConnectionSetup, ct=10 RRCConnectionRequest, ct=9
+    # Reconfig / DLInfoTransfer / UECapEnquiry / SMC / Release, ct=11
+    # ULInfoTransfer / MeasReport / UECapInfo / ReconfComplete / SetupComplete).
+    # The enum is v26/v27's.
+    30: {3: "BCCH-DL-SCH", 7: "PCCH", 8: "DL-CCCH", 9: "DL-DCCH",
+         10: "UL-CCCH", 11: "UL-DCCH"},
 }
 
 _V20_HEADER_SIZE = 19  # bytes before msg_data
@@ -289,10 +314,24 @@ class Diag0xB0C0:
     # The exception is v24: there byte[3] carries the same 0/1/2 bearer
     # partition (189/189 records), so v24 reports it from byte[3].
     radio_bearer_id: int | None = None
+    # byte[4] on the version>=25 header: the LOW byte of the [4:6] field whose
+    # high byte is radio_bearer_id. A per-chipset log-encoding constant (0x60
+    # SDX62, 0x90 SDX55, 0x40 SDX72) - invariant within a capture, orthogonal
+    # to the bearer, and never part of its value. Surfaced raw since v35
+    # because it is live ACROSS chipsets and was the one header byte the raw
+    # view discarded; nothing is decoded from it. None off the v>=25 header.
+    bearer_word_lo: int | None = None
+    # byte[3] on the v20 header, raw. Not reserved: a corpus walk over
+    # 9,728 v20 records found 0 on 9,597, 1 on 116 and 2 on 15 - the 0 / 1 / 2
+    # shape byte[3] carries on v7 / v24 (the SRB partition), where it is
+    # reported as radio_bearer_id. The channel correlation is NOT measured on
+    # v20, so it is surfaced as a raw byte, not named. None off v20.
+    aux_b3_raw: int | None = None
     # SIB mask - Techplayon-documented `sib_mask` ("bitmap of decoded SIB
     # IDs"). A u32-LE bitmap in the 4 bytes immediately
-    # AFTER channel_type on every version (v20: byte[13:17]; v>=8 non-v20: the 4
-    # bytes the length-probe skips), immediately followed by msg_length (u16-LE).
+    # AFTER channel_type on every version but v2 (v20: byte[13:17]; v7:
+    # [11:15]; v8..24: [13:17]; v>=25: [15:19]), immediately followed by
+    # msg_length (u16-LE). v2 carries no mask (None).
     # bit N (1..31) set => SystemInformationBlockTypeN is present in this SI
     # message (one-way: the mask is a lower bound, see below); bit0 is unused.
     # Established by correlating the field against the SIBs the PDU decodes to
@@ -344,7 +383,7 @@ class Diag0xB0C0:
     # all_si's sibs_bitmask 0x%x`, `In post-processing, curr_mask = 0x%x
     # next_mask = 0x%x rcvd_curr_bitmask = 0x%x` (line numbers move per build; the
     # FORMAT STRING is the stable key). Measured over 10 F3 streams / 4 modules /
-    # 2 vendors / 2 chipset generations (Sierra EM7565 + MC7411 MDM9x50, Telit
+    # 2 vendors / 2 chipset generations (Sierra EM7565 + MC7411 MDM9250, Telit
     # LM960 + LM960A18 SDX20): on 7/7 windows where the co-temporal same-cell
     # 0xB0C0 union is rich enough to discriminate, `all_si's sibs_bitmask` equals
     # that union with bits 0-1 cleared - e.g. 0x21c == {SIB2,SIB3,SIB4,SIB9} and
@@ -515,6 +554,12 @@ class Diag0xB0C0:
         # radio_bearer_id - present-only, header-level field.
         if self.radio_bearer_id is not None:
             d['radio_bearer_id'] = self.radio_bearer_id
+        # bearer_word_lo - present-only (v>=25), the raw byte[4] constant.
+        if self.bearer_word_lo is not None:
+            d['bearer_word_lo'] = self.bearer_word_lo
+        # aux_b3_raw - present-only (v20), the raw live byte[3].
+        if self.aux_b3_raw is not None:
+            d['aux_b3_raw'] = self.aux_b3_raw
         # sib_mask - present-only. Emit the raw bitmap AND the derived
         # SIB-number list so downstream (WiGLE / pcap / SI analysis) sees which
         # SIBs the firmware flagged.
@@ -605,7 +650,7 @@ _VERSIONS_B0C0_4918: tuple[int, ...] = (0x02, 0x07, 0x09, 0x0C, 0x0D, 0x0E, 0x0F
 @register(LOG_LTE_RRC_OTA_MSG, domain="rrc",
     name="0xB0C0",
     description="Standard LTE RRC Over-The-Air message with ASN.1 PER-encoded content",
-    version=34,
+    version=35,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -655,17 +700,18 @@ _VERSIONS_B0C0_4918: tuple[int, ...] = (0x02, 0x07, 0x09, 0x0C, 0x0D, 0x0E, 0x0F
     # Header binary fields, all decoded into named to_dict fields (100% byte
     # accounting): version, rrc_release, radio_bearer_id, channel_type,
     # pci, earfcn, sfn, subfn, pdu_number, sib_mask, msg_length, msg_data (12).
-    # Non-v20 adds rrc_ver_major/minor (2). Deep-decoded SIB1 contributes 4
-    # (mcc, mnc, tac, cell_id) from the msg_data ASN.1 PER decode. NAS tunnel
-    # detection adds 2 (nas_tunneled flag, dedicated_info_nas bytes). = 20
-    # counted quantities, ALL parsed. channel_name (derived from channel_type)
+    # Non-v20 adds rrc_ver_major/minor (2); v>=25 adds bearer_word_lo (1);
+    # v20 adds aux_b3_raw (1). Deep-decoded SIB1 contributes 4 (mcc, mnc, tac,
+    # cell_id) from the msg_data ASN.1 PER decode. NAS tunnel detection adds 2
+    # (nas_tunneled flag, dedicated_info_nas bytes). = 22 counted quantities,
+    # ALL parsed. channel_name (derived from channel_type)
     # and sibs_present (derived from sib_mask) are presentations, not counted.
     # The sib_mask region is the decoded u32 SIB bitmap, and msg_data is
     # surfaced as hex for downstream ASN.1 / pcap consumers (the main content of
     # an RRC-OTA log) and deep-decoded in-band (SIB1-9/16/24, NAS tunnel,
     # measConfig, MeasurementReport).
-    fields_identified=20,
-    fields_parsed=20,
+    fields_identified=22,
+    fields_parsed=22,
     field_invariants={"version": {"enum": [0x02, 0x07, 0x09, 0x0C, 0x0D, 0x0E, 0x0F, 0x14, 0x18, 0x1A, 0x1B, 0x1E]}},
 )
 def parse_0xb0c0(log_time: int, data: bytes) -> Diag0xB0C0 | None:
@@ -734,6 +780,7 @@ def parse_0xb0c0(log_time: int, data: bytes) -> Diag0xB0C0 | None:
         return _build_result(log_time, version, rrc_release, channel_type,
                              channel_name, pci, earfcn, sfn, subfn,
                              pdu_number, msg_length, msg_data, data,
+                             aux_b3_raw=data[3],
                              sib_mask=sib_mask)
 
     # Other versions: QCSuper-style multi-version parsing.
@@ -743,12 +790,15 @@ def parse_0xb0c0(log_time: int, data: bytes) -> Diag0xB0C0 | None:
     rrc_ver_minor = data[3]
 
     radio_bearer_id: int | None = None
+    bearer_word_lo: int | None = None
     if version >= 25:
         if len(data) < 8:
             return None
         # radio_bearer_id is the HIGH byte of the [4:6] field (byte[5]):
         # 0=common/SRB0 (broadcast), 1=SRB1, 2=SRB2. byte[4] is a per-chipset
-        # log-encoding constant (0x60 SDX62 / 0x90 SDX55) - not part of the id.
+        # log-encoding constant (0x60 SDX62 / 0x90 SDX55 / 0x40 SDX72) - not
+        # part of the id; kept raw as bearer_word_lo (v35).
+        bearer_word_lo = data[4]
         radio_bearer_id = data[5]
         pci = unpack_from('<H', data, 6)[0]
         ext_offset = 8
@@ -785,19 +835,26 @@ def parse_0xb0c0(log_time: int, data: bytes) -> Diag0xB0C0 | None:
         channel_type = data[ext_offset + 6]
         len_offset = ext_offset + 7
 
-    # SIB mask detection. The 4 bytes at len_offset are the u32-LE sib_mask;
-    # msg_length follows it. When the low u16 of the mask != the remaining
-    # byte count, that region is the mask (not the length) → capture it and skip
-    # past it to the real msg_length.
+    # sib_mask by VERSION since v35: the 4 bytes at len_offset are the u32-LE
+    # sib_mask on every non-v20 version but v2, and msg_length follows it. v2
+    # (MDM9600 MC7700) has no mask: msg_length sits at len_offset directly.
+    # Measured over every 0xB0C0 record in the corpus (v2: msg_length ==
+    # remaining on every record; every other version: the mask on every
+    # record). The old length probe (mask iff the u16 here != the remaining
+    # byte count) gave the same answer on every real record, but it was a
+    # stream-size heuristic, not the layout: at the collision (mask low u16 ==
+    # 4 + msg_length) it read the mask as the length, and a record truncated
+    # right after channel_type + two zero bytes passed it as an empty PDU.
     sib_mask: int | None = None
-    if len_offset + 2 <= len(data):
-        test_len = unpack_from('<H', data, len_offset)[0]
-        remaining = len(data) - len_offset - 2
-        if test_len != remaining and len_offset + 6 <= len(data):
-            sib_mask = unpack_from('<I', data, len_offset)[0]
-            len_offset += 4
+    if version != 2:
+        if len_offset + 4 > len(data):
+            return None
+        sib_mask = unpack_from('<I', data, len_offset)[0]
+        len_offset += 4
 
-    msg_length = unpack_from('<H', data, len_offset)[0] if len_offset + 2 <= len(data) else 0
+    if len_offset + 2 > len(data):
+        return None
+    msg_length = unpack_from('<H', data, len_offset)[0]
     header_size = len_offset + 2
 
     # v30 (0x1E, Foxconn T99W640 / SDX72) header is 24 bytes: the u16 at
@@ -824,9 +881,7 @@ def parse_0xb0c0(log_time: int, data: bytes) -> Diag0xB0C0 | None:
 
     # The header (incl. msg_length itself) and the declared PDU must fit;
     # otherwise the payload is truncated -> loud None (registry WARN), never a
-    # record with a silently empty PDU. This also catches a truncated no-mask
-    # (v<8) record whose length probe then mis-takes the length for a sib_mask:
-    # the u16 read after the "mask" overruns the record.
+    # record with a silently empty PDU.
     if header_size + msg_length > len(data):
         return None
     msg_data = data[header_size:header_size + msg_length]
@@ -845,6 +900,7 @@ def parse_0xb0c0(log_time: int, data: bytes) -> Diag0xB0C0 | None:
                          rrc_ver_major=rrc_ver_major,
                          rrc_ver_minor=rrc_ver_minor,
                          radio_bearer_id=radio_bearer_id,
+                         bearer_word_lo=bearer_word_lo,
                          sib_mask=sib_mask)
 
 
@@ -949,6 +1005,8 @@ def _build_result(
     rrc_ver_major: int | None = None,
     rrc_ver_minor: int | None = None,
     radio_bearer_id: int | None = None,
+    bearer_word_lo: int | None = None,
+    aux_b3_raw: int | None = None,
     sib_mask: int | None = None,
 ) -> Diag0xB0C0:
     """Build Diag0xB0C0 with optional SIB1 auto-decode."""
@@ -1056,6 +1114,8 @@ def _build_result(
         msg_length=msg_length,
         msg_data=msg_data,
         radio_bearer_id=radio_bearer_id,
+        bearer_word_lo=bearer_word_lo,
+        aux_b3_raw=aux_b3_raw,
         sib_mask=sib_mask,
         sibs_present=sibs_present,
         rrc_ver_major=rrc_ver_major,

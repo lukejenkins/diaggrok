@@ -184,11 +184,11 @@ class Diag0x14E1:
       records with ``flags`` 0x09 (bits 1 and 2 clear). No F3 is available
       on that build, so these are left raw.
     - ``flags`` bit 4 (0x10) is a **predicted/extrapolated-orbit
-      indicator, emitted only by the Sierra EM7511 (MDM9650/SDX20-X16)
+      indicator, emitted only by the Sierra EM7511 (MDM9250)
       OEM-DRE — NEVER by the MDM9607/MDM9x40 firmware.** An exhaustive
       EG25-G (MDM9607) config sweep — all 8 ``AT+QGPSCFG="gnssconfig"`` enum
       values (0-7), warm AND cold, ~343 records across GPS/GLONASS/Galileo —
-      leaves bit 4 **0/343**; EP06-A (MDM9607) 0/45 and LM960 0/29 agree. On
+      leaves bit 4 **0/343**; EP06-A (MDM9240) 0/45 and LM960 0/29 agree. On
       the EM7511 it sets in ~78% of records across **all** constellations
       incl. BeiDou (280/361 and 198/252 on two firmware builds). Within the
       EM7511 captures, bit-4-set records are consistently distinguished
@@ -202,7 +202,7 @@ class Diag0x14E1:
       any ``gnssconfig`` because it emits SV-poly only for actively-tracked
       SVs and has no valid XTRA/predicted-orbit source
       (``xtra_autodownload`` → ``+CME 501``). Distinguishing
-      "EM7511/MDM9650-firmware-only emission" from "XTRA-predicted-orbit
+      "EM7511/MDM9250-firmware-only emission" from "XTRA-predicted-orbit
       conditioned" needs a same-model EM7511 A/B (XTRA loaded vs cleared).
     - xyz0 values look like correct GPS MEO positions (||xyz0|| ≈ 26,600
       km matches the nominal GPS orbital radius from Earth center).

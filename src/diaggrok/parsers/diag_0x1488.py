@@ -317,7 +317,7 @@ class Diag0x1488:
     source_type="re",
     source_detail=(
         "Clean-room RE on a cross-chipset corpus (EG12-GT, EG18-NA SDX20 V2, "
-        "EM7511 MDM9650, EP06A MDM9x07, LM960 SDX20, FN980 SDX55, RM520N-GL "
+        "EM7511 MDM9250, EP06A MDM9240, LM960 SDX20, FN980 SDX55, RM520N-GL "
         "SDX62 and others; 51,751 records / 235 captures). The 51B variant "
         "is F3-grounded as the mc_slow_clk.c NEW latch (NewL print args "
         "0/1/2/7/8 at +7/+11/+3/+27/+31; Computed GpsT = +15 u32 - +19 f32; "

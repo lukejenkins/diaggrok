@@ -71,18 +71,26 @@ X55, 150 records).
   21:29  ts2_gps_ms (u64)✅    GPS measurement timestamp (middle). subtype-1/2 ONLY.
                                Ordering ts1 <= ts2 <= ts0 holds 100%; ts2-ts1 ~ 1 s.
 
-subtype-3 reuses [13:17] as a local +1000/record ms counter (NOT ts1) and [17:29]
-as body. subtype-4 (40B) has no 48-byte header at all (see below).
+subtype-3 reuses [13:17] as a local +1000/record ms counter (NOT ts1) and
+[17:33] as its own header (v6, below). subtype-4 (40B) has no 48-byte header at
+all (see below).
 
 fmt region [29:33] is subtype-specific:
   subtype-1: phase_flag@29 (✅ 0x01 when ts0>ts2, 0x03 when ts0==ts2, alternates),
-             fmt_b30=0x02, fw_fmt_flag@31 (0x0a on a minority of em9190/rm520ngl
-             firmware records, else 0x01), fmt_b32=0x02.
-  subtype-2: 00 00 00 00.
-  subtype-3: 00 00 08 XX (byte31=0x08 const, byte32 per-capture constant).
+             fmt_b30@30, fw_fmt_flag@31 (0x0a on a minority of em9190/rm520ngl
+             firmware records, else 0x01), then hdr_tail_raw [32:header].
+  subtype-2: 00 00 00 00 (the first bytes of `preamble`).
+  subtype-3: medium_b27_raw [27:31] + medium_fmt_b31@31 + medium_fmt_b32@32 (v6).
 
 === subtype-1 (large type-1) — per-cell measurement grid ===
-Layout: header + count × stride rows (+ trailer on SDX62).
+Layout: header + count × stride rows (+ trailer on SDX62). The header is the
+universal [0:29], the fmt bytes [29:32], then hdr_tail_raw [32:header] (v6):
+16 B on the 48-byte-header versions, 27 B on v04 (whose [48:57] on the committed
+fixture opens like the other versions' row 0: flag 0x00, 0.1f, 1.0f). Corpus
+(1,443,910 records): fmt_b30 is 0x02 or 0x00, and tail[0] is 0x02 or 0x06 in
+the same counts on every version; tail[2:4] is constant per version (10 10 on
+v04, 04 00 on v05 / v0b); tail[4:9] is zero on every record; tail[9:13] is
+non-zero on every record.
   version  header  stride  count  tiling
   0x04     59      109     18     59 + 18*109 = 2021 (exact)
   0x05     48      133     20     48 + 20*133 = 2708 (exact)
@@ -109,22 +117,38 @@ begin at the first lattice slot >= byte 29; the count of full cells is
   +24 word24(u16). present/pad2 grounded; the two measurement floats are structural.
 
 === subtype-3 (medium) — 248/284/368 ===
-Header (version..fmt) + a config/measurement body containing an 8-byte-stride
-default table whose empty entries are filled with the sentinel float 599584.9375
-(0x4912620f) — 16,974 occurrences corpus-wide, all in subtype-3. Body shipped as
-f32 lanes (structural); grounded fields are version/subtype/valid_len/ts0/
-local_ms_ctr/fmt.
+  5:13   ts0_gps_ms (u64)       ✅ GPS time, as on subtypes 1/2
+  13:17  local_ms_ctr (u32)     ✅ local +1000/record ms counter
+  17:19  gps_week (u16)         ✅ ts0_gps_ms // 604800000 (v6)
+  19:23  gps_ms_of_week (u32)   ✅ ts0_gps_ms %  604800000 (v6)
+  23:27  medium_word_23 (u32)   ❌ local_ms_ctr's magnitude, unlabelled (v6)
+  27:31  medium_b27_raw (raw)   ❌ 01 00 00 00 on 1,166 / 19,103 v0b records, zero on
+                                 every v03 / v04 / v05 one (v6)
+  31     medium_fmt_b31 (u8)    ❌ 0x08; 0x03 on 1,774 v0b records (v6)
+  32     medium_fmt_b32 (u8)    ❌ 66 values on v03, few per capture (v6)
+  33:    medium_body / medium_tail — a config/measurement body containing an
+         8-byte-stride default table whose empty entries are filled with the
+         sentinel float 599584.9375 (0x4912620f) — 16,974 occurrences
+         corpus-wide, all in subtype-3. Shipped as f32 lanes (structural).
+[17:33] is either all zero (4,216 of 602,156 corpus records) or populated, and
+gps_week * 604800000 + gps_ms_of_week == ts0_gps_ms on 597,937 of them: the
+pair is the record's GPS time written a second way, F3-grounded with it.
 
 === subtype-4 (heartbeat) — 40 bytes ===
   0 version ✅ / 1 subtag / 2 subtype=4 ✅ / 3:5 valid_len=27 ✅ /
-  5:9 tick_ms(u32,+1000/rec ✅) / 9:13 zero / 13:21 sys_time_a(u64 ✅) /
-  21:24 marker 00 01 01 / 24:32 sys_time_b(u64, == a in ~99.7% ✅) /
-  32:35 marker2 00 01 01 / 35 b35 / 36:40 trailer_f32 (structural).
+  5:9 tick_ms(u32,+1000/rec ✅) / 9:13 reserved, zero on all 137,560 corpus records /
+  13:21 sys_time_a(u64 ✅) / 21:24 marker_a / 24:32 sys_time_b(u64, == a in
+  ~99.7% ✅) / 32:36 marker_b / 36:40 hb_trailer_f (f32, structural).
 
-Every byte of every profile is decoded into a typed field or a typed measurement
-array — no opaque `raw:` blob remains. fields_parsed counts only the semantically
-GROUNDED fields; fields_identified counts every distinct typed field (100% byte
-coverage). Every structural claim was adversarially verified.
+Every byte of every profile is decoded into a typed field, a raw field or a
+typed measurement array, except the heartbeat's reserved [9:13], zero on all
+137,560 corpus heartbeats. Until v6 that claim was made without a check:
+subtype-3 [17:33] and subtype-1 [30] / [32:header] carried live bytes on no
+field. The per-version Kaitai spec reads every byte
+sequentially, which is what found them; ``tests/test_diag_0x1807.py`` now
+rebuilds every fixture from its dataclass. fields_parsed counts only the
+semantically GROUNDED fields; fields_identified counts every distinct typed or
+raw field. Every structural claim was adversarially verified.
 
 Log name: LOG_EVENT_LTE_RRC_IRAT_REDIR_FROM_EUTRAN_START
 """
@@ -182,12 +206,15 @@ def _f32(d: bytes, o: int) -> float:
     return unpack_from("<f", d, o)[0]
 
 
-def _f32_lanes(d: bytes, start: int, end: int) -> tuple[tuple[float, ...], tuple[int, ...]]:
-    """Decode [start:end] as float32 lanes + the trailing (<4) bytes as ints."""
+def _f32_lanes(d: bytes, start: int, end: int
+               ) -> tuple[tuple[float, ...], tuple[int, ...], tuple[int, ...]]:
+    """Decode [start:end] as float32 lanes, their u32 words, and the trailing
+    (<4) bytes as ints."""
     n = (end - start) // 4
-    lanes = tuple(unpack_from("<f", d, start + 4 * i)[0] for i in range(n))
+    words = unpack_from(f"<{n}I", d, start)
+    lanes = unpack_from(f"<{n}f", d, start)
     tail = tuple(d[start + 4 * n:end])
-    return lanes, tail
+    return lanes, words, tail
 
 
 @dataclass
@@ -212,6 +239,9 @@ class Diag0x1807FineCell:
     meas_b: float
     word22: int
     word24: int
+    # meas_a / meas_b as u32 bit patterns: the byte-exact raw view.
+    meas_a_word: int = 0
+    meas_b_word: int = 0
 
     @property
     def populated(self) -> bool:
@@ -234,9 +264,13 @@ class Diag0x1807MeasRow:
 
     row_flag is a grounded per-row type/index marker. `lanes` are structural
     L1-internal measurement floats (filter/searcher energies), NOT dBm.
+    `lane_words` are the same lanes as their u32 bit patterns: a Python float
+    cannot carry a signaling NaN's payload on CPython 3.13, so the
+    words are the byte-exact raw view and `lanes` is the float view of them.
     """
     row_flag: int
     lanes: tuple[float, ...]
+    lane_words: tuple[int, ...] = ()
 
     @property
     def populated(self) -> bool:
@@ -253,7 +287,9 @@ class Diag0x1807:
 
     Common fields are always set. Subtype-specific fields are None / empty for the
     other subtypes (mirrors the multiplexed wire format). Every payload byte is
-    represented: no opaque raw blob.
+    on a field (since v6) except the heartbeat's [9:13], which is zero on every
+    corpus heartbeat; ``tests/test_diag_0x1807.py`` rebuilds each
+    fixture from its dataclass to keep that true.
     """
     log_time: int
     version: int
@@ -268,6 +304,10 @@ class Diag0x1807:
     # --- subtype-1 (large type-1) ---
     phase_flag: int | None = None
     fw_fmt_flag: int | None = None
+    # [30] and [32:header] (16 B; 27 B on v04): live header bytes no field held
+    # until v6, from the Kaitai audit, surfaced verbatim, semantics unknown.
+    fmt_b30: int | None = None
+    hdr_tail_raw: bytes | None = None
     meas_rows: tuple[Diag0x1807MeasRow, ...] = ()
     array_trailer: tuple[int, ...] = ()
     # --- subtype-2 (fine type-2) ---
@@ -275,7 +315,22 @@ class Diag0x1807:
     fine_cells: tuple[Diag0x1807FineCell, ...] = ()
     # --- subtype-3 (medium) ---
     local_ms_ctr: int | None = None
+    # [17:33], from the v6 Kaitai audit: until v6 on no field. [17:23] is the GPS
+    # time as week + ms-of-week (== ts0_gps_ms whenever the block is populated,
+    # 597,937 / 602,156 corpus records); the rest is surfaced unlabelled. [27:31]
+    # is zero on v03 / v04 / v05 and 01 00 00 00 on 6% of v0b (SDX62/65) records.
+    gps_week: int | None = None
+    gps_ms_of_week: int | None = None
+    medium_word_23: int | None = None
+    medium_fmt_b31: int | None = None
+    medium_fmt_b32: int | None = None
+    medium_b27_raw: bytes | None = None
     medium_body: tuple[float, ...] = ()
+    # medium_body as u32 bit patterns since v7. A float cannot carry a
+    # signaling NaN's payload on CPython 3.13: f32 -> double sets the quiet bit,
+    # so packing `medium_body` back changes the record. The words are the
+    # byte-exact raw view; `medium_body` is the float view of them.
+    medium_body_words: tuple[int, ...] = ()
     medium_tail: tuple[int, ...] = ()
     # --- subtype-4 (40B heartbeat) ---
     tick_ms: int | None = None
@@ -290,6 +345,7 @@ class Diag0x1807:
     sys_time_b: int | None = None
     marker_b: bytes | None = None
     hb_trailer_f: float | None = None
+    hb_trailer_word: int | None = None      # hb_trailer_f's u32 bits
     # --- derived ---
     num_populated: int = 0
 
@@ -311,7 +367,10 @@ class Diag0x1807:
             d["ts2_gps_ms"] = self.ts2_gps_ms
         if self.subtype == 0x01:
             d["phase_flag"] = self.phase_flag
+            d["fmt_b30"] = self.fmt_b30
             d["fw_fmt_flag"] = self.fw_fmt_flag
+            if self.hdr_tail_raw is not None:
+                d["hdr_tail_raw"] = self.hdr_tail_raw.hex()
             d["meas_rows"] = [r.to_dict() for r in self.meas_rows]
             if self.array_trailer:
                 d["array_trailer"] = list(self.array_trailer)
@@ -321,6 +380,13 @@ class Diag0x1807:
             d["fine_cells"] = [c.to_dict() for c in self.fine_cells]
         elif self.subtype == 0x03:
             d["local_ms_ctr"] = self.local_ms_ctr
+            d["gps_week"] = self.gps_week
+            d["gps_ms_of_week"] = self.gps_ms_of_week
+            d["medium_word_23"] = self.medium_word_23
+            d["medium_fmt_b31"] = self.medium_fmt_b31
+            d["medium_fmt_b32"] = self.medium_fmt_b32
+            if self.medium_b27_raw is not None:
+                d["medium_b27_raw"] = self.medium_b27_raw.hex()
             d["medium_body"] = list(self.medium_body)
             if self.medium_tail:
                 d["medium_tail"] = list(self.medium_tail)
@@ -344,11 +410,13 @@ def _parse_heartbeat(log_time: int, d: bytes, ver: int) -> Diag0x1807:
     sys_b = _u64(d, 24) if len(d) >= 32 else None
     mk_b = bytes(d[32:36]) if len(d) >= 36 else None
     trailer_f = _f32(d, 36) if len(d) >= 40 else None
+    trailer_w = _u32(d, 36) if len(d) >= 40 else None
     return Diag0x1807(
         log_time=log_time, version=ver, subtag=d[1], subtype=d[2],
         valid_len=_u16(d, 3), payload_size=len(d),
         tick_ms=tick_ms, sys_time_a=sys_a, marker_a=mk_a,
         sys_time_b=sys_b, marker_b=mk_b, hb_trailer_f=trailer_f,
+        hb_trailer_word=trailer_w,
     )
 
 
@@ -356,11 +424,19 @@ def _parse_medium(log_time: int, d: bytes, ver: int) -> Diag0x1807:
     """subtype 3 — medium (248/284/368): header + structural f32 body."""
     ts0 = _u64(d, 5) if len(d) >= 13 else None
     local_ms = _u32(d, 13) if len(d) >= 17 else None
-    body_lanes, body_tail = _f32_lanes(d, 33, len(d)) if len(d) > 33 else ((), ())
+    body_lanes, body_words, body_tail = (_f32_lanes(d, 33, len(d)) if len(d) > 33
+                                         else ((), (), ()))
     return Diag0x1807(
         log_time=log_time, version=ver, subtag=d[1], subtype=d[2],
         valid_len=_u16(d, 3), payload_size=len(d), ts0_gps_ms=ts0,
-        local_ms_ctr=local_ms, medium_body=body_lanes, medium_tail=body_tail,
+        local_ms_ctr=local_ms,
+        gps_week=_u16(d, 17) if len(d) >= 19 else None,
+        gps_ms_of_week=_u32(d, 19) if len(d) >= 23 else None,
+        medium_word_23=_u32(d, 23) if len(d) >= 27 else None,
+        medium_fmt_b31=d[31] if len(d) > 31 else None,
+        medium_fmt_b32=d[32] if len(d) > 32 else None,
+        medium_b27_raw=bytes(d[27:31]) if len(d) >= 31 else None,
+        medium_body=body_lanes, medium_body_words=body_words, medium_tail=body_tail,
     )
 
 
@@ -372,15 +448,18 @@ def _parse_large_type1(log_time: int, d: bytes, ver: int) -> Diag0x1807:
     ts1 = _u64(d, 13) if len(d) >= 21 else None
     ts2 = _u64(d, 21) if len(d) >= 29 else None
     phase = d[29] if len(d) > 29 else None
+    fmt_b30 = d[30] if len(d) > 30 else None
     fw_flag = d[31] if len(d) > 31 else None
+    hdr_tail = bytes(d[32:header]) if len(d) >= header else None
     rows: list[Diag0x1807MeasRow] = []
     if len(d) >= header + stride:
         count = (len(d) - header) // stride
         nlanes = (stride - 1) // 4
         for k in range(count):
             base = header + k * stride
-            lanes = tuple(unpack_from("<f", d, base + 1 + 4 * i)[0] for i in range(nlanes))
-            rows.append(Diag0x1807MeasRow(row_flag=d[base], lanes=lanes))
+            rows.append(Diag0x1807MeasRow(
+                row_flag=d[base], lanes=unpack_from(f"<{nlanes}f", d, base + 1),
+                lane_words=unpack_from(f"<{nlanes}I", d, base + 1)))
         trailer = tuple(d[header + count * stride:])
     else:
         trailer = tuple(d[header:]) if len(d) > header else ()
@@ -389,7 +468,7 @@ def _parse_large_type1(log_time: int, d: bytes, ver: int) -> Diag0x1807:
         log_time=log_time, version=ver, subtag=d[1], subtype=d[2],
         valid_len=_u16(d, 3), payload_size=len(d),
         ts0_gps_ms=ts0, ts1_gps_ms=ts1, ts2_gps_ms=ts2,
-        phase_flag=phase, fw_fmt_flag=fw_flag,
+        phase_flag=phase, fmt_b30=fmt_b30, fw_fmt_flag=fw_flag, hdr_tail_raw=hdr_tail,
         meas_rows=tuple(rows), array_trailer=trailer, num_populated=num_pop,
     )
 
@@ -414,6 +493,7 @@ def _parse_fine_type2(log_time: int, d: bytes, ver: int) -> Diag0x1807:
                 meas_a=_f32(d, b + 10), word14=_u16(d, b + 14),
                 word16=_u16(d, b + 16), meas_b=_f32(d, b + 18),
                 word22=_u16(d, b + 22), word24=_u16(d, b + 24),
+                meas_a_word=_u32(d, b + 10), meas_b_word=_u32(d, b + 18),
             ))
     num_pop = sum(1 for c in cells if c.populated)
     return Diag0x1807(
@@ -432,7 +512,7 @@ def _parse_fine_type2(log_time: int, d: bytes, ver: int) -> Diag0x1807:
     0x1807, domain="gnss",
     name="0x1807",
     description="GNSS position-engine 0x1807 — multiplexed measurement log (GPS-time F3-grounded), full per-(version,subtype) decode",
-    version=5,
+    version=7,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -455,7 +535,11 @@ def _parse_fine_type2(log_time: int, d: bytes, ver: int) -> Diag0x1807:
         "(stride 109/133/141 by version, count 18/20/19, +101B trailer on SDX62). "
         "subtype-2 = 26B cells fully field-decoded (present marker, subrec_id, "
         "cell_id_cand 0..503 of unknown meaning, two measurement floats). Version "
-        "enum includes 0x09 (SIM8202/X55). 100% byte coverage."
+        "enum includes 0x09 (SIM8202/X55). subtype-3 [17:23] = gps_week + "
+        "gps_ms_of_week (== ts0_gps_ms whenever populated). v6 (Kaitai "
+        "audit) puts every byte on a field: subtype-3 [17:33] and subtype-1 [30] / "
+        "[32:header] were live and unexposed; only the corpus-wide-zero heartbeat "
+        "[9:13] is not a field."
     ),
     source_url="",
     # fields_parsed = semantically GROUNDED fields (version, subtype, valid_len,
@@ -465,8 +549,11 @@ def _parse_fine_type2(log_time: int, d: bytes, ver: int) -> Diag0x1807:
     # subtypes (grounded + structural measurement lanes) — 100% byte coverage but
     # the L1-internal measurement floats are structurally decoded, not semantically
     # labelled (no oracle; idle corpus). Not a full semantic decode.
-    fields_identified=48,
-    fields_parsed=13,
+    # v6: +8 identified (gps_week, gps_ms_of_week, medium_word_23, medium_b27_raw,
+    # medium_fmt_b31, medium_fmt_b32, fmt_b30, hdr_tail_raw), +2 grounded (the GPS
+    # week / ms-of-week pair, equal to ts0_gps_ms whenever populated).
+    fields_identified=56,
+    fields_parsed=15,
     issues=(),
     field_invariants={
         "version": {"enum": list(_1807_VERSIONS)},

@@ -7,6 +7,72 @@ re-typed fields are listed here, even when the new decode is more correct.
 Releases are tagged `vYYYY.MM.DD`. Releases before this file existed
 (`v2026.08.05`, `v2026.08.23`) carry no entries.
 
+## v2026.10.31
+
+196 log codes: the 191 of `v2026.10.26` plus five new parsers, `0x1377`,
+`0x1383`, `0x13C4`, `0x1756` and `0xB181`. No parser was removed, and no
+record field was removed, renamed or re-typed: every shape change below adds
+fields. One module is new outside the parsers: `ts64_cal.py` (see below).
+
+### New log codes
+
+| code | name | record type |
+|---|---|---|
+| `0x1377` | CGPS report event log packet (GNSS session events) | `Diag0x1377` |
+| `0x1383` | CGPS PDSM extended-status position report (each final, intermediate or seed fix) | `Diag0x1383` |
+| `0x13C4` | CGPS measurement-engine time-estimate put (GPS week / ms clock, bias, uncertainty) | `Diag0x13C4` |
+| `0x1756` | GNSS BeiDou B1I measurement report (per-SV) | `Diag0x1756` |
+| `0xB181` | LTE ML1 intra-frequency cell reselection (serving EARFCN / PCI, per-frequency reselection lists) | `Diag0xB181` |
+
+All five are grounded on the firmware's own F3 text for every version they
+decode. `0xB181`'s subpackets must tile the record exactly; a record that does
+not is rejected (`None`, with a warning), which no corpus record does.
+
+### `ts64_cal` — capture-clock calibration
+
+`diaggrok.ts64_cal` now ships whenever `0x1476` does. It maps the DIAG ts64
+counter to UTC from the capture's own `0x1476` GNSS fixes, fitting the tick rate
+rather than assuming it, and applies the GPS-UTC leap-second offset. It is what
+`diagmunge-dlf-to-pcap` uses for calibrated pcap timestamps; without it that
+tool falls back to a synthetic clock.
+
+### Decode changes in existing parsers
+
+- `0xB18F` (LTE ML1 AdvRx IC cell list) decodes `v0x18` (512 B, MDM9240), which
+  was previously rejected: the 34 B head of `v0x20` with 28 B cell slots that
+  carry no `dl_bw_rb` / `num_rx_ant_candidate` (both `None` on `v0x18`).
+- `0xB18B` (LTE ML1 sleep) decodes the 64 B `v0x01` form (MDM9625) as the 60 B
+  form's 16-bit EARFCN + PCI; it previously fell back to an out-of-range 32-bit
+  EARFCN. A record one byte short of 64 B is now rejected.
+- `0xB0C0` `v0x1e`: connected-mode channels 8..11 decode (the `v26` / `v27` layout).
+- `0xB193`: the `v48` / `v59` family uses constant strides.
+- `0x1476`: the GLONASS time triplet is decoded on the v13+ and MDM9600 paths too.
+- `0x1807`: every f32 site keeps its raw u32 word, so an sNaN lane survives a
+  rebuild of the record.
+- `0xB823`: bytes [9:17] are a 60-bit NCGI: PLMN (`ncgi_mcc`, `ncgi_mnc`) and
+  36-bit `ncgi_nci`, plus `cell_global_id`.
+
+### Fields added
+
+| record | added fields |
+|---|---|
+| `Diag0x1476` | `clock_block_raw`, `ellipse_sensor_raw`, `failure_code`, `fake_align`, `fix_events`, `hdr_gap_raw`, `pos_count`, `pos_vel_flag`, `pos_vel_flag2`, `post_dop_raw`, `reserved1`; `to_dict()` key `struct_raw` |
+| `Diag0x14FD` | `aux1_lat_raw`, `aux1_lon_raw`, `aux2_lat_raw`, `aux2_lon_raw`, `cell_lat_raw`, `cell_lon_raw`, `raw` |
+| `Diag0x1526V01` | `aux_b8_27_raw` |
+| `Diag0x1807` | `fmt_b30`, `gps_ms_of_week`, `gps_week`, `hb_trailer_word`, `hdr_tail_raw`, `medium_b27_raw`, `medium_body_words`, `medium_fmt_b31`, `medium_fmt_b32`, `medium_word_23` |
+| `Diag0x1807FineCell` / `Diag0x1807MeasRow` | `meas_a_word`, `meas_b_word` / `lane_words` |
+| `Diag0x1874V0c` | `flag_6`, `flag_11` |
+| `Diag0x1C7Cv2Sub*` (8 types) | `entries` (dataclass); `tags` (`to_dict()`) |
+| `Diag0xB0C0` | `aux_b3_raw`, `bearer_word_lo` |
+| `Diag0xB17F` | `aux_b1_raw`, `aux_word_raw`, `rsrp_avg_word`, `rsrp_word`, `rsrq_word`, `rssi_word`, `squal_word`, `srxlev_word` |
+| `Diag0xB18F` cells (`v0x18`) | `raw_10` in place of `raw_14` (the 28 B slot's trailing bytes) |
+| `Diag0xB192` | `num_subpackets`, `request_earfcn`, `request_num_cells_flag`, `request_sp_version`; `LteMl1NeighborCellEntry.timing1`; `LteMl1NeighborRequestCell.pci_raw` |
+| `Diag0xB193` | `body_raw`, `num_subpackets`, `subpacket_id`, `subpacket_size`; `LteMl1ServingCellMeasEntry.cell_index`, `.pci_word` |
+| `Diag0xB195` | `counter`, `request_cells`, `request_header`, `request_sp_version`, `request_trailing`, `response_trailing`; new `LteMl1ConnectedNeighborRequestCell` |
+| `Diag0xB821` | `reserved_raw`, `trailing_raw` |
+| `Diag0xB823` | `cell_global_id`, `ncgi_mcc`, `ncgi_mnc`, `ncgi_nci` |
+| `Diag0xB97F` | `trailing_raw` |
+
 ## v2026.10.26
 
 191 log codes: the 187 of `v2026.10.12` plus four new parsers, `0xB169`,

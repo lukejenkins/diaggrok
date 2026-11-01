@@ -13,7 +13,7 @@ profiles, one per major baseband generation:
                                                   Sierra EM9190, Quectel RM500Q
   394 / 0x02   |  42,827  | 14.4% | MDM9207     | Quectel EG25-G
   390 / 0x01   |   5,926  |  2.0% | MDM9x30     | Sierra MC7455
-  534 / 0x03   |   5,728  |  1.9% | MDM9x07     | Quectel EP06-A
+  534 / 0x03   |   5,728  |  1.9% | MDM9240     | Quectel EP06-A
 
 Common header pattern across all 4: byte+1 = 0x01 (constant). Byte+0
 encodes the chipset-gen-specific version. Past-the-header layouts differ
@@ -64,7 +64,7 @@ code's own records) LTE-ML1/RF-LTE F3 cluster on each version's silicon:
     lte_ml1_mdb_idle.c "apply rsrp offset flag …" (43), lte_ml1_md.c "Ngbr srch
     req (earfcn …)" (16) — names the LTE-PHY *measurement* activity outright.
     GROUND (identity = LTE PHY measurement).
-  - **v0x03 (534B, MDM9x07)** — F3 **ABSENT / N/A**: all 4 EP06-A captures
+  - **v0x03 (534B, MDM9240)** — F3 **ABSENT / N/A**: all 4 EP06-A captures
     carrying 0x1755 v0x03 (and every EP06-A capture in the corpus) have zero
     0x79/0x99/0x98 F3, so in-capture F3 grounding is not possible from the
     current corpus.
@@ -91,7 +91,7 @@ _1755_VARIANTS: dict[tuple[int, int], str] = {
     (614, 0x04): "lte_phy_614_v04",   # SDX55+ — M2000 / FN980 / EM9190 / RM500Q
     (394, 0x02): "lte_phy_394_v02",   # MDM9207 — Quectel EG25-G
     (390, 0x01): "lte_phy_390_v01",   # MDM9x30 — Sierra MC7455
-    (534, 0x03): "lte_phy_534_v03",   # MDM9x07 — Quectel EP06-A
+    (534, 0x03): "lte_phy_534_v03",   # MDM9240 — Quectel EP06-A
 }
 
 
@@ -145,7 +145,7 @@ class Diag0x1755:
         "v0x02 GROUND (EG25-G MDM9207: lte_ml1_mdb_idle 'rsrp offset' + lte_ml1_md "
         "'Ngbr srch earfcn'), v0x04 GROUND (RM520N-GL SDX62: rflm_* PHY + lte_ml1_rfmgr/"
         "lte_rrc_stm, corroborated by RM500Q/SDX62 sites). "
-        "v0x03 F3-ABSENT/N/A — no EP06-A/MDM9x07 capture in the corpus carries any F3. "
+        "v0x03 F3-ABSENT/N/A — no EP06-A/MDM9240 capture in the corpus carries any F3. "
         "Identity (LTE PHY measurement) grounded; body-field byte-offset semantics "
         "remain open per variant. timebase_roles=(metronome,): the header u32 "
         "@offset 4 is monotonic and "
@@ -160,7 +160,7 @@ class Diag0x1755:
         "247 captures. 4 substantive (size, version) profiles, one per "
         "major baseband generation: 614/0x04 (SDX55+ — M2000/FN980/EM9190/RM500Q, "
         "79.6%), 394/0x02 (MDM9207 EG25-G, 14.4%), 390/0x01 (MDM9x30 "
-        "MC7455, 2.0%), 534/0x03 (MDM9x07 EP06-A, 1.9%). "
+        "MC7455, 2.0%), 534/0x03 (MDM9240 EP06-A, 1.9%). "
         "byte+1=0x01 is a corpus-wide invariant across all variants."
     ),
     source_url="",

@@ -4,7 +4,7 @@ The full byte map is in the comment block below the imports.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from struct import unpack_from
 from typing import Any
 
@@ -216,18 +216,23 @@ from diaggrok.registry import register
 #            F3 `lm_tm.c:370` "LeapSec: 18" (RM520N-GL). [105] u8 == 1 with it.
 #   [106:110] / [110:112] a second copy of fix_gps_ms / fix_gps_week, present
 #            iff bit2 (raw — not re-exposed).
-#   [114] == 2, [115] == 1 on every non-empty record (raw). [116:383] zero.
-#   [383:385] u16 raw — differs between otherwise-identical back-to-back copies.
+#   [114] == 2, [115] == 1 on every non-empty record (raw; 3,627/3,627 in a
+#   16-capture walk). [116:383] zero.
+#   [383:] raw tail word — differs between otherwise-identical back-to-back
+#   copies; [385] is non-zero in 92 of 3,755 records, so it is wider than u16.
 #
 #   390 B form (SDX24 EM120R-GL / EM160R-GL, SDX50M Inseego M1000): every v0x0a
 #   record those modems emit is 390 B, never beside a 391 B copy. It is the
-#   same layout with one byte fewer inside the zero run: the raw u16 sits at
-#   [382:384], not [383:385], and is followed by the same 6 zero bytes, so it is
-#   not a 391 B record with its last byte cut. [0:112] decodes unchanged on all
-#   35 corpus records: [12] == 0x04, [37:39] == tac_lac, and the PCI/EARFCN
-#   pairs are those modems' own 0xB193 serving cells. The 19 position-valid
-#   records are cell-only fixes (mask 1, contrib_pct [99] == 100). Raw bytes
-#   differ: [114:116] read 1, 0, and no record sets the velocity or time bit.
+#   same layout with ONE BYTE FEWER AT [112:114], before the 02 01 marker
+#   (v8 correction; v7 placed it inside the [116:383] zero run): the marker
+#   sits at [113:115] in 19/19 non-empty records and the tail word at [382:],
+#   followed by the same zero bytes, so it is not a 391 B record with its last
+#   byte cut. [0:112] decodes unchanged on all 35 corpus records: [12] ==
+#   0x04, [37:39] == tac_lac, and the PCI/EARFCN pairs are those modems' own
+#   0xB193 serving cells. The 19 position-valid records are cell-only fixes
+#   (mask 1, contrib_pct [99] == 100); no record sets the velocity or time bit.
+#   Nothing in an all-zero no-fix record tells the two forms apart, so the
+#   Kaitai mirror keeps [112:] as one raw `tail_112`.
 #   No-fix record (mask 0): the serving-cell identity [2:13]/[35:43] is still
 #   present (every such record) and [43:383] is zero — the cell is known, the
 #   TLE has no fix to tag it with.
@@ -245,6 +250,25 @@ _RAT_LTE = 3
 # version -> minimum record size. v0x0a is 391 B on SDX55..SDX72 and 390 B on
 # SDX24 / SDX50M (see the v0x0a block); both decode through the same offsets.
 _RECORD_LEN = {0x03: 197, 0x08: 218, 0x0a: 390}
+# version -> the byte runs this parser does not name, as (.ksy field, start,
+# end); end None = to the end of the payload. With the named fields they tile
+# each payload exactly (the 0x14FD Kaitai layout). cell_head's
+# reserved_16 / v0x0a's reserved_13 (zero corpus-wide) are not surfaced; the
+# RAT-specific raw_30 / raw_34 are added by _decode_identity.
+_RAW_SPANS: dict[int, tuple[tuple[str, int, int | None], ...]] = {
+    0x08: (("raw_11", 11, 12), ("raw_26", 26, 30), ("raw_38", 38, 45),
+           ("raw_51", 51, 55), ("raw_59", 59, 74), ("raw_78", 78, 88),
+           ("raw_98", 98, 101), ("raw_108", 108, 157), ("raw_173", 173, 187),
+           ("raw_194", 194, 207), ("raw_209", 209, 218), ("trailing", 218, None)),
+    0x03: (("raw_11", 11, 12), ("raw_26", 26, 30), ("raw_38", 38, 43),
+           ("raw_43", 43, 84), ("raw_84", 84, 86), ("raw_96", 96, 99),
+           ("raw_106", 106, 173), ("raw_173", 173, 177), ("raw_184", 184, 197),
+           ("trailing", 197, None)),
+    0x0a: (("raw_12", 12, 13), ("raw_37", 37, 39), ("raw_64", 64, 65),
+           ("raw_69", 69, 73), ("raw_77", 77, 81), ("raw_87", 87, 89),
+           ("raw_104", 104, 112), ("tail_112", 112, None)),
+}
+_V0A_MARKER = b"\x02\x01"   # [114:116] (391 B) / [113:115] (390 B), every non-empty record
 
 
 @dataclass
@@ -321,6 +345,17 @@ class Diag0x14FD:
     aux_time_ms: int | None = None
     aux_time_gps_week: int | None = None
     aux_tac_lac: int | None = None
+    # The i32 behind each scaled lat/lon (v0x08 / v0x03; the aux pair v0x08 only).
+    cell_lat_raw: int | None = None
+    cell_lon_raw: int | None = None
+    aux1_lat_raw: int | None = None
+    aux1_lon_raw: int | None = None
+    aux2_lat_raw: int | None = None
+    aux2_lon_raw: int | None = None
+    # Every byte run this parser does not name, keyed by its .ksy field name
+    # (`raw_<offset>`; v0x0a's length-forked rest is `tail_112`). F3 confirms
+    # the TLE subsystem but labels none of them, so they are surfaced raw.
+    raw: dict[str, bytes] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -404,6 +439,8 @@ class Diag0x14FD:
             d['aux_time_type'] = self.aux_time_type
             d['aux_time_ms'] = self.aux_time_ms
             d['aux_time_gps_week'] = self.aux_time_gps_week
+        if self.raw:
+            d['raw'] = {k: v.hex() for k, v in self.raw.items()}
         return d
 
 
@@ -420,14 +457,18 @@ def _decode_identity(rec: Diag0x14FD, data: bytes, *, gsm: bool) -> None:
         rec.arfcn = unpack_from('<H', data, 30)[0]
         rec.bsic = data[32]
         rec.gsm_band = data[33]
-    # Unrecognised RAT values: identity header still decoded; RAT-specific
-    # [30:38] left in body_raw rather than guessed.
+        rec.raw['raw_34'] = bytes(data[34:38])
+    else:
+        # Unrecognised RAT values: identity header still decoded; RAT-specific
+        # [30:38] kept raw rather than guessed.
+        rec.raw['raw_30'] = bytes(data[30:38])
 
 
 def _decode_cell_pos(rec: Diag0x14FD, data: bytes, off: int) -> None:
     """Block B — cell-DB position + its time, starting at ``off`` (v0x08 88,
     v0x03 86); the same layout in both versions."""
     lat_i, lon_i, alt = unpack_from('<iih', data, off)
+    rec.cell_lat_raw, rec.cell_lon_raw = lat_i, lon_i
     rec.cell_lat_deg = lat_i * _LAT_SCALE
     rec.cell_lon_deg = lon_i * _LON_SCALE
     rec.cell_alt_m = alt
@@ -469,6 +510,8 @@ def _decode_v08(rec: Diag0x14FD, data: bytes) -> None:
     _decode_cell_pos(rec, data, 88)
 
     a1_lat, a2_lat, a1_lon, a2_lon = unpack_from('<iiii', data, 157)
+    rec.aux1_lat_raw, rec.aux2_lat_raw = a1_lat, a2_lat
+    rec.aux1_lon_raw, rec.aux2_lon_raw = a1_lon, a2_lon
     rec.aux1_lat_deg = a1_lat * _LAT_SCALE
     rec.aux1_lon_deg = a1_lon * _LON_SCALE
     rec.aux2_lat_deg = a2_lat * _LAT_SCALE
@@ -526,7 +569,7 @@ def _decode_v0a(rec: Diag0x14FD, data: bytes) -> None:
                  "(its MDM9625 ancestor: identity + cell-DB position + times) / "
                  "v0x0a 391B / 390B (the GNSS fix tagged with the serving cell: identity + "
                  "position + uncertainty + velocity + fix time)"),
-    version=7,
+    version=8,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -540,6 +583,9 @@ def _decode_v0a(rec: Diag0x14FD, data: bytes) -> None:
                    "0x1476 and 0x60 TLE_CELL_CHANGE_C / TLE_POS_UPDATE_C. The 390 B "
                    "v0x0a form (SDX24, SDX50M) is the 391 B layout with one byte fewer "
                    "in its zero run; identity and position decode at the same offsets. "
+                   "v8 surfaces every unnamed byte run raw (`raw`, keyed by "
+                   "the .ksy field name) and refuses a 390 B record whose 02 01 "
+                   "marker sits at the 391 B position [114:116]. "
                    "A payload shorter than its version's minimum record (v0x03 197 B / "
                    "v0x08 218 B / v0x0a 390 B) returns None (registry WARN)."),
     source_url="",
@@ -597,6 +643,13 @@ def parse_0x14fd(log_time: int, data: bytes) -> Diag0x14FD | None:
     if (data[0] == 0x0a and len(data) == 390 and data[382] == 0
             and (data[383] or data[384])):
         return None
+    # v8: the 390 B form drops its byte at [112:114], so its 02 01 marker sits
+    # at [113:115]; a cut 391 B record keeps it at [114:116]. This catches the
+    # cut whatever the tail word holds. Only an all-zero no-fix record (no
+    # marker) stays undetectable, and its cut loses one zero byte.
+    if (data[0] == 0x0a and len(data) == 390 and data[113] == 0
+            and data[114:116] == _V0A_MARKER):
+        return None
     rec = Diag0x14FD(
         log_time=log_time,
         version=data[0],
@@ -606,6 +659,8 @@ def parse_0x14fd(log_time: int, data: bytes) -> Diag0x14FD | None:
         payload_size=len(data),
         body_raw=data[4:],
     )
+    for key, start, end in _RAW_SPANS[data[0]]:
+        rec.raw[key] = bytes(data[start:end])
     # Version-dispatched body decode. Offsets are fixed per version; the full
     # record length was validated above.
     if data[0] == 0x0a:

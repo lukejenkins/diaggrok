@@ -16,11 +16,15 @@ next subpacket begins at `offset + size`. Decode-complete map, verified across
     Subpacket 0 (id=26) -- Request/Config, version-dispatched header:
         ver=2 (all modern): [0:4] u32 EARFCN(low18), [4:6] u16 num_cells|flag
                             (low5=count, bit5=meas-enable), [6:8] u16 reserved
-        ver=1 (MC7700/MDM9200): [0:2] u16 EARFCN, [2:4] u16 flags
-        Per-cell record (16 bytes): [0:4] u32 PCI(low9)+flags,
+        ver=1 (MC7700/MDM9200): [0:2] u16 EARFCN, [2:4] u16 num_cells|flag
+                            (the same word: 0x22 = 2 cells + bit5)
+        Per-cell record (16 bytes): [0:4] u32 PCI(low9)+flags (pci_raw; the
+            flags are live: 0x8<<9 / 0x4<<9 by chipset),
             [4:8] u32 timing0, [8:12] u32 timing1, [12:16] reserved.
         (Per-neighbour PCI byte-matches the response; timing0/1 are byte-
-         identical to the response cell's +40/+44 pair.)
+         identical to the response cell's +40/+44 pair. F3 lte_ml1_md.c
+         "Ngbr meas req (earfcn, pci) cp N num tx N ttl_ref_time ant0 N ant1 N"
+         labels timing0/1 as ttl_ref_time ant0/ant1.)
 
     Subpacket 1 (id=27) -- Response/Measurement, version-dispatched header:
         ver=4 & ver=56 (BYTE-IDENTICAL — 8-byte carrier header):
@@ -42,8 +46,9 @@ next subpacket begins at `offset + size`. Decode-complete map, verified across
             [32:36]  u32  reserved (0)
             [36:38]  u16  aux0 (semantics unresolved)
             [38:40]  u16  aux1 (semantics unresolved)
-            [40:44]  u32  timing (== [44:48]; request-echoed timing/config)
-            [44:48]  u32  timing (duplicate of [40:44])
+            [40:44]  u32  timing (request-echoed ttl_ref_time ant0)
+            [44:48]  u32  timing1 (request-echoed ttl_ref_time ant1; == [40:44]
+                          on every record so far)
             [48:52]  u32  reserved (0)
 
 Reverse-engineered from corpus DLF/HDLC captures across MDM9200/9207/9230,
@@ -165,13 +170,23 @@ class LteMl1NeighborRequestCell:
     +40/+44 pair (request-side timing echoed into the response). Verified by an
     exact positional PCI match (sp26 pci == sp27 pci) across every multi-cell
     record, cross-modem.
+
+    `pci_raw` is the whole u32 word (v25): `pci` is its low 9 bits, and bits 9+
+    are per-cell flags that are NON-ZERO on every committed record (0x8 << 9 on
+    MDM9200 / MDM9207 / SDX24 / SDX55, 0x4 << 9 on SDX62). F3 lte_ml1_md.c
+    "Ngbr meas req (earfcn, pci) cp %d num tx %d ttl_ref_time ant0 %d ant1 %d"
+    describes this record; the flag placement is consistent with cp + num_tx
+    packed after the PCI, but that is a lead, not a decode. timing0 / timing1
+    are the F3 print's ttl_ref_time ant0 / ant1.
     """
     pci: int
     timing0: int
     timing1: int
+    pci_raw: int
 
     def to_dict(self) -> dict[str, Any]:
-        return {'pci': self.pci, 'timing0': self.timing0, 'timing1': self.timing1}
+        return {'pci': self.pci, 'timing0': self.timing0, 'timing1': self.timing1,
+                'pci_raw': self.pci_raw}
 
 
 @dataclass
@@ -209,7 +224,10 @@ class LteMl1NeighborCellEntry:
     energy_filt: int     # +28 u32 filtered energy (~1.2e6, low ~22 bits)
     aux0: int            # +36 u16 small field (semantics unresolved, ~42)
     aux1: int            # +38 u16 small field (semantics unresolved, ~45)
-    timing: int          # +40 u32 request-echoed timing (+40 == +44 always)
+    timing: int          # +40 u32 request-echoed ttl_ref_time ant0 (F3)
+    timing1: int         # +44 u32 request-echoed ttl_ref_time ant1 (F3; v25).
+                         #        == timing on every record so far (ant0 == ant1
+                         #        in every F3 print too), but its own quantity
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -228,6 +246,7 @@ class LteMl1NeighborCellEntry:
             'aux0': self.aux0,
             'aux1': self.aux1,
             'timing': self.timing,
+            'timing1': self.timing1,
         }
 
 
@@ -240,6 +259,14 @@ class Diag0xB192:
     rolling SFN). `request_cells` is the decoded request subpacket (id=26). The
     parser version-dispatches the response subpacket (id=27) across the three
     observed versions {2, 4, 56}.
+
+    v25 surfaces what the parser used to read past: `num_subpackets` (outer
+    [1]) and the request subpacket's own header, `request_sp_version` (1 on
+    MDM9200, 2 elsewhere), `request_earfcn` (u16 on ver 1, u32 low 18 bits
+    elsewhere) and `request_num_cells_flag` (the raw u16: low 5 bits = count,
+    bit 5 = meas-enable). The request fields are None when the record has no
+    request subpacket, or (header fields) when its body is shorter than its
+    header.
     """
     log_time: int
     version: int
@@ -249,17 +276,25 @@ class Diag0xB192:
     num_cells: int
     entries: list[LteMl1NeighborCellEntry] = field(default_factory=list)
     request_cells: list[LteMl1NeighborRequestCell] = field(default_factory=list)
+    num_subpackets: int = 0                  # outer [1]
+    request_sp_version: int | None = None    # request (id=26) subpacket version
+    request_earfcn: int | None = None        # request carrier header EARFCN
+    request_num_cells_flag: int | None = None  # request header count | meas-enable
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'type': 'Diag0xB192',
             'log_time': self.log_time,
             'version': self.version,
+            'num_subpackets': self.num_subpackets,
             'sp_version': self.sp_version,
             'counter': self.counter,
             'earfcn': self.earfcn,
             'num_cells': self.num_cells,
             'entries': [e.to_dict() for e in self.entries],
+            'request_sp_version': self.request_sp_version,
+            'request_earfcn': self.request_earfcn,
+            'request_num_cells_flag': self.request_num_cells_flag,
             'request_cells': [c.to_dict() for c in self.request_cells],
         }
 
@@ -267,7 +302,7 @@ class Diag0xB192:
 @register(LOG_LTE_ML1_NEIGHBOR_CELL_MEAS, domain="lte-signal",
     name="0xB192",
     description="Idle-mode neighbor cell meas 0xB192 — decode-complete: version-dispatched sp27 {2,4,56}, full 52B cell record (PCI/EARFCN + per-Rx energy words) + request sp26 + outer counter; rsrp/rsrq None (energy, not dBm)",
-    version=24,
+    version=25,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -299,20 +334,24 @@ class Diag0xB192:
     source_url="https://github.com/lukejenkins",
     # Decode-complete field accounting. Every byte of both
     # subpackets is decoded into a named field or an explicit reserved region —
-    # no `raw: bytes` remains. Exposed named fields (17 identified / 15 parsed):
-    #   Outer(4): version, num_subpackets(implicit via walk), counter, sp_version.
+    # no `raw: bytes` remains. Exposed named fields (21 identified / 19 parsed):
+    #   Outer(4): version, num_subpackets, counter, sp_version.
     #   Response carrier: earfcn, num_cells.
-    #   Response per-cell(11): pci + energy0/energy1/energy2 + energy_wide0/
-    #     energy_wide1 + meas_index + energy_filt + aux0 + aux1 + timing.
-    #   Request per-cell: pci, timing0, timing1.
-    # PARSED=15 fields carry a grounded semantic (structure, pci/earfcn VERIFIED,
-    # the energy accumulators are energy-domain quantities). IDENTIFIED=17
+    #   Response per-cell(12): pci + energy0/energy1/energy2 + energy_wide0/
+    #     energy_wide1 + meas_index + energy_filt + aux0 + aux1 + timing +
+    #     timing1 (v25).
+    #   Request carrier(3, v25): request_sp_version, request_earfcn,
+    #     request_num_cells_flag.
+    #   Request per-cell: pci, timing0, timing1, pci_raw (v25).
+    # PARSED=19 fields carry a grounded semantic (structure, pci/earfcn VERIFIED,
+    # the energy accumulators are energy-domain quantities, timing/timing1 the
+    # F3 ttl_ref_time pair). IDENTIFIED=21
     # counts the 2 aux fields whose semantic is not yet resolved. rsrp/rsrq are
     # deliberately None (no calibrated dBm in the packet — -raw/10 and (raw-60)/2
     # decodes are plausible-but-wrong) so they are NOT counted as
     # parsed dBm quantities; the underlying data is extracted as energy words.
-    fields_identified=17,
-    fields_parsed=15,
+    fields_identified=21,
+    fields_parsed=19,
     # Byte-0 is the DIAG outer log version, corpus-attested invariantly
     # 0x01 (n=55521). Gated below per "size invariance != format invariance". The
     # INNER response subpacket version (id=27, ver ∈ {2,4,56}) is a separate field
@@ -390,8 +429,16 @@ def parse_0xb192(
         _parse_request_subpacket(request_sp, request_ver)
         if request_sp is not None else []
     )
+    request_earfcn, request_num_cells_flag = (
+        _parse_request_header(request_sp, request_ver)
+        if request_sp is not None else (None, None)
+    )
     return _parse_response_subpacket(
-        log_time, version, counter, response_ver, response_sp, request_cells
+        log_time, version, counter, response_ver, response_sp, request_cells,
+        num_subpackets=num_subpackets,
+        request_sp_version=request_ver if request_sp is not None else None,
+        request_earfcn=request_earfcn,
+        request_num_cells_flag=request_num_cells_flag,
     )
 
 
@@ -399,6 +446,33 @@ def _carrier_header_len(sp_version: int) -> int:
     """Response carrier-header size: 8 B for ver=4/56, 4 B for the MDM9200 ver=2."""
     return (_CARRIER_HEADER_MDM9200 if sp_version in _RESP_VER_MDM9200
             else _CARRIER_HEADER_MODERN)
+
+
+def _request_header_len(sp_version: int) -> int:
+    """Request carrier-header size: 4 B for the MDM9200 ver=1, 8 B otherwise."""
+    # NB: the request (id=26) and response (id=27) number their versions
+    # independently. The 4-byte-header MDM9200 variant is request ver=1 /
+    # response ver=2 — so the small-header case is sp_version==1 HERE, but
+    # sp_version==2 in the response parser. Not a typo.
+    return _CARRIER_HEADER_MDM9200 if sp_version in (1,) else _CARRIER_HEADER_MODERN
+
+
+def _parse_request_header(
+    sp: bytes, sp_version: int
+) -> tuple[int | None, int | None]:
+    """(earfcn, num_cells_flag) from the request subpacket's carrier header.
+
+    ver=1 (MDM9200): earfcn u16 @0, num_cells_flag u16 @2. Every other version:
+    earfcn u32 low 18 bits @0, num_cells_flag u16 @4 (reserved u16 @6). The flag
+    word is the same on both: low 5 bits = count, bit 5 = meas-enable (0x22 on
+    the MC7700 = 2 cells). (None, None) when the body is shorter than its
+    header, matching the request parse's best-effort contract.
+    """
+    if len(sp) < _request_header_len(sp_version):
+        return None, None
+    if sp_version in (1,):
+        return unpack_from('<H', sp, 0)[0], unpack_from('<H', sp, 2)[0]
+    return unpack_from('<I', sp, 0)[0] & 0x3FFFF, unpack_from('<H', sp, 4)[0]
 
 
 def _parse_request_subpacket(
@@ -411,11 +485,7 @@ def _parse_request_subpacket(
     record (16 B): pci low-9 + flags (u32 @0), timing0 (u32 @4), timing1
     (u32 @8), reserved (u32 @12). Best-effort — never fails the whole parse.
     """
-    # NB: the request (id=26) and response (id=27) number their versions
-    # independently. The 4-byte-header MDM9200 variant is request ver=1 /
-    # response ver=2 — so the small-header case is sp_version==1 HERE, but
-    # sp_version==2 in the response parser. Not a typo.
-    hdr = _CARRIER_HEADER_MDM9200 if sp_version in (1,) else _CARRIER_HEADER_MODERN
+    hdr = _request_header_len(sp_version)
     cells: list[LteMl1NeighborRequestCell] = []
     if len(sp) < hdr:
         return cells
@@ -424,11 +494,12 @@ def _parse_request_subpacket(
         co = hdr + i * _REQ_CELL_RECORD_SIZE
         if co + _REQ_CELL_RECORD_SIZE > len(sp):
             break
-        pci = unpack_from('<I', sp, co)[0] & 0x1FF
+        pci_raw = unpack_from('<I', sp, co)[0]
         cells.append(LteMl1NeighborRequestCell(
-            pci=pci,
+            pci=pci_raw & 0x1FF,
             timing0=unpack_from('<I', sp, co + 4)[0],
             timing1=unpack_from('<I', sp, co + 8)[0],
+            pci_raw=pci_raw,
         ))
     return cells
 
@@ -436,6 +507,7 @@ def _parse_request_subpacket(
 def _parse_response_subpacket(
     log_time: int, version: int, counter: int, sp_version: int,
     sp: bytes, request_cells: list[LteMl1NeighborRequestCell],
+    **record_fields: Any,
 ) -> Diag0xB192 | None:
     """Parse the response subpacket data (id=27), version-dispatched.
 
@@ -487,6 +559,7 @@ def _parse_response_subpacket(
             aux0=unpack_from('<H', sp, co + 36)[0],
             aux1=unpack_from('<H', sp, co + 38)[0],
             timing=unpack_from('<I', sp, co + 40)[0],
+            timing1=unpack_from('<I', sp, co + 44)[0],
         ))
 
     return Diag0xB192(
@@ -498,4 +571,5 @@ def _parse_response_subpacket(
         num_cells=num_cells,
         entries=entries,
         request_cells=request_cells,
+        **record_fields,
     )

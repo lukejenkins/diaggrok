@@ -35,7 +35,7 @@ The corpus holds **N=9 records across 7 chipsets and 4 vendors**:
 | MC7455 MDM9x30             | Sierra  | 0x02    | ``13 00 10 02 13 00 10 01``   |
 | SIM7600NA-H MDM9607        | SIMCom  | 0x01    | ``13 00 10 02 ff ff ff ff``   |
 | EM7565 MDM9x50             | Sierra  | 0x01    | ``13 ...``  (num_slots=1)     |
-| EM9291 SDX65               | Sierra  | 0x02    | ``13 ...``  (num_slots=2)     |
+| EM9291 SDX62               | Sierra  | 0x02    | ``13 ...``  (num_slots=2)     |
 | MC7411 (survey)            | Sierra  | 0x01    | ``13 ...``  (num_slots=1)     |
 | RG520N-NA (survey)         | Quectel | 0x02    | ``13 ...``  (num_slots=2)     |
 

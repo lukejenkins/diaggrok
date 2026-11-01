@@ -214,7 +214,7 @@ class Diag0x1478:
     - 85 B on MDM9600 (version 0, Sierra MC7700 SWI9200X) — header +
       glo_ms GROUND (non-F3 references); gps_week is WNRO-rolled (−1024);
       no BeiDou (bds_ms=None)
-    - 156 B on MDM9207 (version 2, EG25-G / EP06 / EG95NA / SIM7600NA /
+    - 156 B on MDM9207 / MDM9240 (version 2, EG25-G / EP06 / EG95NA / SIM7600NA /
       MC7455 / EM7455) — v0x02 header + gps_ms/glo_ms/bds_ms F3-GROUND
     - 174 B on SDX20 V2 (version 3, EG18-NA / LM960)
     - 221 B on SDX55 (version 4, FN980m / RM500Q)

@@ -71,7 +71,7 @@ the exact job id (the shifted-SV baseline is shown beside each count):
     62 B only: [58:62] trailing u32, unmapped ([60] only ever has its low
                                 nibble clear; zero on ~half the records)
 
-``d55`` -- 55 B (MDM9x07 / MDM9x30: EG25-G, EG95, EP06, MC7455)::
+``d55`` -- 55 B (MDM9x07 / MDM9x30 / MDM9240: EG25-G, EG95, EP06, MC7455)::
 
     [8]     u8  descriptor_tag  == 0x33 (drift guard)
     [11]    u8  sv              100/100 same-SV joins (baseline 15-49)

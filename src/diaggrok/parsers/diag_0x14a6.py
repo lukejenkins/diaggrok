@@ -67,7 +67,7 @@ _SLOT_BASE = 23
 #                signal-quality gate. Value is kept raw (size-invariance ≠
 #                format-invariance) — a future capture may show other values.
 #                Cross-modem scope: nav_state is NOT chipset- or vendor-
-#                specific. A Quectel EG18-NA (MDM9640) capture carries
+#                specific. A Quectel EG18-NA (SDX20) capture carries
 #                nav_state = 0x0010 on 290/290 records — a different vendor
 #                AND a different chipset family from the Sierra EM7565
 #                (MDM9x50, nav_state 0x0110). byte[11]=0x10 is the shared
@@ -260,7 +260,7 @@ class Diag0x14A6:
     source_type="re",
     source_detail=(
         "Clean-room RE. v0x02 (151 B) from a 3195-record cross-chipset corpus: "
-        "EG12-GT, EG18-NA SDX20 V2, EG25-G MDM9207, EM7511 MDM9650, EP06-A MDM9x07, "
+        "EG12-GT, EG18-NA SDX20 V2, EG25-G MDM9207, EM7511 MDM9250, EP06-A MDM9240, "
         "FN980 SDX55, LM960 SDX20 (5 firmware generations), RM500Q SDX65; every byte "
         "named, no body_raw. Header fields are F3-grounded: tm_core.c prints "
         "'LM's GPS eph. req suppressed: Nd=%x,HV=%x,VB=%x' (and 'GPS Eph. req to "

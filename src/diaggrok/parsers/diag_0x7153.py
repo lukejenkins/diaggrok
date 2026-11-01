@@ -118,7 +118,7 @@ class Diag0x7153:
     source_type="re",
     source_detail=(
         "Clean-room RE from an 18-record cross-chipset corpus: Telit LM960 "
-        "SDX20 (2 records, byte[0]=0x06), Sierra MC7411 MDM9x50 (2 records, "
+        "SDX20 (2 records, byte[0]=0x06), Sierra MC7411 MDM9250 (2 records, "
         "byte[0]=0x1e), Sierra MC7455 MDM9x30 (3 records: 0x1e pre-reset / "
         "0x02 post-reset / 0x02 boot+GNSS), SIMCom SIM7600NA-H MDM9607 (4 "
         "records, all byte[0]=0x02), Sierra EM9291 SDX62 (7 records, all "

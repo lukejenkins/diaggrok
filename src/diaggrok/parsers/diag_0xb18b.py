@@ -76,8 +76,9 @@ _EARFCN_OFFSET_BY_SHAPE = {
 # and 0xB193 (LTE ML1 serving-cell meas) in the same session both independently
 # report EARFCN 2175 / PCI <pci>, matching this shape's u16@4 / u16@6 exactly. The
 # MDM9200 emits **no F3** (0x79/0x92/0x99 all absent corpus-wide), so this is an
-# in-capture cross-code verdict, not an F3 one. See `_V01_SHAPE`.
-_V01_SHAPE = (0x01, 60)          # (version, payload_size) — MDM9200 / SWI9200X
+# in-capture cross-code verdict, not an F3 one. See `_V01_SHAPES`.
+# (version, payload_size): 60 B MDM9200 / SWI9200X, 64 B MDM9625 (T77W595).
+_V01_SHAPES = frozenset({(0x01, 60), (0x01, 64)})
 _V01_EARFCN_OFF = 4              # u16 little-endian
 _V01_PCI_OFF = 6                 # u16 little-endian (serving PCI, single-cell-grounded)
 _KNOWN_VERSIONS = (0x01, 0x20, 0x30)
@@ -86,7 +87,7 @@ _KNOWN_VERSIONS = (0x01, 0x20, 0x30)
 # attested size that is not itself an attested size is a truncated record ->
 # None (registry warning). Longer payloads keep the legacy
 # unstructured fallback.
-_SIZES_BY_VERSION = {0x01: (60,), 0x20: (68, 72), 0x30: (66,)}
+_SIZES_BY_VERSION = {0x01: (60, 64), 0x20: (68, 72), 0x30: (66,)}
 
 
 def _tail_density(data: bytes) -> float:
@@ -107,8 +108,8 @@ class Diag0xB18B:
 
     `earfcn` is the serving-cell EARFCN, read from a **variant-dependent**
     offset (u32@4 for the 66/68 B shapes, u32@8 for the 72 B SDX55 shape, and
-    **u16@4 for the 60 B v0x01 MDM9200 shape**; see `_EARFCN_OFFSET_BY_SHAPE`
-    and `_V01_SHAPE`). `pci` is the serving PCI, populated only for the v0x01
+    **u16@4 for the 60 B MDM9200 and 64 B MDM9625 v0x01 shapes**; see `_EARFCN_OFFSET_BY_SHAPE`
+    and `_V01_SHAPES`). `pci` is the serving PCI, populated only for the v0x01
     shape (u16@6; `None` for the u32-EARFCN shapes, which do not carry it here).
     `sub_id` is the u16@2 sub-identifier (varies by modem/firmware — surfaced
     raw, not an invariant). `structured` is True when the (version, size) shape
@@ -155,7 +156,7 @@ class Diag0xB18B:
         "emits no F3, so cross-code not F3). EM7565 (MDM9x50) v0x20 "
         "earfcn verified on CBRS B48"
     ),
-    version=9,
+    version=10,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -171,11 +172,15 @@ class Diag0xB18B:
         "the same session independently report EARFCN 2175 / PCI <pci>, matching "
         "u16@4 / u16@6 exactly. MDM9200 emits no F3 (0x79/0x92/0x99 absent "
         "corpus-wide), so this is an in-capture cross-code verdict, not F3. "
+        "The (0x01,64) MDM9625 shape (Foxconn T77W595) has the same u16@4 / u16@6 "
+        "layout: 2363/2363 records across 14 captures and three serving cells agree "
+        "with the co-captured 0xB181 / 0xB193 serving (EARFCN, PCI), the 5 that "
+        "lead a serving update by one record included. "
         "Version enum {0x01,0x20,0x30} + earfcn range=(0,262143) + pci "
         "range=(0,503) invariants. pci is single-cell-grounded (the whole v0x01 "
         "corpus is one cell); sub_id@2 varies by modem; the live "
         "counter/reserved/tail decode is not done. A payload shorter than the "
-        "version's largest attested size (v0x01 60 B, v0x20 68/72 B, v0x30 66 B) "
+        "version's largest attested size (v0x01 60/64 B, v0x20 68/72 B, v0x30 66 B) "
         "that is not itself an attested size returns None (registry warning); "
         "longer unknown shapes fall back to an unstructured u32@4 read."
     ),
@@ -205,8 +210,8 @@ def parse_0xb18b(log_time: int, data: bytes) -> Diag0xB18B | None:
         return None
     sub_id = unpack_from('<H', data, 2)[0] if len(data) >= 4 else 0
     pci: int | None = None
-    # v0x01 (60 B) MDM9200: 16-bit EARFCN@4 + serving PCI@6 (see _V01_SHAPE).
-    if (version, len(data)) == _V01_SHAPE:
+    # v0x01 (60 B MDM9200, 64 B MDM9625): 16-bit EARFCN@4 + serving PCI@6.
+    if (version, len(data)) in _V01_SHAPES:
         earfcn = unpack_from('<H', data, _V01_EARFCN_OFF)[0]
         pci = unpack_from('<H', data, _V01_PCI_OFF)[0]
         structured = True

@@ -45,7 +45,7 @@ decoded as cells.
 ======  =========================  ======  ===========  ==========  ======
 ver     silicon (corpus)           size    dl_earfcn    cells at    head
 ======  =========================  ======  ===========  ==========  ======
-0x20    Sierra SDX20 (EM7565/      580     u32@12       +34         34 B
+0x20    Sierra MDM9250 (EM7565/      580     u32@12       +34         34 B
         EM7511/MC7411)
 0x23    Telit LM960A18 MDM9x40     588     u32@16       +42         42 B
 0x28    Quectel EM120R-GL SDX24    572     u32@16       +26         26 B
@@ -118,6 +118,9 @@ from diaggrok.registry import register
 
 V23_VERSION = 0x23
 _CELL_STRIDE = 32
+# v0x18 (MDM9240) drops dl_bw_rb + num_rx_ant from the cell entry: 28 B slots.
+_V18_VERSION = 0x18
+_V18_CELL_STRIDE = 28
 _NUM_DECODED_SLOTS = 2   # serving + first IC neighbour (the F3-grounded slots)
 
 # Fixed-size versions: version -> (dl_earfcn offset, first cell slot, size).
@@ -125,6 +128,7 @@ _NUM_DECODED_SLOTS = 2   # serving + first IC neighbour (the F3-grounded slots)
 # field, so a record shorter than its size is declined (registry warning),
 # never decoded; v0x30 also has rare longer records, which stay accepted.
 _FIXED_LAYOUT = {
+    0x18: (12, 34, 512),
     0x20: (12, 34, 580),
     0x23: (16, 42, 588),
     0x28: (16, 26, 572),
@@ -211,15 +215,34 @@ class Diag0xB18F:
         return d
 
 
+def _decode_cell_v18(data: bytes, off: int, end: int) -> dict[str, Any]:
+    """The v0x18 28 B entry: raw_0, pci, rsrp_raw[3], then the raw_10 run that
+    holds the 0x01e0 / 0xa0 constants the 32 B entry carries at +14 / +18."""
+    pci = unpack_from('<H', data, off + 2)[0]
+    rsrp_raw = list(unpack_from('<HHH', data, off + 4))
+    return {
+        "raw_0": unpack_from('<H', data, off)[0],
+        "pci": pci,
+        "dl_bw_rb": None,
+        "populated": any(rsrp_raw),
+        "num_rx_ant_candidate": None,
+        "rsrp_raw": rsrp_raw,
+        "rsrp_dbm": [_rsrp_dbm(r) for r in rsrp_raw],
+        "raw_10": data[off + 10:end],
+    }
+
+
 def _decode_fixed(version: int, data: bytes) -> dict[str, Any]:
     earfcn_off, cells_off, _ = _FIXED_LAYOUT[version]
-    tail_off = cells_off + _NUM_DECODED_SLOTS * _CELL_STRIDE
+    stride, cell = ((_V18_CELL_STRIDE, _decode_cell_v18) if version == _V18_VERSION
+                    else (_CELL_STRIDE, _decode_cell))
+    tail_off = cells_off + _NUM_DECODED_SLOTS * stride
     out: dict[str, Any] = {
         "carrier_index": data[1],
         "dl_earfcn": unpack_from('<I', data, earfcn_off)[0],
         "cells": [
-            _decode_cell(data, o, o + _CELL_STRIDE)
-            for o in range(cells_off, tail_off, _CELL_STRIDE)
+            cell(data, o, o + stride)
+            for o in range(cells_off, tail_off, stride)
         ],
         "tail_raw": data[tail_off:],
     }
@@ -252,25 +275,25 @@ def _decode_v36(data: bytes) -> dict[str, Any]:
 # (EM120R-GL SDX24, 283 records). Each version has its own size and layout, and
 # every one carries carrier/EARFCN/PCI at version-specific offsets that join
 # the RRC serving cell exactly — consistent with byte 0 selecting the layout.
-_B18F_VERSIONS_OBSERVED = (0x20, 0x23, 0x28, 0x30, 0x36)
+_B18F_VERSIONS_OBSERVED = (0x18, 0x20, 0x23, 0x28, 0x30, 0x36)
 
 
 @register(
     0xB18F,
     name="0xB18F",
-    description="LTE ML1 AdvRx IC cell list: carrier, DL EARFCN, serving + IC-neighbour PCI/BW/RSRP (v0x20/0x23/0x28/0x30/0x36)",
-    version=5,
+    description="LTE ML1 AdvRx IC cell list: carrier, DL EARFCN, serving + IC-neighbour PCI/BW/RSRP (v0x18/0x20/0x23/0x28/0x30/0x36)",
+    version=6,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
-    source_detail="All five versions (v0x20 580 B, v0x23 588 B, v0x28 572 B, v0x30 572 B, v0x36 60 + 28*n B) decode to the same field set. Carrier-0 (pci, dl_earfcn, dl_bw_rb) == 0xB0C2 RRC on v0x20 3672/3672, v0x23 302/302, v0x28 109/109, v0x30 1263/1263, v0x36 2127/2211; v0x20 slot-0 PCI == F3 lte_ml1_sm_conn_wb_stm.c:3235 269/269; v0x23 slot-0/slot-1 PCI == F3 wb_stm.c 'Serving Cell' 2715/2715 / 'Neighbor Cell' 870/871; v0x28 (earfcn, pci) == F3 lte_rrc_sib.c:517/:3946 17/17; rsrp_raw[1..2] == 0xB193 serving RSRP (median 0.00 dB) on v0x30/v0x36. Truncated payloads return None.",
+    source_detail="All six versions (v0x18 512 B, v0x20 580 B, v0x23 588 B, v0x28 572 B, v0x30 572 B, v0x36 60 + 28*n B) decode to the same field set. Carrier-0 (pci, dl_earfcn, dl_bw_rb) == 0xB0C2 RRC on v0x20 3672/3672, v0x23 302/302, v0x28 109/109, v0x30 1263/1263, v0x36 2127/2211; v0x20 slot-0 PCI == F3 lte_ml1_sm_conn_wb_stm.c:3235 269/269; v0x23 slot-0/slot-1 PCI == F3 wb_stm.c 'Serving Cell' 2715/2715 / 'Neighbor Cell' 870/871; v0x28 (earfcn, pci) == F3 lte_rrc_sib.c:517/:3946 17/17; rsrp_raw[1..2] == 0xB193 serving RSRP (median 0.00 dB) on v0x30/v0x36. v0x18 (MDM9240) is the v0x20 head with a 28 B cell slot (no dl_bw_rb / num_rx_ant): carrier-0 (dl_earfcn, slot-0 pci) == 0xB0C2 458/486; == F3 lte_ml1_md.c:5922 'Serv cell (%d, %d)' 104/116 within 2 s; slot-1 pci == F3 lte_ml1_md.c:5404 'nbr meas cnf for pci %d' 978/993, and its rsrp_raw/16-180 == that print's Q7 rsrp with median error 0.2 dB. Truncated payloads return None.",
     source_url="",
     issues=(),
     primary_issue=None,
     fields_identified=10,
     fields_parsed=10,
     field_invariants={
-        "version": {"enum": [0x20, 0x23, 0x28, 0x30, 0x36]},
+        "version": {"enum": [0x18, 0x20, 0x23, 0x28, 0x30, 0x36]},
     },
 )
 def parse_0xb18f(log_time: int, data: bytes) -> Diag0xB18F | None:

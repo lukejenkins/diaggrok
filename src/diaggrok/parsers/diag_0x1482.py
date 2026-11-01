@@ -58,11 +58,11 @@ from diaggrok.registry import register
 #     (51% of the 107B common region is format-level constant.)
 #
 #   Size variants:
-#     107B: MC7455 (MDM9x30), EP06A (MDM9x07), FN980m (SDX55)
-#     115B: EM9190 (SDX55), EM7511 (MDM9650) — 8 extra bytes vs 107B.
+#     107B: MC7455 (MDM9x30), EP06A (MDM9240), FN980m (SDX55)
+#     115B: EM9190 (SDX55), EM7511 (MDM9250) — 8 extra bytes vs 107B.
 #     The 8-byte delta lines up with the slot-stride hypothesis (1 extra slot
 #     at the tail).  The size_class label '115_sdx55' is a size tag, not a
-#     chipset tag (MDM9650 also emits the 115 B class).
+#     chipset tag (MDM9250 also emits the 115 B class).
 
 # Cross-chipset signature markers (empirically stable — see docstring).
 _SIG_9AC1FE = bytes.fromhex('9ac1fe')           # at offset 10..13
@@ -72,7 +72,7 @@ _HEADER_SIG_57 = 0x57                           # byte at offset 16
 _MEAS_TAG_0009 = 0x0009                         # u16LE at offset 60..62 (array header)
 
 # Cross-chipset body constants in the [17..106] region, checked on 4
-# generations (MDM9x30 MC7455, MDM9x07 EP06A, SDX55 EM9190, MDM9650
+# generations (MDM9x30 MC7455, MDM9240 EP06A, SDX55 EM9190, MDM9250
 # EM7511). The core set ([26] [30] [38] [49] [50]) comes from per-byte
 # variance on a 575-record EM9190 drive capture, cross-checked against the
 # other chipsets' single-record fixtures; a per-offset check on all 4
@@ -110,8 +110,8 @@ _GNSS_1482_BODY_MARKERS: tuple[tuple[int, int], ...] = (
 # Byte [27] is firmware-specific, not chipset-specific. Exposed as a
 # dedicated parser field so downstream consumers can fingerprint the
 # firmware variant. Observed:
-#   0x00: MC7455 (MDM9x30), EP06A (MDM9x07), EM9190 (SDX55),
-#         EM7511 (MDM9650)
+#   0x00: MC7455 (MDM9x30), EP06A (MDM9240), EM9190 (SDX55),
+#         EM7511 (MDM9250)
 #   0x01: FN980 (SDX55)
 # The split across two SDX55 modems (EM9190 vs FN980) shows this is a
 # firmware-build identifier, not a chipset-family marker.
@@ -191,7 +191,7 @@ _GNSS_1482_FW_FINGERPRINTS: dict[str, dict[str, object]] = {
     },
     "EP06A 01.009.01.009 (single fixture)": {
         "size_class": "107_mdm9x",
-        "modems": ("EP06A (Quectel, MDM9x07)",),
+        "modems": ("EP06A (Quectel, MDM9240)",),
         "byte_27": 0x00,
         "byte_88": 0xe5,
         "byte_94_fixture": 0x07,
@@ -199,7 +199,7 @@ _GNSS_1482_FW_FINGERPRINTS: dict[str, dict[str, object]] = {
     },
     "EM7511 (single fixture)": {
         "size_class": "115_sdx55",
-        "modems": ("EM7511 (Sierra, MDM9650)",),
+        "modems": ("EM7511 (Sierra, MDM9250)",),
         "byte_27": 0x00,
         "bytes_88_89": (0x00, 0x00),
         "byte_90_fixture": 0x10,               # EM7511 single fixture's [90]
@@ -225,7 +225,7 @@ class Diag0x1482:
     **These are not per-constellation SV counts** (GPS, GLO, GAL, BDS,
     QZSS, SBAS, IRNSS), despite the seven-entry shape.  Pearson
     correlation against LG290P MSM7 ground truth across 1,158 records on
-    4 chipset families (FN980 SDX55, RM500Q SDX24, EP06A MDM9x07, LM960
+    4 chipset families (FN980 SDX55, RM500Q SDX24, EP06A MDM9240, LM960
     Telit MDM962x) gives **no strong correlation (|r| ≥ 0.9)** and
     **every non-NaN r is negative** — meas_count_X goes DOWN as the
     reference sees MORE satellites.  Three fields (2, 3, 5) anti-
@@ -347,8 +347,8 @@ _SIZE_115 = 115
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Clean-room RE across MC7455 (MDM9x30), EP06A (MDM9x07), EM9190 and "
-        "FN980 (SDX55), EM7511 (MDM9650) and RM520N-GL (SDX62). Header: "
+        "Clean-room RE across MC7455 (MDM9x30), EP06A (MDM9240), EM9190 and "
+        "FN980 (SDX55), EM7511 (MDM9250) and RM520N-GL (SDX62). Header: "
         "byte[0] == 0x00 and u16LE subtype 0x0da3 at [1:3] are universal "
         "across 5 chipset fixtures and a 1339-record corpus, and gate the "
         "parser before any other byte access; tick_counter_lo, "

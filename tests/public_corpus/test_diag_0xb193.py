@@ -31,14 +31,19 @@ def _synthetic_b193() -> bytes:
       data[2:4]  system frame number = 0    (not read by the parser)
       data[4]    subpacket_id = 25
       data[5]    subpacket_version = 36     (selects the v36 field offsets)
-      data[6:8]  subpacket_size = 78        (4-byte header + 74-byte body)
+      data[6:8]  subpacket_size = 524       (4-byte header + 520-byte body)
 
-      subpacket data (data[8:]), 74 bytes:
+      subpacket data (data[8:]), 520 bytes = the v36 record law, 8 B carrier
+      header + FOUR fixed 128 B slots (parser v40; a body short of the
+      four slots is refused since parser v41 -- this frame used to carry
+      one 66 B cell and no longer parses in that shape):
         sp[0:4]   u32 earfcn_raw = 800      -> earfcn = 800 & 0x3FFFF = 800
         sp[4:6]   u16 num_cells = 1
         sp[6:8]   u16 num_rx_antennas = 1   (not decoded into entries)
 
-        per-cell record (sp[8:74], 66 bytes -- the v36 min_cell_record):
+        slot 0 (sp[8:136]; the first 66 bytes carry the old synthetic cell,
+        the rest and slots 1..3 are zero-filled, as unused slots are on the
+        wire):
           cell+0:4   u32 pci_raw = 6        -> pci = 6 & 0x1FF = 6
           cell+4:56  52 zero-filled bytes    (intermediate fields, unused
                                                by the v36 decode path)
@@ -54,6 +59,8 @@ def _synthetic_b193() -> bytes:
         + pack('<H', _RSRQ_RAW)
     )
     assert len(cell) == 66
+    cell = cell + bytes(128 - 66) + bytes(3 * 128)      # four 128 B v36 slots
+    assert len(cell) == 4 * 128
 
     subpacket_data = (
         pack('<I', _EARFCN)  # carrier header: earfcn_raw
@@ -61,7 +68,7 @@ def _synthetic_b193() -> bytes:
         + pack('<H', 1)      # num_rx_antennas
         + cell
     )
-    assert len(subpacket_data) == 74
+    assert len(subpacket_data) == 8 + 4 * 128
 
     body = (
         pack('<B', 1)                          # num_subpackets

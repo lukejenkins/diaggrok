@@ -78,7 +78,7 @@ instead.
     err`, on the same tick: BW 16/16, PHICH 16/16, sfn (8 MIB MSBs x4)
     15/16, freq_err (signed) 15/16. The miss is off on both sfn and
     freq_err, so a different decode attempt.
-  * v0x03, MC7411 MDM9x50 (604 records): band 604/604; n_black 604/604
+  * v0x03, MC7411 MDM9250 (604 records): band 604/604; n_black 604/604
     (baseline 2/48); n_cell = `Init Acq Cnf; earfcn num cells` 601/604
     (baseline 10/48); acq_failed = `LTE_CPHY_ACQ_CNF Status` != 0 572/572
     (baseline 4/17); Cell id in cells[].pci 96/99; PBCH BW 49/49, PHICH

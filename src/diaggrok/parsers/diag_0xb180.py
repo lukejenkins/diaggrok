@@ -122,7 +122,7 @@ precedes it. Matched by format string (line numbers move across builds):
 
 | capture (chipset) | blocks | pci | rsrp(used) | rsrq(used) | rssi(comb) |
 |---|---|---|---|---|---|
-| MC7411 (SDX20, Sierra) | 203 | 203 | 203 (≤0.03 dB) | 203 | 203 |
+| MC7411 (MDM9250, Sierra) | 203 | 203 | 203 (≤0.03 dB) | 203 | 203 |
 | LM960 drive capture (SDX20, Telit) | 287 | 287 | 287 | 287 | 287 |
 | T77W968 (SDX55, Foxconn) | 48 | 48 | 48 | 48 | 48 |
 

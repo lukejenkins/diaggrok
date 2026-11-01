@@ -174,7 +174,7 @@ class Diag0x1634:
     source_type="re",
     source_detail=(
         "Clean-room RE from a cross-chipset corpus: EG12-GT, EG18-NA SDX20 V2, "
-        "EG25-G MDM9207, EM7511 MDM9650, EP06-A MDM9x07, FN980 SDX55, LM960 "
+        "EG25-G MDM9207, EM7511 MDM9250, EP06-A MDM9240, FN980 SDX55, LM960 "
         "SDX20, RM500Q SDX65. v1 (MDM9x07 / SDX20 / MDM9207 / MDM9650 family) "
         "and v2 (SDX55 / SDX62 / SDX65 family) share the same layout; v2 "
         "activates the [27:31] extension field. Every byte named. "

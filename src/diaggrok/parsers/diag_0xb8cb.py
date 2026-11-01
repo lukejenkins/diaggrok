@@ -11,7 +11,7 @@ Header (version-dependent, then the TLV container):
     v0x02 (SDX55 / SDX65 — RM500Q, EM9190, RXM-G1, M2000, FN980, LV55, SIM8202):
         [0:4]   u32  header_word = 0x00000002  (byte0 = version)
         [4:]    TLV container (type 0xFC)
-    v0x00 (SDX62 — RM520N-GL, Inseego M3100):
+    v0x00 (SDX62 RM520N-GL, SDX65 Inseego M3100):
         [0:4]   u32  header_word = 0x00020000  (byte0 = 0, byte2 = 0x02)
         [4:8]   u32  header_word1 — per-record; differs between the 0xB8CB
                      and 0xB8C5 records of the same instant; raw

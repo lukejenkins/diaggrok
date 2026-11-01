@@ -17,7 +17,7 @@ from diaggrok.registry import register
 # Two distinct record variants exist:
 #
 #   - `v0_257B_mdm9x07_sdx20` — version=0, size=257. Observed on MDM9x07
-#     (EP06A, EG18-NA, EG25-G) and SDX20 (LM960). 190/257 bytes constant;
+#     (EG18-NA, EG25-G), MDM9240 (EP06A) and SDX20 (LM960). 190/257 bytes constant;
 #     6 coordinate-pair repeats at [4:12], [22:30], [130:138], [166:174],
 #     [220:228], [238:246], all decoding to the receiver's known static
 #     position (the capture site; value withheld). A firmware-default second
@@ -448,7 +448,7 @@ _V2_TAIL_ANCHOR = bytes.fromhex('1fc9293fb5b002c0')
     source_type="re",
     source_detail=(
         "Clean-room RE across 14,896 records / 121 captures: 257B v0 records "
-        "(version=0x00, MDM9x07/SDX20: EP06A, EG18-NA, EG25-G, LM960) and 287B "
+        "(version=0x00, MDM9x07/MDM9240/SDX20: EP06A, EG18-NA, EG25-G, LM960) and 287B "
         "v2 records (version=0x02, SDX55-family: FN980m, T99W640, RM520N-GL); "
         "version is locked to size and both are gated jointly before any body "
         "read. v0/257B is fully decoded: 7xu32LE at [12..40], a 2xf32 "

@@ -192,7 +192,7 @@ on 14 sp.v49 records (all success with a RAR, over 6 SDX55 captures): a
 
 Per-layout grounding (whole corpus, 122 captures, 0 parse failures):
 
-  * sp.v3 (MDM9x50 — LM960, EM7565, EP06A): F3 names the fields directly.
+  * sp.v3 (MDM9x50 / SDX20 / MDM9240 — LM960, EM7565, EP06A): F3 names the fields directly.
     Plaintext `lte_mac_rach.c` sites joined to the record on 5 captures:
     `rach_send_preamble cur_raid` == preamble_index 14/14 (13 matched; one
     value 1 excluded from matching as ambiguous); `pwr_lvl` == power 14/14;

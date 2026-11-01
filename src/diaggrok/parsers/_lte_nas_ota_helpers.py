@@ -46,7 +46,7 @@ F3 grounding of v0x01
 ---------------------
 The modem's own F3 prints, on the same DIAG tick (|dt| <= 1.25 ms) as each
 record, name the fields this layout decodes. 16 captures, 6 chipset
-generations (MDM9607 EG25-G; MDM9x50/SDX20 EM7565 + LM960; SDX24 EM120R;
+generations (MDM9607 EG25-G; MDM9250 EM7565 + SDX20 LM960; SDX24 EM120R;
 SDX55 LV55/FT980m/RM500Q; SDX62 RM520N-GL). Of 198 v0x01 records, 93 carry
 a label and every label agrees with the decode. The rest are F3-silent: QSR4
 strings with no matched qdb, or no print site on that path.

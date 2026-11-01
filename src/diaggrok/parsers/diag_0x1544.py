@@ -191,7 +191,7 @@ bodies per chipset:
 
     | Chipset            | Records | NMEA body |  % |
     |---|---:|---:|---:|
-    | em7511 MDM9650     | 20,172  | 16,500+   | 82% |
+    | em7511 MDM9250     | 20,172  | 16,500+   | 82% |
     | eg18na SDX20 V2    |  5,104  |  3,958    | 78% |
     | lm960  SDX20       |  6,567  |  4,910    | 75% |
     | fn980m SDX55       |    681  |    381    | 56% |
@@ -213,7 +213,7 @@ Slot record (offsets within slot; see ``SvSlot`` for the full layout):
     +24  f32LE cn0_db_hz
 
 A 484 B body holds 17 SV slots, 456 B holds 16, and a 7 B body holds none
-(idle / keepalive).  On an em7511 MDM9650 corpus (19,172 records) this
+(idle / keepalive).  On an em7511 MDM9250 corpus (19,172 records) this
 decodes cleanly on 829 non-NMEA binary bodies, with per-SV floats in sensible
 GNSS ranges on every slot inspected (elevation 0-90°, azimuth 0-360°, CN0
 25-45 dB·Hz on active SVs).
@@ -238,7 +238,7 @@ GNSS ranges on every slot inspected (elevation 0-90°, azimuth 0-360°, CN0
 The ``body_len`` invariant (u16 @24 == payload_size - 28) holds across 1,210
 records on two chipsets.
 
-Header-field statistics across five chipsets (em7511 MDM9650, em9190 SDX55,
+Header-field statistics across five chipsets (em7511 MDM9250, em9190 SDX55,
 lm960 SDX20, fn980 SDX55 wardriving, rm520ngl SDX62; 55,257 records):
 
 - ``counter2`` (u32 @ 20-23, the QMI message id) predicts body shape with
@@ -346,7 +346,7 @@ _FN980_PERIODIC_BUNDLE: dict[tuple[int, int, int], int] = {
 }
 
 # Constellation-code → human-readable label.  Empirically-derived labels
-# from an em7511 MDM9650 corpus; SV IDs in each group match the
+# from an em7511 MDM9250 corpus; SV IDs in each group match the
 # expected PRN / slot ranges for the named constellation (GPS 1-32,
 # GLONASS 1-24, SBAS 120-158).
 _CONSTELLATION_CODES = {
@@ -893,7 +893,7 @@ class SvSlot:
     active SVs; 0 when the SV is visible-but-not-tracked).
 
     Slot byte layout (14,694-slot corpus from 884 binary-SV bodies on an
-    em7511 MDM9650):
+    em7511 MDM9250):
 
     ```
     off  type  name                       notes
@@ -1001,7 +1001,7 @@ class Diag0x1544:
     body_slot_count_echo: int | None = None
     # body[4..6] are ONE QMI TLV header (type byte + u16 length), exposed as
     # three raw u8 under legacy names.  Cross-chipset values on 2,028
-    # binary_sv records × 4 chipsets (em7511 MDM9650, lm960 SDX20, fn980m
+    # binary_sv records × 4 chipsets (em7511 MDM9250, lm960 SDX20, fn980m
     # SDX55, eg18na SDX20 V2):
     #
     #   body[4] body_header_signature — the TLV type byte
@@ -1022,7 +1022,7 @@ class Diag0x1544:
     #   body[6] body_header_enum — high byte of the TLV length
     #     Tracks SV-array size, hence per-chipset-family.  Observed:
     #       enum=0  → fn980m SDX55 (slots=28)
-    #       enum=1  → em7511 MDM9650 + lm960 SDX20 (slots 11..18)
+    #       enum=1  → em7511 MDM9250 + lm960 SDX20 (slots 11..18)
     #       enum=2  → eg18na SDX20 V2 (slots 20..21)
     #       enum=4  → fn980m SDX55 wide-capture (slots=99)
     #     The observed value set is {0, 1, 2, 4}.

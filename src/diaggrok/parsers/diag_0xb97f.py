@@ -108,8 +108,10 @@ CCs / cells genuinely overrun the payload returns None, so the registry WARNs
 and tallies it instead of a partial record passing as complete.
 ``trailing_bytes`` reports only non-truncation slack — bytes left after every
 declared CC/cell was consumed (e.g. the 84 zero bytes of an
-allocated-but-unpopulated v0 beam slot). On v0x00, slack that is not a whole
-number of 84-byte beam slots is itself treated as truncation (None).
+allocated-but-unpopulated v0 beam slot) — and ``trailing_raw`` (v17) keeps
+those bytes, so every byte of an accepted record is on the dataclass. On v0x00,
+slack that is not a whole number of 84-byte beam slots is itself treated as
+truncation (None).
 
 Per-version parameters:
 
@@ -588,6 +590,14 @@ class Diag0xB97F:
     timing_offset: int
     carriers: list[Nr5gComponentCarrier] = field(default_factory=list)
     trailing_bytes: int = 0     # >0 iff bytes remain after every declared CC/cell (slack; truncation -> None)
+    trailing_raw: bytes = b''   # RAW: those slack bytes themselves (v17 Kaitai
+                                # audit). Until v16 only their COUNT was kept, so the
+                                # one record region diaggrok did not surface was the
+                                # slack. Every attested instance is zero (the v0 84-B
+                                # allocated-but-unpopulated beam slot, 1/88 corpus
+                                # records), but the same reasoning that keeps
+                                # meas_tail applies: an always-empty slot can turn
+                                # live on other silicon, and keeping it costs nothing.
 
     @property
     def ssb_periodicity_ms(self) -> int:
@@ -650,6 +660,7 @@ class Diag0xB97F:
             'timing_offset': self.timing_offset,
             'carriers': [cc.to_dict() for cc in self.carriers],
             'trailing_bytes': self.trailing_bytes,
+            'trailing_raw': self.trailing_raw.hex(),
             # Backward-compat top-level aliases (CC0 view):
             'nr_arfcn': self.nr_arfcn,
             'earfcn': self.nr_arfcn,   # cross-code alias
@@ -938,9 +949,12 @@ def parse_0xb97f(log_time: int, data: bytes) -> Optional[Diag0xB97F]:
         ))
 
     # Any bytes not consumed by whole CCs/cells (non-truncation slack)
-    # surface as trailing so nothing is silently dropped.
+    # surface as trailing so nothing is silently dropped: the count AND the
+    # bytes themselves (trailing_raw, v17).
+    trailing_raw = b''
     if pos != len(data):
         trailing = len(data) - pos
+        trailing_raw = bytes(data[pos:])
         # On a multi-beam version (v0x00) the only attested slack is a whole
         # allocated-but-unpopulated beam slot (84 zero bytes, 1/88 corpus
         # records — see _BEAM_EXTRA). Slack that is not a whole number of
@@ -959,6 +973,7 @@ def parse_0xb97f(log_time: int, data: bytes) -> Optional[Diag0xB97F]:
         timing_offset=timing_offset,
         carriers=carriers,
         trailing_bytes=trailing,
+        trailing_raw=trailing_raw,
     )
 
 
@@ -970,7 +985,7 @@ register(
     issues=(),
     primary_issue=None,
     description="Nested per-CC NR5G measurement DB: per-cell PCI/PBCH-SFN/RSRP/RSRQ + named per-beam block for serving + neighbour cells across component carriers",
-    version=16,
+    version=17,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -1007,7 +1022,9 @@ register(
         "NA across the corpus; num_cells_companion is version-dependent (serving "
         "cell array index on v0x07, presence flag on v0x09) and stays raw; "
         "_BEAM_EXTRA is 0 for v0x07/v0x09/v0x0A by observation only. Truncated "
-        "records return None; a 16-byte final cell is decoded as a zero-beam cell."
+        "records return None; a 16-byte final cell is decoded as a zero-beam cell. "
+        "v17 keeps non-truncation slack raw (trailing_raw) as well as counting it, "
+        "so every byte of an accepted record is surfaced (Kaitai audit)."
     ),
     source_url="",
     # Fields cover the record header, per-CC identity and meas-header, per-cell
@@ -1015,8 +1032,8 @@ register(
     # versions — v7/v9/v0 against SCAT, v0A by in-capture cross-check.
     # beam_words is retained as the raw surface and the multi-beam stride
     # detector.
-    fields_identified=35,
-    fields_parsed=34,
+    fields_identified=36,
+    fields_parsed=35,
     field_invariants={
         "version": {"enum": [0x00, 0x07, 0x09, 0x0A]},
     },

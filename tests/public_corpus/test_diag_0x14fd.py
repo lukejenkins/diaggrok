@@ -229,20 +229,23 @@ _SYN_WEEK = 2400
 _SYN_MS = 123456449
 _SYN_CONTRIB = [0, 0, 76, 24] + [0] * 10   # 14 slots summing to 100
 _SYN_LEAP = 18
+_SYN_TAIL = 0x1234      # raw tail u16 [383:385]
 
 
 def _synthetic_14fd_v0a(*, fix: bool = True, mask: int = 0x07,
                         mcc: int = _V0A_MCC) -> bytes:
     """Build a 391-byte v=0x0a frame at the documented offsets. With
     ``fix=False`` it mirrors the corpus no-fix record: the serving-cell identity
-    is present and everything from [43] is zero. ``mask`` is fix_valid_mask
-    [63] and gates the velocity / time blocks."""
+    is present and [43:383] is zero. ``mask`` is fix_valid_mask [63] and gates
+    the velocity / time blocks. The raw tail u16 [383:385] is non-zero, so a
+    one-byte cut stays detectable since v7."""
     buf = bytearray(391)
     buf[0:2] = pack('<BB', _V0A_VERSION, _V0A_STATE)
     buf[2:4] = pack('<H', mcc)
     buf[4:12] = pack('<HHI', _V0A_MNC, _V0A_TAC, _V0A_ECI)
     buf[12] = 0x04
     buf[35:43] = pack('<HHI', _V0A_PCI, _V0A_TAC, _V0A_EARFCN)
+    buf[383:385] = pack('<H', _SYN_TAIL)
     if not fix:
         return bytes(buf)
     buf[43:63] = pack('<fffff', _SYN_LAT, _SYN_LON, _SYN_ALT, _SYN_HUNC, _SYN_VUNC)
@@ -328,10 +331,12 @@ def test_14fd_v0a_non_us_mcc_is_not_an_invariant_violation():
 
 
 def test_14fd_v0a_truncated_frame_returns_none():
-    # v5: see the v08 counterpart above.
+    # v5: see the v08 counterpart above. v7 admits a native 390 B form,
+    # so the one-byte cut is caught only by the non-zero tail u16 at [383:385].
     payload = _synthetic_14fd_v0a()
     assert parse_0x14fd(2000, payload) is not None
     assert parse_0x14fd(2000, payload[:200]) is None
     assert parse_0x14fd(2000, payload[:-1]) is None
+    assert parse_0x14fd(2000, payload[:389]) is None
     for n in range(len(payload)):
         parse_0x14fd(2000, payload[:n])  # never raises

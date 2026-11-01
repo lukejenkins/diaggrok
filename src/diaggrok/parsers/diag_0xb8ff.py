@@ -10,7 +10,7 @@ captures), but it carries three formats, told apart by (size, byte_2):
     |--------|--------|---------|----------------------------------|-----------------|
     | 2944 B | 0      | ~67.0K  | SDX55: RM500Q-AE, Compal, SIM8202G, M2000 | 8 × 368 B beam blocks |
     | 420 B  | 2      | ~24.9K  | SDX55: Sierra EM9190, FT980m     | compact_420_r2  |
-    | 480 B  | 3      | ~6.9K   | SDX62: RM520N-GL, Inseego M3100  | compact_480_r3  |
+    | 480 B  | 3      | ~6.9K   | SDX62 RM520N-GL, SDX65 M3100     | compact_480_r3  |
 
 (byte_2 for 2944 B is from two fixtures only; the 420/480 B values
 were checked on every record of 6 captures.)
@@ -26,7 +26,7 @@ the body is kept in ``body_raw``.
 
 Compact-format PCI grounding:
 
-- **480 B (SDX62):** an Inseego M3100 capture with full F3 resolution.
+- **480 B (SDX62/SDX65):** an Inseego M3100 (SDX65) capture with full F3 resolution.
   ``gts.c:2769`` — the same ``Proc NR5G ... PCI %u %lu`` format as
   ``gts.c:2660``, at a different line in this build — prints PCI <pci>,
   NR-ARFCN 647328; u16@+64 == that PCI in **4,221/4,221** co-temporal records
@@ -113,7 +113,7 @@ _NUM_BEAMS = 8  # 8 × 368 = 2944
 _LAYOUTS = {
     (2944, 0): "beams_8x368",  # SDX55: RM500Q-AE, Compal, SIM8202G, M2000
     (420, 2): "compact_420_r2",  # Sierra EM9190 (SDX55), FT980m
-    (480, 3): "compact_480_r3",  # SDX62: Quectel RM520N-GL, Inseego M3100
+    (480, 3): "compact_480_r3",  # SDX62 Quectel RM520N-GL, SDX65 Inseego M3100
 }
 # Compact beam struct = the 2944 B block shifted +8: PCI@+64, word_58
 # analogue @+66, meas_word analogue @+72.
@@ -163,7 +163,7 @@ class Diag0xB8FF:
       format this parser was reverse-engineered against. ``beams`` is
       populated.
     - **420 B / 480 B compact formats** (``compact_420_r2`` — EM9190/FT980m
-      SDX55; ``compact_480_r3`` — SDX62 RM520N-GL / M3100) — one beam
+      SDX55; ``compact_480_r3`` — SDX62 RM520N-GL / SDX65 M3100) — one beam
       struct shifted +8 bytes, so PCI is u16@+64. ``beams`` holds that
       single entry; the rest of the body stays in ``body_raw``.
     - any other ``(size, byte_2)`` → the parser returns ``None`` (loud:
@@ -203,7 +203,7 @@ class Diag0xB8FF:
     wigle_direct=False,
     wigle_roles=("pci-earfcn-bridge",),
     issues=(),
-    description="Per-SSB-beam NR5G blocks with ground-truthed serving PCI on all three v0x01 formats: 2944B (8×368B, PCI u16@+56, F3 gts.c:2660 4164/4164 Compal), 420B compact (PCI u16@+64, SCAT 11-step handover sequence exact, EM9190), 480B compact (PCI u16@+64, F3 gts.c:2769 4221/4221 + SCAT, SDX62 M3100). No RSRP.",
+    description="Per-SSB-beam NR5G blocks with ground-truthed serving PCI on all three v0x01 formats: 2944B (8×368B, PCI u16@+56, F3 gts.c:2660 4164/4164 Compal), 420B compact (PCI u16@+64, SCAT 11-step handover sequence exact, EM9190), 480B compact (PCI u16@+64, F3 gts.c:2769 4221/4221 + SCAT, SDX65 M3100). No RSRP.",
     version=5,
     author="Claude Code",
     author_url="https://github.com/lukejenkins",

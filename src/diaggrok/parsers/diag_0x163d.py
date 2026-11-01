@@ -74,7 +74,7 @@ Two coexisting (size, version) forms observed across the corpus
 | Form        | Count          | Where seen                                 |
 |-------------|----------------|--------------------------------------------|
 | 61 B v=0x04 | 21,934 (91.3%) | every modem family in the corpus           |
-| 60 B v=0x03 |  2,087 ( 8.7%) | MDM9x07-class: EG25-G (three builds), EG95, EP06, SIM7600, MC7455/EM7455 |
+| 60 B v=0x03 |  2,087 ( 8.7%) | MDM9x07-class: EG25-G (three builds), EG95, SIM7600, MC7455/EM7455; EP06 (MDM9240) |
 
 Body-field notes:
 
@@ -224,7 +224,7 @@ class Diag0x163D:
     Two coexisting record formats observed in the corpus:
 
     - **61 B, version=0x04** — every SDX / MDM96xx / MDM9150 (incl. via RIS-9260) build
-    - **60 B, version=0x03** — MDM9x07 / MDM9x30 class (EG25-G, EG95, EP06,
+    - **60 B, version=0x03** — MDM9x07 / MDM9x30 / MDM9240 class (EG25-G, EG95, EP06,
       SIM7600, MC7455 / EM7455); the v=0x04 layout without byte +60
 
     Every field is mirrored by a ``$PQME1`` / ``$PQWM1`` sentence the firmware

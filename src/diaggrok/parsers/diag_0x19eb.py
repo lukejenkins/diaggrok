@@ -64,7 +64,7 @@ F3 grounding of v0x01 against its own prints
 =========================================================================
 v0x01 is the ONLY version fleet-wide (51,382 records, byte0 == 0x01 on
 every sidecar: SDX55 RM500Q-AE / FN980 / EM9190 / SIM8202G-M2, SDX62
-RM520N-GL / CFW-3212, SDX65 EM9291 / Inseego M3100). The L5 record is
+RM520N-GL / CFW-3212 / EM9291, SDX65 Inseego M3100). The L5 record is
 grounded against its OWN firmware prints, on three builds:
 
 * **SDX55 RM500Q-AE (plaintext 0x79, 129/129 records, FC-joined).**
@@ -328,7 +328,7 @@ class Diag0x19EB:
         "mc_gnssmeasreport.c). The per-SV 70B slot is the SAME struct as 0x1477 "
         "(L1) GpsSv, preceded by a 32B header (<BIHIffffIB, version=0x01 vs "
         "0x1477's 0x00); size = 32 + N*70 on SDX55 (RM500Q-AE, FN980m, EM9190, "
-        "SIM8202G-M2), SDX62 (RM520N-GL, CFW-3212) and SDX65 (EM9291, M3100). "
+        "SIM8202G-M2), SDX62 (RM520N-GL, CFW-3212, EM9291) and SDX65 (M3100). "
         "Known-answer control: same-epoch same-PRN az/el and pseudorange-"
         "integer-ms are byte-identical between the L1 (0x1477) and L5 "
         "(0x19EB) records. CN0 = carrier_noise (offset 7-8, uint16 x0.01 "

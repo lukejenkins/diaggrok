@@ -14,16 +14,21 @@ v3 request + v4 response, 100 bytes total):
 
     [0]      u8   version (1)
     [1]      u8   num_subpackets (2)
-    [2:4]    u16  measurement counter / SFN
+    [2:4]    u16  counter (exposed since v9; live: varies per capture)
 
-    Subpacket 0 (id=30, ver=3, size=32) -- Request/Config:
-        [0:4]    u32  EARFCN (low 18 bits)
-        [4:8]    u32  config flags / cell count hint
-        [8:12]   u32  serving PCI bitfield
-        [12:16]  u32  scheduling/timing
-        [16:20]  u32  rotation timing
-        [20:24]  u32  rotation timing (mirror)
-        [24:28]  u32  reserved (zeros)
+    Subpacket 0 (id=30, ver=3, size=32) -- Request/Config (decoded since v9):
+        header, 12 B (8 B on request sp.v2, the MDM9625 form) — exposed RAW as
+        ``request_header``. On the 12 B form +0 is the carrier EARFCN (== the
+        response earfcn on every fixture) and the low 5 bits of +4 are the cell
+        count; on the 8 B form the low 5 bits of +0 are. Not F3-labelled, so
+        the header stays raw rather than named.
+        Per-cell record (16 bytes, ``request_cells``):
+            [0:4]    u32  PCI (low 9 bits; == the response cell's PCI, in
+                          order) + pci_flags (bits 9-31, live, unresolved)
+            [4:8]    u32  timing0 (== the response cell's +40)
+            [8:12]   u32  timing1 (== timing0 on every fixture)
+            [12:16]  u32  reserved (zero on every fixture)
+        Bytes past the last whole 16 B record: ``request_trailing``.
 
     Subpacket 1 (id=31, ver=4, size=64) -- Response/Measurement:
         [0:4]    u32  EARFCN (low 18 bits)
@@ -52,7 +57,13 @@ v3 request + v4 response, 100 bytes total):
 
         No calibrated dBm exists in this packet: the energy words are
         AGC-flattened, so rsrp/rsrq_rx0/rsrq_rx1 are None. pci/earfcn are the
-        verified fields.
+        verified fields. Cell +26/+32/+48 are zero and +44 == +40 on all 12
+        response cells of the six committed fixtures (every layout, v3 and v40
+        included), so they are not exposed.
+
+        Bytes past the decoded cells (an under-claimed count, or a remainder
+        shorter than one cell): ``response_trailing`` (empty on every
+        fixture).
 
 Reverse-engineered from an EG25-G (MDM9607) DLF capture (46 records, all 100
 bytes, all single-cell on EARFCN 5035 / PCI <pci>).
@@ -130,6 +141,40 @@ _CARRIER_HEADER_SIZE = 8
 # the MDM9200: earfcn u16 @0, num_cells u16 @2. The 52-byte cell is unchanged.
 _RESPONSE_SP_VERSION_SHORT_HDR = 3
 _CARRIER_HEADER_SIZE_SHORT = 4
+# Request subpacket (id=30): a 12-byte header and 16-byte per-neighbour
+# records; request sp.v2 (MDM9625, paired with response sp.v3) has an 8-byte
+# header. Request and response number their versions independently.
+_REQUEST_SP_VERSION_SHORT_HDR = 2
+_REQUEST_HEADER_SIZE = 12
+_REQUEST_HEADER_SIZE_SHORT = 8
+_REQUEST_CELL_SIZE = 16
+
+
+@dataclass
+class LteMl1ConnectedNeighborRequestCell:
+    """One per-neighbour record of the request subpacket (id=30), 16 bytes.
+
+    Every byte is a field. ``pci`` equals the response cell's PCI in the same
+    position, and ``timing0`` equals the response cell's +40 word, on every
+    multi-cell record (12 records across all six committed fixtures; the
+    corpus counts are in the module docstring). ``pci_flags`` (bits 9-31 of
+    the PCI word) is live and unresolved; ``timing1`` == ``timing0`` and
+    ``reserved`` is zero on every fixture.
+    """
+    pci: int        # +0  u32 low 9 bits
+    pci_flags: int  # +0  u32 bits 9-31
+    timing0: int    # +4  u32
+    timing1: int    # +8  u32
+    reserved: int   # +12 u32
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'pci': self.pci,
+            'pci_flags': self.pci_flags,
+            'timing0': self.timing0,
+            'timing1': self.timing1,
+            'reserved': self.reserved,
+        }
 
 
 @dataclass
@@ -210,18 +255,40 @@ class Diag0xB195:
     # sp.v40 (max 639) and sp.v56/57 (0..5119, the SFN*10+subframe range); None
     # on sp.v3 (no such word). Not F3-labelled.
     sf_counter: int | None = None
+    # --- v9: the bytes v8 walked past --------------------------
+    # Outer [2:4] u16, live (varies per capture). Same word 0xB192 / 0xB193
+    # expose as `counter`.
+    counter: int | None = None
+    # The request subpacket (id=30) walked before the response: its version,
+    # its header verbatim (12 B; 8 B on request sp.v2), every whole 16 B
+    # per-neighbour record, and the bytes past the last whole record. All
+    # None / empty when no request subpacket precedes the response.
+    request_sp_version: int | None = None
+    request_header: bytes | None = None
+    request_cells: list[LteMl1ConnectedNeighborRequestCell] = field(default_factory=list)
+    request_trailing: bytes | None = None
+    # Response body bytes past the decoded cells (empty on every fixture).
+    response_trailing: bytes = b''
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'type': 'Diag0xB195',
             'log_time': self.log_time,
             'version': self.version,
+            'counter': self.counter,
             'sp_version': self.sp_version,
             'earfcn': self.earfcn,
             'num_cells': self.num_cells,
             'num_cells_word': self.num_cells_word,
             'sf_counter': self.sf_counter,
             'entries': [e.to_dict() for e in self.entries],
+            'response_trailing': self.response_trailing.hex(),
+            'request_sp_version': self.request_sp_version,
+            'request_header': (self.request_header.hex()
+                               if self.request_header is not None else None),
+            'request_cells': [c.to_dict() for c in self.request_cells],
+            'request_trailing': (self.request_trailing.hex()
+                                 if self.request_trailing is not None else None),
         }
 
 
@@ -234,8 +301,8 @@ class Diag0xB195:
 
 @register(LOG_LTE_ML1_CONNECTED_NEIGHBOR_MEAS, domain="lte-signal",
     name="0xB195",
-    description="Connected-mode neighbor cell meas 0xB195 — version-dispatched response sp31 {4,40}, full 52B cell record shared with 0xB192 (PCI/EARFCN + per-Rx energy/timing words); rsrp/rsrq None (energy, not dBm)",
-    version=8,
+    description="Connected-mode neighbor cell meas 0xB195 — version-dispatched response sp31 {3,4,40,56,57}, full 52B cell record shared with 0xB192 (PCI/EARFCN + per-Rx energy/timing words) + request sp30 + outer counter; rsrp/rsrq None (energy, not dBm)",
+    version=9,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -264,9 +331,12 @@ class Diag0xB195:
     primary_issue=None,
     # Header: version, earfcn, num_cells, sp_version, num_cells_word,
     # sf_counter (6) + per-cell pci, pci_flags + 11 raw energy/timing words
-    # (13) = 19 parsed; +3 identified-but-None signal fields (rsrp, rsrq_rx0,
-    # rsrq_rx1 — energy, not dBm) = 22 identified.
-    fields_identified=22, fields_parsed=19,
+    # (13) = 19 parsed; v9 adds counter, response_trailing, request_sp_version,
+    # request_header, request_trailing (5) + request-cell pci, pci_flags,
+    # timing0, timing1, reserved (5) = 29 parsed; +3 identified-but-None
+    # signal fields (rsrp, rsrq_rx0, rsrq_rx1 — energy, not dBm) = 32
+    # identified.
+    fields_identified=32, fields_parsed=29,
     field_invariants={
         "version": {"enum": [0x01]},
         # Response subpacket version (layout axis): 3 = MDM9625 (4-byte
@@ -290,7 +360,9 @@ def parse_0xb195(
     Walks subpackets to find the response subpacket (id=31), extracts per-cell
     PCI, EARFCN, and the raw per-Rx energy/timing words (byte-identical to
     0xB192). The response versions 4/40/56/57 share one carrier header and
-    one cell layout.
+    one cell layout. Since v9 it also returns the outer counter and the
+    request subpacket (id=30) walked before the response; the request is
+    best-effort and never fails the parse.
 
     Returns ``None`` for malformed payloads.
     """
@@ -303,9 +375,13 @@ def parse_0xb195(
     num_subpackets = data[1]
     if num_subpackets < 1:
         return None
+    counter = unpack_from('<H', data, 2)[0]
 
-    # Walk subpackets to find the response subpacket (id=31)
+    # Walk subpackets to find the response subpacket (id=31). The first id=30
+    # subpacket walked before it is the request (the walk order is (30, 31) on
+    # every corpus record).
     offset = 4  # skip outer header (version + num_sp + counter)
+    request: tuple[int, bytes] | None = None
 
     for _ in range(num_subpackets):
         if offset + 4 > len(data):
@@ -318,13 +394,43 @@ def parse_0xb195(
         if sp_size < 4 or offset + sp_size > len(data):
             return None
 
+        sp_data = data[offset + 4:offset + sp_size]
         if sp_id == _RESPONSE_SP_ID:
-            sp_data = data[offset + 4:offset + sp_size]
-            return _parse_response_subpacket(log_time, version, sp_data, sp_ver)
+            result = _parse_response_subpacket(log_time, version, sp_data, sp_ver)
+            if result is not None:
+                result.counter = counter
+                if request is not None:
+                    _attach_request(result, *request)
+            return result
+        if sp_id == _REQUEST_SP_ID and request is None:
+            request = (sp_ver, sp_data)
 
         offset += sp_size
 
     return None
+
+
+def _attach_request(result: Diag0xB195, sp_ver: int, sp: bytes) -> None:
+    """Decode the request subpacket (id=30) onto ``result``. Never fails.
+
+    The header is kept verbatim (a body shorter than its header is all
+    header); then every whole 16-byte record; then the remainder.
+    """
+    hdr = (_REQUEST_HEADER_SIZE_SHORT if sp_ver == _REQUEST_SP_VERSION_SHORT_HDR
+           else _REQUEST_HEADER_SIZE)
+    n = max(0, len(sp) - hdr) // _REQUEST_CELL_SIZE
+    cells = []
+    for i in range(n):
+        co = hdr + i * _REQUEST_CELL_SIZE
+        pci_word, timing0, timing1, reserved = unpack_from('<IIII', sp, co)
+        cells.append(LteMl1ConnectedNeighborRequestCell(
+            pci=pci_word & 0x1FF, pci_flags=pci_word >> 9,
+            timing0=timing0, timing1=timing1, reserved=reserved,
+        ))
+    result.request_sp_version = sp_ver
+    result.request_header = sp[:hdr]
+    result.request_cells = cells
+    result.request_trailing = sp[hdr + n * _REQUEST_CELL_SIZE:]
 
 
 def _parse_response_subpacket(
@@ -403,4 +509,5 @@ def _parse_response_subpacket(
         sp_version=sp_ver,
         num_cells_word=num_cells_word,
         sf_counter=sf_counter,
+        response_trailing=sp[hdr + len(entries) * _CELL_RECORD_SIZE:],
     )

@@ -293,54 +293,68 @@ _V2_SUB03_FLAG_B_OFF = 69   # paired state flag, {0x0F, 0x01}
 #   385   0x08     -          30        5       rare, generic TLV split only
 #   300   0x27     -           0        1       Sierra-only singleton
 #
+# Every field below sits INSIDE one TLV entry's body (see the TLV-chain note
+# above ``Diag0x1C7Cv2Entry``). Offsets are absolute; the entry each lives in
+# is named so the layout can be checked against the chain.
+#
 # The 337B/tag=0x25 template (92.9% invariant on Sierra, 85.8% on Quectel)
-# carries a clean GNSS-engine clock: a u32-LE at offset 218 advancing by
-# +256,000/record on BOTH vendors — the SAME engine-tick cadence as 0x147C
-# v=0x0A/v=0x0D, i.e. a shared GNSS-engine clock encoding. The clock is
-# TRIPLE-REDUNDANT: identical value (within each record) echoed at offsets
-# 218, 282, 330. Header anchors bytes[2:5]==(0x25,0x01,0x37) are 100%
-# cross-vendor invariant.
+# carries a GNSS-engine clock: a u32-LE at offset 219, the last 4 B of entry
+# 0x1c's 81 B body, advancing +1000/record on BOTH vendors (the cadence of
+# the 365B and 229B engine ticks). It is TRIPLE-REDUNDANT: the same value is
+# echoed at 283 (the last 4 B of entry 0x1d's 61 B body) and at 331 (bytes
+# 41-44 of entry 0x32's 47 B body). Each copy is preceded by a constant 0x01
+# byte (@218/282/330). A u32 read one byte early, at 218, is
+# (clock << 8 | 0x01) mod 2**32 and steps +256000/record; that 256x factor is
+# the read offset, not the clock (145/145 RM520N-GL records + 6/6 EM9291
+# records, time-sorted; the +1000 read agrees on every one).
+# Header anchors bytes[2:5]==(0x25,0x01,0x37) are 100% cross-vendor invariant.
 #
 # The 364B templates (tag 0x03/0x09, the dominant byte[1]=0x07 members by
 # count): DIAG records are logged slightly out of *emission* order, so a
 # capture-order delta hunt desyncs. A **time-sorted** walk (sort by DLF
 # log_time before the monotonic hunt) restores monotonicity and pins the
 # offsets cross-vendor (Quectel RM520N-GL + Casa Systems CFW3212 (RG520N
-# OpenCPU, SDX62), consistent with the Sierra @69 clock).
+# OpenCPU, SDX62) + Sierra EM9291).
 _V2_SUB07 = 0x07
 _V2_SUB07_TAG25_SIZE = 337
 _V2_SUB07_TAG25 = 0x25
 # bytes[2:5] structural anchors — 100% cross-vendor invariant (2,117 records,
 # Quectel RM520N-GL + Sierra EM9291).
 _V2_SUB07_TAG25_HEADER_ANCHORS: dict[int, int] = {2: 0x25, 3: 0x01, 4: 0x37}
-# u32-LE GNSS-engine clock, +256000/record both vendors, triple-echoed.
-_V2_SUB07_TAG25_CLOCK_OFF = 218
-_V2_SUB07_TAG25_CLOCK_ECHO1_OFF = 282
-_V2_SUB07_TAG25_CLOCK_ECHO2_OFF = 330
+# u32-LE GNSS-engine clock, +1000/record both vendors, triple-echoed.
+_V2_SUB07_TAG25_CLOCK_OFF = 219        # entry 0x1c body[77:81]
+_V2_SUB07_TAG25_CLOCK_ECHO1_OFF = 283  # entry 0x1d body[57:61]
+_V2_SUB07_TAG25_CLOCK_ECHO2_OFF = 331  # entry 0x32 body[41:45]
 
 # byte[1]=0x07 / 364B templates. byte[2] is the tag; the two 364B members are
 # tag=0x03 (byte[4]=0x3c) and tag=0x09 (byte[4]=0x3e), coupled 1:1 with
 # byte[4].
 _V2_SUB07_364_SIZE = 364
 # --- tag=0x03: engine-clock + sequence-counter record (260/364 cross-vendor
-#     invariant). engine_clock u32-LE @69 advances +256000/record on BOTH
-#     Quectel and CFW3212 — the SAME engine-tick cadence as tag=0x25 (@218) and
-#     0x147C v=0x0A/0x0D. record_seq u32-BE @117 is a +1/record sequence
-#     counter; @163 and @240 are two SIBLING +1/record BE counters (distinct
-#     base values, not echoes — likely separate clock/count domains).
+#     invariant). engine_clock is u32-LE @70 (entry 0x05 body[2:6]) and
+#     advances +1000/record on Quectel, CFW3212 and Sierra, the tag=0x25
+#     cadence. record_seq is u32-LE @120 (entry 0x0b body[0:4]), +1/record;
+#     entries 0x0c (@166) and 0x30 (@243) open with the SAME u32 (equal on
+#     145/145 RM520N-GL + 6/6 EM9291 records), exposed as ``seq_siblings``.
+#     A u32-BE read at 117/163/240 starts on those entries' (tag, version,
+#     length) header bytes, so its top 24 bits were the header and only its
+#     low byte moved; a u32-LE read at 69 is (clock << 8 | byte 69) and steps
+#     +256000/record.
 _V2_SUB07_TAG03 = 0x03
 _V2_SUB07_TAG03_HEADER_ANCHORS: dict[int, int] = {2: 0x03, 3: 0x01, 4: 0x3C}
-_V2_SUB07_TAG03_ENGINE_CLOCK_OFF = 69
-_V2_SUB07_TAG03_SEQ_OFF = 117
-_V2_SUB07_TAG03_SEQ_SIB1_OFF = 163
-_V2_SUB07_TAG03_SEQ_SIB2_OFF = 240
+_V2_SUB07_TAG03_ENGINE_CLOCK_OFF = 70   # entry 0x05 body[2:6]
+_V2_SUB07_TAG03_SEQ_OFF = 120           # entry 0x0b body[0:4]
+_V2_SUB07_TAG03_SEQ_SIB1_OFF = 166      # entry 0x0c body[0:4]
+_V2_SUB07_TAG03_SEQ_SIB2_OFF = 243      # entry 0x30 body[0:4]
 # --- tag=0x09: sequence-counter record (313/364 cross-vendor invariant).
-#     record_seq u32-BE @254 advances +1/record on both vendors. (u32-LE @69
-#     is a per-vendor CONSTANT here — NOT a clock — confirming the 364B tags
-#     carry genuinely different layouts, not one format at two byte[2] values.)
+#     record_seq is u32-LE @257 (entry 0x17 body[2:6]), +1/record on both
+#     vendors, the same counter tag=0x03 carries (a tag=0x03 and a tag=0x09
+#     record from one report cycle hold the same value). (u32-LE @69 is a
+#     per-vendor CONSTANT here — NOT a clock — confirming the 364B tags carry
+#     genuinely different layouts, not one format at two byte[2] values.)
 _V2_SUB07_TAG09 = 0x09
 _V2_SUB07_TAG09_HEADER_ANCHORS: dict[int, int] = {2: 0x09, 3: 0x01, 4: 0x3E}
-_V2_SUB07_TAG09_SEQ_OFF = 254
+_V2_SUB07_TAG09_SEQ_OFF = 257           # entry 0x17 body[2:6]
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +574,7 @@ class Diag0x1C7Cv2Sub01:
     subtype: int          # always 0x01
     vendor_signature: tuple[int, int, int, int]   # (b11, b12, b13, b18)
     raw: bytes            # full 22B preserved for downstream RE
+    entries: list[Diag0x1C7Cv2Entry] = field(default_factory=list)  # TLV split
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -569,6 +584,7 @@ class Diag0x1C7Cv2Sub01:
             'subtype': self.subtype,
             'vendor_signature': list(self.vendor_signature),
             'vendor_signature_hex': '{:02x}{:02x}{:02x}{:02x}'.format(*self.vendor_signature),
+            'tags': _tags_str(self.entries),
             'payload_size': len(self.raw),
         }
 
@@ -622,6 +638,7 @@ class Diag0x1C7Cv2Sub09:
     fine_clock: int                       # u32 LE @82 — vendor-tagged fine clock (echoed @80/152/197)
     vendor_signature: tuple[int, int]     # (byte[80], byte[81])
     raw: bytes                            # full 375B preserved for downstream RE
+    entries: list[Diag0x1C7Cv2Entry] = field(default_factory=list)  # TLV split
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -636,6 +653,7 @@ class Diag0x1C7Cv2Sub09:
             'fine_clock': self.fine_clock,
             'vendor_signature': list(self.vendor_signature),
             'vendor_signature_hex': '{:02x}{:02x}'.format(*self.vendor_signature),
+            'tags': _tags_str(self.entries),
             'payload_size': len(self.raw),
         }
 
@@ -685,6 +703,7 @@ class Diag0x1C7Cv2Sub05:
     clock_vendor: int                     # u32 LE @29  — wall clock, vendor-rate
     vendor_byte: int                      # byte[37] — 0x02 Quectel / 0x04 Sierra
     raw: bytes                            # full 365B preserved for downstream RE
+    entries: list[Diag0x1C7Cv2Entry] = field(default_factory=list)  # TLV split
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -697,6 +716,7 @@ class Diag0x1C7Cv2Sub05:
             'clock_eng_b': self.clock_eng_b,
             'clock_vendor': self.clock_vendor,
             'vendor_byte': self.vendor_byte,
+            'tags': _tags_str(self.entries),
             'payload_size': len(self.raw),
         }
 
@@ -745,6 +765,7 @@ class Diag0x1C7Cv2Sub05Sz229:
     clock_eng: int                        # u32 LE @5 — engine tick, +~1000/rec both vendors
     vendor_byte: int                      # byte[22] — 0x14 Quectel / 0x11 Sierra
     raw: bytes                            # full 229B preserved for downstream RE
+    entries: list[Diag0x1C7Cv2Entry] = field(default_factory=list)  # TLV split
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -755,6 +776,7 @@ class Diag0x1C7Cv2Sub05Sz229:
             'header_const': list(self.header_const),
             'clock_eng': self.clock_eng,
             'vendor_byte': self.vendor_byte,
+            'tags': _tags_str(self.entries),
             'payload_size': len(self.raw),
         }
 
@@ -794,6 +816,7 @@ class Diag0x1C7Cv2Sub03:
     state_flag_a: int                     # byte[5]  — {0x80, 0x02}
     state_flag_b: int                     # byte[69] — {0x0F, 0x01}
     raw: bytes                            # full 127B preserved for downstream RE
+    entries: list[Diag0x1C7Cv2Entry] = field(default_factory=list)  # TLV split
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -804,6 +827,7 @@ class Diag0x1C7Cv2Sub03:
             'header_const': list(self.header_const),
             'state_flag_a': self.state_flag_a,
             'state_flag_b': self.state_flag_b,
+            'tags': _tags_str(self.entries),
             'payload_size': len(self.raw),
         }
 
@@ -817,11 +841,15 @@ class Diag0x1C7Cv2Sub07Tag25:
     the **tag=0x25 / 337B** member — the cleanest cross-vendor template
     (92.9% invariant Sierra EM9291, 85.8% Quectel RM520N-GL; 2,117 records).
 
-    It carries a **GNSS-engine clock**: a u32-LE at offset 218 advancing by
-    +256,000/record on both vendors — the same engine-tick cadence as
-    0x147C v=0x0A/v=0x0D. The value is triple-redundant,
-    echoed identically (within a record) at offsets 218, 282, 330; the two
-    echoes are exposed for drift visibility.
+    It carries a **GNSS-engine clock**: a u32-LE at offset 219 (the last 4 B
+    of TLV entry 0x1c) advancing +1000/record on both vendors, the cadence of
+    the 365B / 229B engine ticks. The value is triple-redundant, echoed
+    identically (within a record) at offsets 219, 283, 331 (entries 0x1c,
+    0x1d, 0x32), each copy behind a constant 0x01 byte; the two echoes are
+    exposed for drift visibility. Read one byte early (218) the u32 is
+    (clock << 8 | 0x01) and steps +256000/record, an artifact of the offset.
+
+    ``entries`` is the record's TLV split, as ``Diag0x1C7Cv2Report`` carries.
 
     **Structural gate:** bytes[2:5]==(0x25,0x01,0x37) are 100% cross-vendor
     invariant anchors — a 337B sub=0x07 record failing them (or whose three
@@ -835,10 +863,11 @@ class Diag0x1C7Cv2Sub07Tag25:
     subtype: int                          # always 0x07
     report_tag: int                       # byte[2] — secondary tag, 0x25 here
     header_const: tuple[int, int, int]    # bytes[2:5] = (0x25, 0x01, 0x37)
-    engine_clock: int                     # u32-LE @218, +256000/record
-    engine_clock_echo1: int               # u32-LE @282 (== engine_clock)
-    engine_clock_echo2: int               # u32-LE @330 (== engine_clock)
+    engine_clock: int                     # u32-LE @219 (entry 0x1c), +1000/record
+    engine_clock_echo1: int               # u32-LE @283 (entry 0x1d, == engine_clock)
+    engine_clock_echo2: int               # u32-LE @331 (entry 0x32, == engine_clock)
     raw: bytes                            # full 337B preserved for downstream RE
+    entries: list[Diag0x1C7Cv2Entry] = field(default_factory=list)  # TLV split
 
     @property
     def engine_clock_echoes_ok(self) -> bool:
@@ -854,6 +883,7 @@ class Diag0x1C7Cv2Sub07Tag25:
             'header_const': list(self.header_const),
             'engine_clock': self.engine_clock,
             'engine_clock_echoes_ok': self.engine_clock_echoes_ok,
+            'tags': _tags_str(self.entries),
             'payload_size': len(self.raw),
         }
 
@@ -863,19 +893,21 @@ class Diag0x1C7Cv2Sub07Tag03:
     """v=0x02 / subtype=0x07 / byte[2]=0x03 / 364B.
 
     The dominant sub=0x07 template by record count. Carries a **GNSS-engine
-    clock** — a u32-LE at offset 69 advancing +256,000/record on both SDX62
-    vendors (Quectel RM520N-GL + Casa Systems CFW3212), the same engine-tick
-    cadence as the tag=0x25 template (@218) and 0x147C v=0x0A/v=0x0D
-    — plus a **sequence counter** (u32-BE @117, +1/record).
-    Offsets 163 and 240 hold two further +1/record big-endian counters with
-    distinct base values (sibling count/clock domains, exposed as
-    ``seq_siblings``), not echoes of @117.
+    clock**, a u32-LE at offset 70 (TLV entry 0x05 body[2:6]) advancing
+    +1000/record on the SDX62 vendors (Quectel RM520N-GL, Casa Systems
+    CFW3212, Sierra EM9291), the tag=0x25 cadence, plus a **sequence
+    counter**, u32-LE @120 (entry 0x0b body[0:4]), +1/record. Entries 0x0c
+    (@166) and 0x30 (@243) open with the same counter value; those two
+    copies are ``seq_siblings``.
 
-    DIAG capture order is not emission order, so the clock looks
-    vendor-divergent in capture order; a time-sorted corpus walk pins
-    engine_clock @69 cross-vendor. The +256000 record-level cadence is
-    identical on both vendors (a larger median such as 384000 is
-    gap-inflated across dropped records).
+    A big-endian read at 117/163/240 starts on each entry's (tag, version,
+    length) header, so it carried the tag in its top byte (hence the
+    "distinct base values") and only the counter's low byte below it. A
+    little-endian read at 69 is (clock << 8 | byte 69) and steps
+    +256000/record. Both were offset artifacts.
+
+    DIAG capture order is not emission order, so cadences must be measured
+    on a time-sorted walk. ``entries`` is the record's TLV split.
 
     **Structural gate:** bytes[2:5]==(0x03,0x01,0x3c) are cross-vendor
     invariant anchors (260/364 bytes invariant cross-vendor); a 364B sub=0x07
@@ -887,10 +919,11 @@ class Diag0x1C7Cv2Sub07Tag03:
     subtype: int                          # always 0x07
     report_tag: int                       # byte[2] — secondary tag, 0x03 here
     header_const: tuple[int, int, int]    # bytes[2:5] = (0x03, 0x01, 0x3c)
-    engine_clock: int                     # u32-LE @69, +256000/record
-    record_seq: int                       # u32-BE @117, +1/record
-    seq_siblings: tuple[int, int]         # u32-BE @163/@240, sibling +1 counters
+    engine_clock: int                     # u32-LE @70 (entry 0x05), +1000/record
+    record_seq: int                       # u32-LE @120 (entry 0x0b), +1/record
+    seq_siblings: tuple[int, int]         # u32-LE @166/@243 (entries 0x0c/0x30), == record_seq
     raw: bytes                            # full 364B preserved for downstream RE
+    entries: list[Diag0x1C7Cv2Entry] = field(default_factory=list)  # TLV split
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -903,6 +936,7 @@ class Diag0x1C7Cv2Sub07Tag03:
             'engine_clock': self.engine_clock,
             'record_seq': self.record_seq,
             'seq_siblings': list(self.seq_siblings),
+            'tags': _tags_str(self.entries),
             'payload_size': len(self.raw),
         }
 
@@ -911,11 +945,14 @@ class Diag0x1C7Cv2Sub07Tag03:
 class Diag0x1C7Cv2Sub07Tag09:
     """v=0x02 / subtype=0x07 / byte[2]=0x09 / 364B.
 
-    The second 364B sub=0x07 template. Carries a **sequence counter**: a u32-BE
-    at offset 254 advancing +1/record on both SDX62 vendors (Quectel RM520N-GL
-    + Casa Systems CFW3212). Unlike tag=0x03, u32-LE @69 is a per-vendor
-    CONSTANT here (not a clock) — direct evidence the two 364B byte[2] tags are
-    genuinely distinct layouts, not one format keyed at two tag values.
+    The second 364B sub=0x07 template. Carries a **sequence counter**: a u32-LE
+    at offset 257 (TLV entry 0x17 body[2:6]) advancing +1/record on the SDX62
+    vendors (Quectel RM520N-GL, Casa Systems CFW3212, Sierra EM9291), the
+    counter tag=0x03 carries. A big-endian read at 254 started on entry 0x17's
+    length byte, so only the counter's low byte moved in it. Unlike tag=0x03,
+    u32-LE @69 is a per-vendor CONSTANT here (not a clock) — direct evidence
+    the two 364B byte[2] tags are genuinely distinct layouts, not one format
+    keyed at two tag values. ``entries`` is the record's TLV split.
 
     **Structural gate:** bytes[2:5]==(0x09,0x01,0x3e) are cross-vendor
     invariant anchors (313/364 bytes invariant cross-vendor); a 364B sub=0x07
@@ -927,8 +964,9 @@ class Diag0x1C7Cv2Sub07Tag09:
     subtype: int                          # always 0x07
     report_tag: int                       # byte[2] — secondary tag, 0x09 here
     header_const: tuple[int, int, int]    # bytes[2:5] = (0x09, 0x01, 0x3e)
-    record_seq: int                       # u32-BE @254, +1/record
+    record_seq: int                       # u32-LE @257 (entry 0x17), +1/record
     raw: bytes                            # full 364B preserved for downstream RE
+    entries: list[Diag0x1C7Cv2Entry] = field(default_factory=list)  # TLV split
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -939,6 +977,7 @@ class Diag0x1C7Cv2Sub07Tag09:
             'report_tag': self.report_tag,
             'header_const': list(self.header_const),
             'record_seq': self.record_seq,
+            'tags': _tags_str(self.entries),
             'payload_size': len(self.raw),
         }
 
@@ -969,6 +1008,9 @@ class Diag0x1C7Cv2Sub07Tag09:
 # (the same 0x09-0a-1e-26-17-18 run appears in 364, 384 and 385 B records).
 # The template decoders stay for their consumers; any v=0x02 record they do
 # not claim falls through to the generic chain below instead of being dropped.
+# Every template carries the same split as ``entries``, and every named
+# template field lies inside one entry's body (a u32 that straddled an entry
+# header was the source of the old sub=0x07 counter and clock misreads).
 # No F3 site names any tag, so tags stay numeric and bodies stay raw.
 
 
@@ -980,6 +1022,11 @@ class Diag0x1C7Cv2Entry:
     offset: int       # absolute payload offset of the entry's tag byte
     body: bytes
 
+    @property
+    def length(self) -> int:
+        """The entry's length byte (== ``len(body)``)."""
+        return len(self.body)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             'tag': self.tag,
@@ -988,6 +1035,11 @@ class Diag0x1C7Cv2Entry:
             'offset': self.offset,
             'body_hex': self.body.hex(),
         }
+
+
+def _tags_str(entries: list[Diag0x1C7Cv2Entry]) -> str:
+    """The entry tags in order, e.g. ``'00-2d-2e-2b-01'`` (the record's packing)."""
+    return '-'.join(f'{e.tag:02x}' for e in entries)
 
 
 @dataclass
@@ -1016,7 +1068,7 @@ class Diag0x1C7Cv2Report:
             'log_time': self.log_time,
             'version': self.version,
             'n_entries': self.n_entries,
-            'tags': '-'.join(f'{t:02x}' for t in self.tags),
+            'tags': _tags_str(self.entries),
             'entries': [e.to_dict() for e in self.entries],
             'payload_size': len(self.raw),
         }
@@ -1066,7 +1118,7 @@ def split_v2_entries(data: bytes) -> list[Diag0x1C7Cv2Entry] | None:
         "seq records). Every other v=0x02 packing splits generically into its "
         "(tag, ver, len, body) entries (Diag0x1C7Cv2Report)."
     ),
-    version=16,
+    version=17,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -1091,11 +1143,13 @@ def split_v2_entries(data: bytes) -> list[Diag0x1C7Cv2Entry] | None:
         "+991); 229B (83.8% invariant) carries one engine tick @5 "
         "(+~1003/record); 127B (Quectel-only, 1,834 records) is a "
         "98.4%-invariant 2-state status pair at byte[5]/byte[69]; 337B "
-        "tag=0x25 carries a triple-echoed engine clock @218/282/330 at "
-        "+256000/record (same cadence as 0x147C v=0x0A/0x0D); 364B tag=0x03 "
-        "carries engine_clock @69 (+256000/record) + BE record_seq @117, "
-        "364B tag=0x09 a BE record_seq @254 (time-sorted walk). No F3 site "
-        "prints any v=0x02 field, so clocks are raw ticks with no units."
+        "tag=0x25 carries a triple-echoed engine clock @219/283/331 at "
+        "+1000/record; 364B tag=0x03 carries engine_clock @70 (+1000/record) "
+        "+ a u32-LE record_seq @120 repeated @166/@243, 364B tag=0x09 the "
+        "same record_seq @257 (time-sorted walk, 143-145 RM520N-GL + 5-6 "
+        "EM9291 records per template). Every named v=0x02 field lies inside one TLV "
+        "entry's body. No F3 site prints any v=0x02 field, so clocks are "
+        "raw ticks with no units."
     ),
     source_url="",
     issues=(),
@@ -1248,6 +1302,7 @@ def _parse_0x1c7c_v2(
         return None
     r = _parse_0x1c7c_v2_template(log_time, data)
     if r is not None:
+        r.entries = entries
         return r
     return Diag0x1C7Cv2Report(
         log_time=log_time,
@@ -1391,10 +1446,10 @@ def _parse_0x1c7c_v2_template(
                 report_tag=report_tag,
                 header_const=(data[2], data[3], data[4]),
                 engine_clock=unpack_from('<I', data, _V2_SUB07_TAG03_ENGINE_CLOCK_OFF)[0],
-                record_seq=unpack_from('>I', data, _V2_SUB07_TAG03_SEQ_OFF)[0],
+                record_seq=unpack_from('<I', data, _V2_SUB07_TAG03_SEQ_OFF)[0],
                 seq_siblings=(
-                    unpack_from('>I', data, _V2_SUB07_TAG03_SEQ_SIB1_OFF)[0],
-                    unpack_from('>I', data, _V2_SUB07_TAG03_SEQ_SIB2_OFF)[0],
+                    unpack_from('<I', data, _V2_SUB07_TAG03_SEQ_SIB1_OFF)[0],
+                    unpack_from('<I', data, _V2_SUB07_TAG03_SEQ_SIB2_OFF)[0],
                 ),
                 raw=bytes(data),
             )
@@ -1407,7 +1462,7 @@ def _parse_0x1c7c_v2_template(
                 subtype=subtype,
                 report_tag=report_tag,
                 header_const=(data[2], data[3], data[4]),
-                record_seq=unpack_from('>I', data, _V2_SUB07_TAG09_SEQ_OFF)[0],
+                record_seq=unpack_from('<I', data, _V2_SUB07_TAG09_SEQ_OFF)[0],
                 raw=bytes(data),
             )
         return None

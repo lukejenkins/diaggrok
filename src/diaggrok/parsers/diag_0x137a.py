@@ -1,7 +1,7 @@
 """0x137A — CGPS PDSM End Session marker, 8B all-constant magic.
 
 Validated across chipset generations: MDM9607, MDM9x50, SDX55 (incl.
-RXM-G1) and MDM9x07 (EG18NA). Payload is entirely constant:
+RXM-G1) and SDX20 (EG18NA). Payload is entirely constant:
 
   a3 0d 00 00 00 00 00 00
 
@@ -15,7 +15,7 @@ A co-temporal F3 correlation confirms the canonical log name — this is NOT
 an LTE marker or batch boundary despite the code range; it is a
 GNSS/CGPS position-session-manager event.
 
-On an EG18NA (MDM9x07) GNSS cold-start capture, the single 0x137A
+On an EG18NA (SDX20) GNSS cold-start capture, the single 0x137A
 record fires ~799 ts-units (essentially co-temporal; next-nearest F3 cluster
 is 38k away) *after* the firmware's own F3 prints:
 
@@ -82,7 +82,7 @@ class Diag0x137A:
     source_type="re",
     source_detail=(
         "Cross-generation decode from MDM9607, MDM9x50 and SDX55 captures; "
-        "semantics F3-confirmed as CGPS PDSM End Session (EG18NA MDM9x07: "
+        "semantics F3-confirmed as CGPS PDSM End Session (EG18NA SDX20: "
         "0x137A co-temporal with the pdsm_end_session_ex() F3 print)"
     ),
     issues=(),

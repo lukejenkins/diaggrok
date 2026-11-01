@@ -30,7 +30,7 @@ field moves up 3 bits, the SFN up 2, the allocation word up 1.
 `spare_raw` keeps every other bit of 32-95 in place (all other bits masked to 0).
 
 v0x01 = MDM9x07 / MDM9x30 (EG25-G, EG95, MC7455, SIM7600NA, T9, RC400L, T77W595);
-v0x18 = SDX20 / SDX24 (LM960, EM7511, MC7411, EM060K, EP06); v0x28 = SDX55 onward
+v0x18 = SDX20 / MDM9250 / SDX12 / MDM9240 (LM960, EM7511, MC7411, EM060K, EP06); v0x28 = SDX55 onward
 (RM520N, LV55, R500L5, EM9291, FX2000, T99W640, EM120R).
 
 ### Grounding (1,034 records, 192 captures — the whole bearing corpus)

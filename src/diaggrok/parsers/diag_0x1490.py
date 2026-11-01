@@ -1,7 +1,7 @@
 """0x1490 — GNSS state/event report (14B fixed, all bytes named).
 
 Cross-chipset RE corpus: 8342 records across 14 chipset+firmware pairs —
-EG18-NA (SDX20 V2), EP06A (MDM9x07), EM7511 (MDM9650), FN980m (SDX55),
+EG18-NA (SDX20 V2), EP06A (MDM9240), EM7511 (MDM9250), FN980m (SDX55),
 LM960 (4 firmware builds) + LM960A18 (SDX20).
 
 Field map:
@@ -130,7 +130,7 @@ class Diag0x1490:
     source_type="re",
     source_detail=(
         "Cross-chipset RE: 8342 records across 14 chipset+firmware pairs — "
-        "EG18-NA SDX20 V2, EP06A MDM9x07, EM7511 MDM9650, FN980m SDX55, "
+        "EG18-NA SDX20 V2, EP06A MDM9240, EM7511 MDM9250, FN980m SDX55, "
         "LM960 (4 firmware builds) + LM960A18 SDX20. Every byte named: "
         "version/state/sub_state/reserved_3_4/status/event_flag/"
         "reserved_7_13. state_byte is 2-state (0xA3 steady, 0x59 boot); "

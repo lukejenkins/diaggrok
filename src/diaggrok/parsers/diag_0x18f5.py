@@ -7,7 +7,7 @@ allocation for LOG_GNSS_QZSS_SBAS_MEASUREMENT_REPORT_C failed" (some name
 tables carry the non-_C form).
 
 **F3-grounded subsystem identity:** co-temporal F3 (+/-300 ticks per record,
-EG18-NA MDM9x55, 248 records) independently confirms the name. The two
+EG18-NA SDX20, 248 records) independently confirms the name. The two
 highest-density co-temporal files are the firmware's own
 `mc_gnssmeasreport.c` (13.2% of its prints fall in the record window) and
 `nf_sbas.c` (34.5% - the SBAS navigation filter), plus
@@ -43,7 +43,7 @@ the same Wistron/WNC 81UMV91M21 (MDM9150) modem as the 81UMV91M21 bench
 captures, so it adds long fielded uptime, not cross-device corroboration.
 
 The f32 at block-relative offset 48 decodes to -pi/2 (-1.5707963) on
-every block of every 101/172/243 fixture across MDM9x55 / SDX55 / SDX20 —
+every block of every 101/172/243 fixture across SDX55 / SDX20 —
 a cross-chipset "not-computed angle" default. It is NOT a universal
 invariant, though: in the RSU 314/385/456 records the trailing two blocks
 carry a LIVE angle (~0.675/0.70 rad), so -pi/2 is the common default, not
@@ -65,7 +65,7 @@ Header (30 B)::
     [2]      u8   hdr_byte2          raw. A per-build constant on SDX parts
                                        (SDX55 5, SDX62 / SDX65 7, SDX72 9,
                                        MDM9207 70); varies per record on
-                                       MDM9x55 / SDX20 / MDM9150 / MDM9250.
+                                       SDX20 / MDM9150 / MDM9250.
                                        Un-grounded
     [3:7]    u32  fcount             F3 "FC"; == 0x1477 f_count
     [7:9]    u16  gps_week           F3 "Wk"
@@ -75,7 +75,7 @@ Header (30 B)::
                                        BUILD-DEPENDENT: ns on MDM9150 (F3 "TMs"
                                        = value * 1e-6 ms, 88 / 88), ms on SDX65
                                        (M3100: 0x1CCx header == F3 "TMs").
-                                       SDX55 / SDX20 / MDM9x55 magnitudes
+                                       SDX55 / SDX20 magnitudes
                                        (20..120 with a fix) read as ns
     [21:25]  f32  freq_bias_mps      == 0x1477 clock_freq_bias
     [25:29]  f32  freq_unc_mps       == 0x1477 clock_freq_unc

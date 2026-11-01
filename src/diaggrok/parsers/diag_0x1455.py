@@ -1,7 +1,7 @@
 """0x1455 — GNSS epoch counter (7B fixed, all bytes named).
 
 Cross-chipset corpus: 4204 records across 14 chipset+firmware pairs —
-EG18-NA (SDX20 V2), EP06A (MDM9x07), EM7511 (MDM9650), FN980m (SDX55),
+EG18-NA (SDX20 V2), EP06A (MDM9240), EM7511 (MDM9250), FN980m (SDX55),
 LM960 (four firmware builds) + LM960A18 (SDX20).
 
 Field map:
@@ -84,7 +84,7 @@ class Diag0x1455:
     source_type="re",
     source_detail=(
         "4204 records across 14 chipset+firmware pairs — EG18-NA SDX20 V2, "
-        "EP06A MDM9x07, EM7511 MDM9650, FN980m SDX55, LM960 (four builds) + "
+        "EP06A MDM9240, EM7511 MDM9250, FN980m SDX55, LM960 (four builds) + "
         "LM960A18 SDX20. Every byte named: version/sequence(u32 LE)/flags/"
         "reserved. sequence == the tm_pdapi_client.c "
         "'PDSM_PD_EVENT_POSITION, Successful Fixes %u' argument on 713/713 "

@@ -78,8 +78,8 @@ surface, they just do not use the batched 0x1CB2 variant.  Per-chipset
 zero-counts (modems / total DIAG records audited / 0x1384 records observed
 / 0x1CB2 records observed):
 
-    MDM9x07 (EG12-GT, EG18-NA, EP06-A)      1,178,329 / 9,085 / 0
-    MDM9x50/SWI9X50C (EM7511 x 2 firmwares)   720,264 / 14,284 / 0
+    SDX20/MDM9240 (EG12-GT, EG18-NA, EP06-A)   1,178,329 / 9,085 / 0
+    MDM9250/SWI9X50C (EM7511 x 2 firmwares)   720,264 / 14,284 / 0
     SDX20 (LM960 x 3 carriers)              1,347,780 / 8,638 / 0
     SDX55 (RM500Q-AE, FN980m x 2)           1,826,138 / 10,283 / 0
 

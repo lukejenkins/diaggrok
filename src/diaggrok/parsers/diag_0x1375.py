@@ -618,7 +618,7 @@ class Diag0x1375:
     # body — entirely consistent with this being a CGPS (GNSS) IPC container.
     # Empirically genuine ASCII (complete, checksummed, high-recurrence;
     # same $PQME family as 0x1C7C). Cross-vendor: Quectel + Sierra EM9190
-    # SDX55 / MC7455 MDM9x30 + Inseego M2000 MDM9627; config-token
+    # SDX55 / MC7455 MDM9x30 + Inseego M2000 SDX55; config-token
     # clean+recurring on Sierra EM7565 (MDM9x50). NOT PII. The CGPS (not LTE)
     # identity is consistent with — and partly evidenced by — this GNSS ASCII.
     ascii_kinds=("nmea", "config-token"),

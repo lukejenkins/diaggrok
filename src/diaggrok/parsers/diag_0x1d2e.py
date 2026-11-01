@@ -45,7 +45,7 @@ hint), and nothing in the record or its co-temporal F3 points at GNSS (a
 218-to-19 ratio of non-GNSS to GNSS source files around each emission).
 
 **Variable-length structure.** An RM520N-GL record carries a single data
-cell (123 B), but a Sierra EM9291 (SDX65) edge-case suite emits the same
+cell (123 B), but a Sierra EM9291 (SDX62) edge-case suite emits the same
 log code at **five payload sizes** following a clean ``86 + 37·N`` ladder.
 Structural RE across both modems shows the record is a **49-byte header
 followed by an array of 37-byte cells**, not a fixed record:
@@ -67,13 +67,13 @@ Observed size ladder (clean family, ``(size-86) % 37 == 0``):
 
     size  n_counters  n_cells  modems
     ----  ----------  -------  ------------------------------
-     123       1          2     RM520N-GL (SDX62), EM9291 (SDX65)
+     123       1          2     RM520N-GL, EM9291 (both SDX62)
      160       2          3     EM9291
      197       3          4     EM9291
      234       4          5     EM9291
 
 The sizes {196, 233, 269, 270, 307} that do not fit ``86 + 37*N`` are the
-multi-group trailer above, not a distinct layout. Two 2026-06 readings were
+multi-group trailer above, not a distinct layout. Two earlier readings were
 wrong: ``data[11]`` is N - 1 only when ``data[12:18]`` is all-zero (true on
 every such record; otherwise [11:18] is a different sub-block, surfaced as
 ``hdr_11_18``), and ``magic`` / the ``ff ff 00 xx 00`` tags are values, not
@@ -250,7 +250,7 @@ class Diag0x1D2E:
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Clean-room RE from RM520N-GL SDX62 + a Sierra EM9291 SDX65 "
+        "Clean-room RE from RM520N-GL SDX62 + a Sierra EM9291 SDX62 "
         "edge-case suite. Variable length 86+37*N; cell count at "
         "data[48], cross-checked by data[11] and the trailer presence bitmask. "
         "v0x02 (T99W640/SDX72) is the "

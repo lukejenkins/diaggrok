@@ -36,7 +36,7 @@ Size-variant tag at [10:14]: 4 bytes whose layout differs per size:
   sz=51: [10]=0x02 [11]=0x01 [12]=0x02 [13]=0x00 [14:16]=0x0000
   sz=54: [10]=0x00 [11]=0x04 [12]∈{0x01,0xff} [13]∈{0,1,2} [14:16]=0x0000
          (163 records / 17 captures; variant-tag low byte [11]=0x04; seen on
-          Sierra EM9291 (SDX65, SWIX65C). Header, variant_tag and reserved_a
+          Sierra EM9291 (SDX62; SWIX65C is the firmware family it shares with the SDX65 EM9293). Header, variant_tag and reserved_a
           all conform to the shared model.)
 
 sz=47 tail:

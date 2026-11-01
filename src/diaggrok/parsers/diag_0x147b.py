@@ -82,7 +82,7 @@ class Diag0x147B:
     Cross-capture (no F3): MC7455 decoded UTC hits 298/298 LG290P
     reference-receiver seconds.
 
-    v9 (0x09, 503 B, MDM9x07 Quectel EP06A / EG95-NA) — no F3 and no 0x60 in
+    v9 (0x09, 503 B, MDM9240 Quectel EP06A / MDM9x07 EG95-NA) — no F3 and no 0x60 in
     any of the 13 bearing captures; grounded on external truth: decoded UTC
     (gps_to_utc, 18 s leap) hits 296/296 LG290P reference-receiver TPV
     seconds and 296/296 of the modem's own NMEA RMC seconds (EP06A), 305/305
@@ -184,7 +184,7 @@ class Diag0x147B:
     |--------------:|--------:|-----:|---------:|----------------------------------|
     | 0x0B (11)     | 25,219  | 41.7 | 535      | SDX20 V2 / MDM9x50 / MDM9207     |
     | 0x12 (18)     | 20,102  | 33.2 | 1011     | SDX55 (FN980m, EM9190, RM500Q)   |
-    | 0x09 ( 9)     |  6,290  | 10.4 | 503      | MDM9x07 (Quectel EP06A, EG95-NA) |
+    | 0x09 ( 9)     |  6,290  | 10.4 | 503      | MDM9240 EP06A, MDM9240 EG95-NA   |
     | 0x17 (23)     |  5,807  |  9.6 | 2464     | SDX62 (RM520N-GL)                |
     | 0x08 ( 8)     |  3,050  |  5.0 | 445      | MDM9x30 (Sierra MC7455)          |
 
@@ -324,7 +324,7 @@ _HEADER_OFFSETS = {
     #   version (offset 0): {0x00, 0x08, 0x09, 0x0b, 0x0e, 0x12, 0x15, 0x17, 0x18}
     #     0x00 (0)  =  183B (MDM9600: Sierra MC7700)
     #     0x08 (8)  =  445B (MDM9x30: MC7455)
-    #     0x09 (9)  =  503B (MDM9x07: EP06A, EG95-NA)
+    #     0x09 (9)  =  503B (MDM9240 EP06A, MDM9240 EG95-NA)
     #     0x0b (11) =  535B (SDX20 V2 / MDM9650 / MDM9207-OCPU)
     #     0x0e (14) =  844B (SDX24: EM160R)
     #     0x12 (18) = 1011B (SDX55: FN980m, EM9190, RM500Q)
@@ -383,7 +383,7 @@ def parse_0x147b(log_time: int, data: bytes) -> Diag0x147B | None:
 
     - MC7700  MDM9600: v=0,  183 B (gps_week is the 1024-rolled week)
     - MC7455  MDM9x30: v=8,  445 B
-    - EP06A   MDM9x07: v=9,  503 B
+    - EP06A   MDM9240: v=9,  503 B
     - EG18-NA SDX20-V2: v=11, 535 B
     - EM160R  SDX24:   v=14, 844 B
     - FN980m  SDX55:   v=18, 1011 B

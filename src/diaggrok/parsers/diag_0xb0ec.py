@@ -18,7 +18,7 @@ from diaggrok.parsers._lte_nas_ota_helpers import (
 from diaggrok.registry import register
 
 
-# Single version (0x01). MC7411 (MDM9650) emits it. The canonical log name
+# Single version (0x01). MC7411 (MDM9250) emits it. The canonical log name
 # LOG_LTE_NAS_EMM_PLAIN_OTA_INCOMING_MSG agrees
 # with the docstring title — LTE EMM (mobility) NAS, network→UE direction. The
 # decoded wire fields are NAS message-type/header values, NOT a measured

@@ -30,16 +30,17 @@ and a wider front header. v2 = v4 + 11 bytes:
     [0]      u8     version (2)
     [1:7]           sub-header (00 03 00 01 01 00 in-corpus — format markers)
     [7:9]    u16le  pci
-    [9:13]   u32le  nci          (early copy — equals the late nci below)
-    [13:17]  u32le  ncgi_marker  (NCGI/NCI upper dword — not a corpus constant.
-                                  Observed values incl. 0x01300621 and
-                                  0x01301840: the upper 16 bits (0x0130) are
-                                  stable in-corpus, the lower 16 bits are
-                                  cell-specific (part of the 36-bit NR Cell
-                                  Identity, not a format marker). Records
-                                  from one gNB share one value. Sibling 0xB821
-                                  carries 0x0130 as the NCGI upper word; kept
-                                  decoded + raw, unpinned.)
+    [9:17]   u64le  cell_global_id  (60-bit NR Cell Global Identity, the same
+                                  field and packing as sibling 0xB821 v17+:
+                                  bits [59:36] PLMN-Identity (TS 24.008 TBCD),
+                                  bits [35:0] the 36-bit NCI; decoded into
+                                  ncgi_mcc / ncgi_mnc / ncgi_nci)
+      [9:13]   u32le  (low dword  — NCI bits [31:0]; equals the late nci below)
+      [13:17]  u32le  ncgi_marker (high dword = PLMN << 4 | NCI bits [35:32];
+                                  kept raw for back-compat. It is NOT a format
+                                  marker: its value is the carrier's PLMN plus
+                                  one NCI nibble, so it changes with operator
+                                  and NCI prefix — see "NCGI" below.)
     [17:21]  u32le  nr_arfcn
     [21:25]  u32le  nr_arfcn_2
     [25:27]  u16le  dl_bandwidth
@@ -52,19 +53,36 @@ Cross-checks that anchor the layout: (1) the same physical cell (one PCI) is
 logged as v4 by RM500Q and v2 by EM9291 with byte-identical nr_arfcn /
 nr_arfcn_2 / nci; (2) in every v2 record the early nci (@9) equals the late nci
 (@29); (3) the per-version size gate ({v4:38, v2/v3:49}) rejects cross-version
-residue. (The ncgi_marker upper-16 = 0x0130 is stable in-corpus but its lower-16
-is cell-specific — see the field note above — so it is a weak hint, not a
-layout-anchoring constant.)
+residue. The detector keys on byte-0 + size only — never on any NCGI / cell
+value — so it recognises every cell, not one operator's.
 
-**Version 3 (49 bytes) — SDX75 (Foxconn T99W640):** byte-for-byte the same
+**NCGI.** ``[9:17]`` is one little-endian u64, the 60-bit NCGI. Earlier
+prose read its high dword as an "NCGI marker" whose upper 16 bits (``0x0130``)
+were "stable" and lower 16 "cell-specific". The high dword is in fact
+``PLMN << 4 | NCI[35:32]``: ``0x0130`` is TBCD octet ``0x13`` (MCC digits 3, 1)
+plus MNC digit 3 = 0, stable only because every capture is a US 31x carrier
+with a 3-digit MNC ending in 0. The "cell-specific" low half is the rest of the
+MNC plus MCC digit 3 and one NCI nibble. Grounding: a full corpus walk
+(117 captures, all 502 v2/v3 records) found 0 records with bits
+63:60 set, 0 with non-BCD PLMN nibbles and 0 whose low dword differs from the
+late nci. The four observed high dwords decode to PLMNs 310-260 (272 records /
+44 cells), 310-410 (87 / 28), 311-480 (142 / 6) and 313-100 (1 / 1): one value
+per PLMN across 79 cells, never one per cell. The 311-480 cell's co-temporal F3
+``5G-NR CID Update`` prints ``MCC=[3 1 1]``, and SCAT's 36-bit ``xCID`` for the
+v0x03 n41 carriers carries the NCI nibble that sits in the high dword's low
+4 bits.
+
+**Version 3 (49 bytes) — SDX72 (Foxconn T99W640):** byte-for-byte the same
 49 B layout as v2; only byte-0 (the release minor) differs (3 vs 2). The
-modem reports its own chipset id as ``qcom-sdx75m``. One v3 record is
+modem reports its own chipset id as ``qcom-sdx75m``, but that is the firmware's
+build-family string. The silicon is SDX72, per the vendor hardware design guide
+of its FN990B twin. One v3 record is
 byte-identical to the in-corpus v2 EM9291 record except byte-0, and another
 carries PCI <pci> / NR-ARFCN 521310 / NCI <nci> — the exact T-Mobile n41
 cell hardware-verified on the v4 path (RXM-G1). All hold the structural
-invariants (early-nci == late-nci, sub-header ``00 03 00 01 01 00``); their
-ncgi_marker == 0x01300621 because they are the same n41/gNB cell, not because
-the field is a corpus constant (see field note above).
+invariants (early-nci == late-nci, sub-header ``00 03 00 01 01 00``); they
+share one ncgi_marker because they share a PLMN and NCI prefix, not because the
+field is a corpus constant (see "NCGI" above).
 
 **Version-tuple note:** byte-0 is not the only version field. The record opens
 with two little-endian 16-bit fields — ``u16@0`` = release MINOR (what this
@@ -114,9 +132,9 @@ is why each version is grounded on its own.
 
 **F3-VERDICT v0x03: GROUND (pci, nr_arfcn, nr_arfcn_2=UL, dl/ul_bw, nci)
 via SCAT + an AT survey; no F3 in the v0x03 captures.** The two available
-v0x03 captures (SDX75 Foxconn T99W640 on T-Mobile — a cell-site survey and a
+v0x03 captures (SDX72 Foxconn T99W640 on T-Mobile — a cell-site survey and a
 bring-up run) hold five v0x03 records over three distinct cells, every one on
-gNB ncgi upper ``0x0130``. Two independent sources agree on every field:
+PLMN 310-260. Two independent sources agree on every field:
 
 * **SCAT NR-RRC ASN.1 SCell Info** decodes, from the survey capture, the
   serving cell's two aggregated n41 carriers::
@@ -167,19 +185,14 @@ from dataclasses import dataclass
 from struct import unpack_from
 from typing import Any, Optional
 
+from diaggrok.parsers.diag_0xb821 import decode_ncgi
 from diaggrok.registry import register
 
 # byte-0 (release MINOR; see version-tuple note below) → exact payload size
-# observed in-corpus (used as a gate). v0x02 (SDX62/SDX65) and v0x03 (SDX75
+# observed in-corpus (used as a gate). v0x02 (SDX62/SDX65) and v0x03 (SDX72
 # Foxconn T99W640) share the same 49 B layout — only the minor version byte differs.
+# This gate is the whole detector: no NCGI / cell value is ever matched.
 _B823_SIZE_BY_VERSION = {0x04: 38, 0x02: 49, 0x03: 49}
-# Not a corpus constant — this is the NCGI upper dword of the anchor fixture
-# cells (three PCIs), which share one gNB. In the wider corpus
-# ncgi_marker varies (e.g. 0x01301840 on another cell); only the upper 16 bits
-# (0x0130, cf. 0xB821) are stable, the lower 16 are cell-specific. Kept as a
-# named fixture value, not a pinned field_invariant.
-_B823_NCGI_MARKER = 0x01300621
-_B823_NCGI_UPPER16 = 0x0130      # stable upper half of ncgi_marker in-corpus
 
 # --- Ground-truth recipe --------------------------------------------------
 # v2 is the RM520N-GL (SDX62) emission: a corpus body-walk of RM520N-GL
@@ -199,8 +212,14 @@ class Diag0xB823:
     nci: int                   # NR Cell Identity low word (canonical late copy)
     tail_raw: bytes
     payload_size: int
-    # v2/v3 only: NCGI upper dword (upper 16 bits 0x0130, lower 16 cell-specific). None on v4.
+    # v2/v3 only (None / "" on v4): the 60-bit NCGI at [9:17] and its decode
+    # (PLMN + full 36-bit NCI, via 0xB821's decode_ncgi). ncgi_marker is the
+    # u64's high dword (PLMN << 4 | NCI[35:32]), kept raw for back-compat.
     ncgi_marker: Optional[int] = None
+    cell_global_id: Optional[int] = None
+    ncgi_mcc: str = ""
+    ncgi_mnc: str = ""
+    ncgi_nci: Optional[int] = None
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -218,6 +237,11 @@ class Diag0xB823:
         }
         if self.ncgi_marker is not None:
             d["ncgi_marker"] = self.ncgi_marker
+            d["cell_global_id"] = self.cell_global_id
+        if self.ncgi_nci is not None:
+            d["ncgi_mcc"] = self.ncgi_mcc
+            d["ncgi_mnc"] = self.ncgi_mnc
+            d["ncgi_nci"] = self.ncgi_nci
         return d
 
 
@@ -226,20 +250,20 @@ class Diag0xB823:
     name="0xB823",
     wigle_direct=True,
     wigle_roles=("identity", "pci-earfcn-bridge", "rat-context"),
-    description="0xB823 — LOG_NR5G_RRC_SERVING_CELL_INFO {pci, nr_arfcn x2, bandwidth, nci, NCGI marker}",
-    version=9,
+    description="0xB823 — LOG_NR5G_RRC_SERVING_CELL_INFO {pci, nr_arfcn x2, bandwidth, nci, NCGI (PLMN + 36-bit NCI)}",
+    version=10,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
-    source_detail="LOG_NR5G_RRC_SERVING_CELL_INFO. Layout from a corpus body-walk (326 records / 51 captures / 5 models). Three minor-version layouts: v4=38B (SDX55), v2=49B (SDX62/SDX65), v3=49B (SDX75 T99W640 — same 49B layout as v2, only the minor byte differs). v2/v3 = v4 + early-NCI + NCGI upper dword (upper16 0x0130 stable, lower16 cell-specific; kept raw/unpinned) + wider front header. Decodes pci/nr_arfcn/nr_arfcn_2/dl_bw/ul_bw/nci per version. Anchored by one PCI logged as v4 (RM500Q) and v2 (EM9291) with identical nr_arfcn/nci, and v2/v3 early-nci==late-nci. Grounding per version: v0x02 pci/nr_arfcn/nci verified on an RM520N-GL Verizon n5-SA cell (pci=<pci>/nr_arfcn=177150/nci=<nci>) by exact equality across AT+QENG, SCAT RRC SIB1 NCGI and QMI, nci cross-confirmed by co-captured 0xB825; v0x02 pci/nr_arfcn F3-grounded on tm_cm_iface_nonship.c:293 '5G-NR CID Update: Freq=<nr_arfcn> PSC=<pci>' for both cells of an RM520N-GL capture (<pci>/501390, <pci>/647328), corroborated by QCSuper NR-RRC physCellId. v0x04 pci/nr_arfcn F3-grounded on an RXM-G1 capture's NR5G ML1 site gts.c:2660 'Proc NR5G ... PCI <pci> 521310', corroborated by QCSuper NR-RRC physCellId. On v0x02/v0x04 F3 prints only the CID sentinel, so nci rests on AT/SCAT/QMI + 0xB825. v0x03 grounded by SCAT NR-RRC SCell Info on both aggregated n41 carriers ('NR-ARFCN 501390/499374 BW 100/100 PCI <pci> xCID <nci>', '521310/519324 BW 90/90 PCI <pci> xCID <nci>'), matching pci/nr_arfcn/nr_arfcn_2/dl_bw/ul_bw/nci exactly (xCID low-32 == nci), plus an AT cell-site survey; nr_arfcn_2 is the UL ARFCN on v0x03. The v0x03 captures carry no F3. 12B tail kept raw.",
+    source_detail="LOG_NR5G_RRC_SERVING_CELL_INFO. Layout from a corpus body-walk (326 records / 51 captures / 5 models). Three minor-version layouts: v4=38B (SDX55), v2=49B (SDX62/SDX65), v3=49B (SDX72 T99W640 — same 49B layout as v2, only the minor byte differs). v2/v3 = v4 + a 60-bit NCGI u64 @[9:17] (PLMN TBCD << 36 | 36-bit NCI, decoded to ncgi_mcc/ncgi_mnc/ncgi_nci; its high dword, kept raw as ncgi_marker, is PLMN << 4 | NCI[35:32], not a format marker) + wider front header. Decodes pci/nr_arfcn/nr_arfcn_2/dl_bw/ul_bw/nci per version. Anchored by one PCI logged as v4 (RM500Q) and v2 (EM9291) with identical nr_arfcn/nci, and v2/v3 early-nci==late-nci. Grounding per version: v0x02 pci/nr_arfcn/nci verified on an RM520N-GL Verizon n5-SA cell (pci=<pci>/nr_arfcn=177150/nci=<nci>) by exact equality across AT+QENG, SCAT RRC SIB1 NCGI and QMI, nci cross-confirmed by co-captured 0xB825; v0x02 pci/nr_arfcn F3-grounded on tm_cm_iface_nonship.c:293 '5G-NR CID Update: Freq=<nr_arfcn> PSC=<pci>' for both cells of an RM520N-GL capture (<pci>/501390, <pci>/647328), corroborated by QCSuper NR-RRC physCellId. v0x04 pci/nr_arfcn F3-grounded on an RXM-G1 capture's NR5G ML1 site gts.c:2660 'Proc NR5G ... PCI <pci> 521310', corroborated by QCSuper NR-RRC physCellId. On v0x02/v0x04 F3 prints only the CID sentinel, so nci rests on AT/SCAT/QMI + 0xB825. v0x03 grounded by SCAT NR-RRC SCell Info on both aggregated n41 carriers ('NR-ARFCN 501390/499374 BW 100/100 PCI <pci> xCID <nci>', '521310/519324 BW 90/90 PCI <pci> xCID <nci>'), matching pci/nr_arfcn/nr_arfcn_2/dl_bw/ul_bw/nci exactly (xCID low-32 == nci), plus an AT cell-site survey; nr_arfcn_2 is the UL ARFCN on v0x03. The v0x03 captures carry no F3. 12B tail kept raw.",
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=8,
-    fields_parsed=8,
+    fields_identified=11,
+    fields_parsed=11,
     field_invariants={
         # byte0 is the release MINOR (u16@0); see the version-tuple note in the
-        # module docstring. v3 is the SDX75 (T99W640) minor.
+        # module docstring. v3 is the SDX72 (T99W640) minor.
         "version": {"enum": [0x02, 0x03, 0x04]},
     },
 )
@@ -260,15 +284,20 @@ def parse_0xb823(log_time: int, data: bytes) -> Diag0xB823 | None:
         nci = unpack_from('<I', data, 18)[0]
         tail_raw = data[26:]
         ncgi_marker: Optional[int] = None
-    else:  # version == 0x02 (SDX62/SDX65) or 0x03 (SDX75) — shared 49 B layout
+        cell_global_id: Optional[int] = None
+    else:  # version == 0x02 (SDX62/SDX65) or 0x03 (SDX72) — shared 49 B layout
         pci = unpack_from('<H', data, 7)[0]
-        ncgi_marker = unpack_from('<I', data, 13)[0]
+        cell_global_id = unpack_from('<Q', data, 9)[0]
+        ncgi_marker = cell_global_id >> 32
         nr_arfcn = unpack_from('<I', data, 17)[0]
         nr_arfcn_2 = unpack_from('<I', data, 21)[0]
         dl_bandwidth = unpack_from('<H', data, 25)[0]
         ul_bandwidth = unpack_from('<H', data, 27)[0]
         nci = unpack_from('<I', data, 29)[0]
         tail_raw = data[37:]
+
+    ncgi = decode_ncgi(cell_global_id)
+    mcc, mnc, ncgi_nci = ncgi if ncgi else ("", "", None)
 
     return Diag0xB823(
         log_time=log_time,
@@ -282,4 +311,8 @@ def parse_0xb823(log_time: int, data: bytes) -> Diag0xB823 | None:
         tail_raw=tail_raw,
         payload_size=len(data),
         ncgi_marker=ncgi_marker,
+        cell_global_id=cell_global_id,
+        ncgi_mcc=mcc,
+        ncgi_mnc=mnc,
+        ncgi_nci=ncgi_nci,
     )

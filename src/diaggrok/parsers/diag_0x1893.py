@@ -160,7 +160,7 @@ def _parse_1893_slot(data: bytes, base: int) -> CxmArbSlot1893:
     source_type="re",
     source_detail=(
         "Clean-room RE. 888B layout validated across 6 chipsets/vendors "
-        "(SDX55 EM9190/FN980/RM500Q-AE, SDX62 RM520N-GL, MDM9640 EP06A, "
+        "(SDX55 EM9190/FN980/RM500Q-AE, SDX62 RM520N-GL, MDM9240 EP06A, "
         "SDX20 LM960) on 2,084 records; 17,210 records in total across all "
         "variants. All layouts are a 3-byte prefix + 15 slots (3 + 15×59 / "
         "58 / 31 / 30); the 468 B MDM9x30 (MC7455/EM7455) and 453 B MDM9x35 "

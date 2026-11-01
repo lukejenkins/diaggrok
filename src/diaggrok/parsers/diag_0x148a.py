@@ -20,7 +20,7 @@ family layout:
     288B  0x05  MDM9230 (Sierra EM7455/MC7455)                              F3 legacy-QSR 0x92
     329B  0x68  MDM9150 (WNC 81UMV91M21 — incl. the same modem inside the    F3 plaintext, 2 devices
                 Kapsch RIS-9260), MDM9250 (Ficosa Carcom-G1),
-                MDM9650 (Sierra EM7511/MC7411/EM7565)
+                MDM9250 (Sierra EM7511/MC7411/EM7565)
     334B  0x6a  SDX20 V2 (Quectel EG18-NA)                                  F3 plaintext
     387B  0x79  SDX55/SDX62 (RM500Q-AE, FN980m, …)                          F3 plaintext
     388B  0x7a  SDX65 (Inseego M3100)                                       in-capture 0x1477

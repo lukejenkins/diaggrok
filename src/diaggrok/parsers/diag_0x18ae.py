@@ -15,7 +15,7 @@ ground truth confirms it:
     ``lte_ml1_pos_gts.c`` ×672; no non-GTS prints in the set). 84.32% of
     records sit within 0.5s of a GTS print (flat to 5s — co-emission is
     bimodal: tight-lock vs a >5s GTS-silent idle gap where the SysFN counter
-    free-runs), replicating the MC7411 83%@1s on SDX20. ``gts.c:502`` prints
+    free-runs), replicating the MC7411 83%@1s on MDM9250. ``gts.c:502`` prints
     the ``sfn_counter`` field verbatim:
     ``GTS: OstmrDiff SysFN ( … ) after latch ( … ). Accept.``
   - GTS F3 content is unambiguous: ``GTS: BestGPSTime - No valid GPS Time``,
@@ -177,7 +177,7 @@ and 75B forms (SDX55: EM9190 / M2000) carry just ``compact_status``.
 # --- v4 432B full-form geometry --------------------------------------------
 # 432 = 26B header + 20 entry slots × 20B + 6B trailer. The 20-byte entry
 # stride and its internal field offsets are confirmed across 3 chipset
-# generations (LM960 SDX20, EM7511 SDX24, MC7411 MDM9x40 — same column
+# generations (LM960 SDX20, EM7511 MDM9250, MC7411 MDM9250 — same column
 # layout, same per-entry counter arithmetic). The byte at header offset 16
 # is NOT the entry size (it takes both 0x05 and 0x14 across chipsets) — the
 # entry stride is a fixed 20.
@@ -295,7 +295,7 @@ def _decode_v4_full_entries(data: bytes) -> list[dict[str, int]]:
         "verbatim as 'GTS: OstmrDiff SysFN'); the 432B full form is a 26B "
         "header + 20 × 20B slots + 6B trailer whose per-slot fields (field0_u8, "
         "counter_a +75/slot, index_u16, counter_b +2/slot, marker) are "
-        "confirmed across SDX20 (LM960), SDX24 (EM7511) and MDM9x40 (MC7411), "
+        "confirmed across SDX20 (LM960), MDM9250 (EM7511, MC7411), "
         "physical semantics unidentified. GTS identity: an LM960 capture with "
         "1,154,318 v0x04 records and 219,785 GTS-subsystem F3 prints (84.32% "
         "within 0.5s), and an MDM9250 drive with 2,170,942 v0x05 records and "

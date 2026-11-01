@@ -15,6 +15,14 @@ classes are handled STRUCTURALLY on the proof tree (scrub by field-key:
 public corpus, by the risk-tier policy (tier-1 codes ship synthetic values).
 Only the *unambiguous* NMEA coordinate form (a direction letter is present)
 is free-text-matched here. See the spec's Risk-tier section and Task 3.
+
+One carve-out (cell identity): cell identity is still never matched *bare*, but its
+**labeled prose forms** are (``TAC=…``, ``nci=0x…``, a Home-eNB site name, an
+EARFCN written next to a PCI). F3-grounding docstrings quote the firmware's own
+labels, which is exactly how the maintainer's TACs, NCIs and CBRS cell names
+reached the public tree while the structural scrub stayed green. Report-only,
+like the subscriber shapes. Altitude has no label-anchored shape and is not
+matched; fixtures carry synthetic altitudes by convention.
 """
 import re
 
@@ -258,6 +266,64 @@ def credential_tokens(text: str) -> list[str]:
     return out
 
 
+# ── Cell identity in prose ───────────────────────────────────────────────────────────
+# A cell identity names where the modem was. A 36-bit NCI with its PLMN is one
+# gNB sector; a TAC is a paging area; a Home-eNB name is a CBRS site code; an
+# EARFCN by itself is a frequency, but written next to a PCI it is one cell.
+# None of these is separable from a legitimate integer by shape alone, which is
+# why the bare forms stay out (see the module docstring). What IS separable is
+# the LABEL the firmware prints beside the value and the grounding prose copies:
+# ``TAC=<digits>``, ``nci=0x<hex>``, ``earfcn <n> pci <n>``. Report-only, like
+# the subscriber shapes: the gate refuses, a human replaces the value with a
+# placeholder (``<tac>``, ``<nci>``, ``<pci>``, ``<henb-name>``). A hex PCI
+# (``pci=0x64``) is deliberately not a pair hit: that is the fixture convention
+# for a synthetic cell in a test.
+_CELL_ID_LABEL_RE = re.compile(
+    r"(?i)\b(?:tac|lac|nci|eci|ecgi|ncgi|cgi|cell_?id(?:entity)?|cellid|"
+    r"serving_cell_?id|global_cell_?id|henb[_ ]?name)(?:_[a-z0-9]+)?"
+    # ``TAC=<digits>``, ``TAC: <HEX>`` (bare hex as the firmware prints it),
+    # ``TAC 0x<hex>`` (prose, no separator). The all-F word is the firmware's
+    # "no cell" sentinel, not an identity.
+    r"\s*[:=]?\s*(?!0xf+\b)(0x[0-9a-f]{3,}|\d{4,}|(?-i:[0-9A-F]{4,8}))\b")
+_HENB_NAME_RE = re.compile(
+    r"(?i)\b([a-z]{2,4}-(?:\d{1,4}-)?(?:outdoor-|indoor-)?cbs\d{1,2}(?:-[a-z])?)\b")
+# LTE ``EARFCN … PCI`` and NR ``NR-ARFCN … NRPCI`` alike (an NR PCI runs to
+# 1007, an NR-ARFCN to 7 digits), the AT prose form ``AT!NRPCI?=<n>``, and the
+# firmware's own print spellings: ``Physical CellId:<n> … DL Freq:<n>``,
+# ``Pcid =<n>``, ``Physical Cell ID <n>``.
+_PCI_LABEL = r"(?:(?:NR)?PCI\??|PCID|phys(?:ical)?[ _]?cell[ _]?id)"
+_FREQ_LABEL = r"(?:(?:E|NR[-_ ]?)?ARFCN|DL[ _]?Freq)"
+_EARFCN_PCI_RE = re.compile(
+    r"(?i)\b(" + _FREQ_LABEL + r"\s*[:=]?\s*\d{3,7}\b[^\n]{0,30}?"
+    r"\b" + _PCI_LABEL + r"\s*[:=]?\s*\d{1,4})\b")
+_PCI_EARFCN_RE = re.compile(
+    r"(?i)\b(" + _PCI_LABEL + r"\s*[:=]?\s*\d{1,4}\b[^\n]{0,30}?"
+    r"\b" + _FREQ_LABEL + r"\s*[:=]?\s*\d{3,7})\b")
+
+#: ``(rule, regex, why)``; the identity (or the pair text) is group 1.
+CELL_IDENTITY_RULES = (
+    ("labeled-cell-identity", _CELL_ID_LABEL_RE,
+     "a TAC/LAC/NCI/ECI/cell-id value printed after its label"),
+    ("henb-name", _HENB_NAME_RE,
+     "a broadcast Home-eNB (CBRS small-cell) site name"),
+    ("earfcn-pci-pair", _EARFCN_PCI_RE,
+     "an EARFCN written next to a PCI (one cell)"),
+    ("earfcn-pci-pair", _PCI_EARFCN_RE,
+     "a PCI written next to an EARFCN (one cell)"),
+)
+
+
+def cell_identity_tokens(text: str) -> list[str]:
+    """Labeled cell identities / HeNB names / EARFCN+PCI pairs in ``text`` —
+    deduped, order-preserving. Report-only; folded into ``leak_tokens``."""
+    out: list[str] = []
+    for _rule, rx, _why in CELL_IDENTITY_RULES:
+        for m in rx.finditer(text):
+            if m.group(1) not in out:
+                out.append(m.group(1))
+    return out
+
+
 def subscriber_tokens(text: str) -> list[str]:
     """ICCID / IMSI / E.164 tokens in ``text`` — deduped, order-preserving.
     Report-only (see the note above); folded into ``leak_tokens``."""
@@ -346,7 +412,8 @@ def leak_tokens(text: str) -> list[str]:
     stricter side is the gate, which is the fail-closed-correct direction.
 
     The report-only set also covers subscriber identifiers and GPS-shaped
-    decimals: ICCID, IMSI, E.164, and high-precision coordinates. All are bare digit runs, so all stay OUT of
+    decimals: ICCID, IMSI, E.164, high-precision coordinates, and labeled cell
+    identities. All are bare digit runs or free prose, so all stay OUT of
     ``LEAK_RES`` for the ``_unlabeled_imeis`` reason — the gate refuses and a
     human scrubs, rather than the redactor rewriting a legal literal in place."""
     out: list[str] = []
@@ -355,7 +422,8 @@ def leak_tokens(text: str) -> list[str]:
             if m not in out:
                 out.append(m)
     for report_only in (_unlabeled_imeis(text), subscriber_tokens(text),
-                        high_precision_coordinates(text), credential_tokens(text)):
+                        high_precision_coordinates(text), credential_tokens(text),
+                        cell_identity_tokens(text)):
         for tok in report_only:
             if tok not in out:
                 out.append(tok)

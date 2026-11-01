@@ -5,7 +5,7 @@ Tx-power limiter that ``lmtsmgr`` consults per tech/band) — **F3-grounded**.
 Every record is co-emitted (≤ 0.1 ms) with the VBATT module's own prints, and
 its u16 @[6:8] EQUALS the band argument of those prints, record for record:
 
-  * v0x01 (EM7565 / LM960, Sierra/Telit SDX20-class): ``vbatt_core.c:458 "VBATT:
+  * v0x01 (EM7565 / LM960, Sierra MDM9250 / Telit SDX20): ``vbatt_core.c:458 "VBATT:
     Record not found for new band %d for tech %d"`` arg0 = 178 ↔ [6:8] = 0x00B2;
     ``new band 4294967295`` (-1) ↔ [6:8] = 0xFFFF. On SC200E each record is
     co-emitted with ``vbatt_core.c:644 "ADC read completed … new level is %d"``.
@@ -24,7 +24,7 @@ single capture is not enough to rule the co-emission in or out. The name
 Two versions coexist in the corpus, partitioned by byte[0] (the DIAG
 version byte). The corpus is **~97% v0x02**; v0x01 is the residual ~3%.
 
---- v0x01 (20 B fixed) — EM7511 / MC7411 (MDM9650) -------------------------
+--- v0x01 (20 B fixed) — EM7511 / MC7411 (MDM9250) -------------------------
 Emitted during LTE mode transitions. Layout from 12 EM7511 records.
   [0]     u8   version    = 0x01 (const; the DIAG version byte)
   [1]     u8   type_b     = 0x02 (const)
@@ -44,17 +44,20 @@ Emitted during LTE mode transitions. Layout from 12 EM7511 records.
                 record exists. Exposed raw; not pinned as an invariant.
 [6:8] is the VBATT band (F3-grounded above; 0xFFFF = no band).
 
---- v0x02 — RM520N-GL (SDX62) + EM9291 (SDX65) ----------------------------
+--- v0x02 — RM520N-GL + EM9291 (both SDX62) -------------------------------
 A DISTINCT dual-shape format, discriminated by byte[1] (``record_type``). Each
 mode-transition event emits a **pair** — one 72 B record (record_type=0x01)
 and one 20 B record (record_type=0x02); the corpus counts the two shapes in
-near-lockstep. The layouts are **byte-identical across SDX62 and SDX65**
-(two chipset generations).
+near-lockstep. The layouts are **byte-identical across RM520N-GL and EM9291**:
+two vendors on ONE chipset generation, as both are SDX62. EM9291 was once
+labelled SDX65 from its SWIX65C firmware family. v0x02 is also carried
+by M3100 (SDX65) and T99W640 (SDX72) captures; their byte-identity has not
+been checked.
 
   v0x02-A (72 B, record_type=0x01): a firmware-static capability/config table —
     (a 48 B compact form also occurs: the same blocks minus the 8 zero bytes
     between IDs and values) —
-    every one of the 72 bytes is invariant across both chipset gens. Structure:
+    every one of the 72 bytes is invariant across both modems. Structure:
     three blocks, each ``[4 sequential u16 IDs][zeros][2 u16 values]`` —
     IDs 200-203 / 190-193 / 180-183, values ~2400-3200. CANDIDATE: the VBATT
     per-band threshold table (the values sit in the mV range of the 2700 EFS
@@ -62,7 +65,7 @@ near-lockstep. The layouts are **byte-identical across SDX62 and SDX65**
     stays raw as ``table_raw``).
 
   v0x02-B (20 B, record_type=0x02): richer than v0x01 — byte[2] is a real
-    per-record value (30-36 on SDX62, 57-61 on SDX65 — firmware-scaled) where
+    per-record value (30-36 on RM520N-GL, 57-61 on EM9291 — firmware-scaled) where
     v0x01 carries the 0xFF sentinel there. byte[3] varies (0x0b-0x10). The u16
     at [6:8] is the VBATT band (F3-grounded: = ``New Band`` of vbatt_core.c:609),
     the same field as v0x01's [6:8]. [16:18] u16 = the VBATT EFS threshold
@@ -87,7 +90,7 @@ from diaggrok.registry import register
 
 @dataclass
 class Diag0x18F8:
-    """0x18F8 v0x01 — 20B fixed, EM7511/MC7411 MDM9650, LTE mode transitions."""
+    """0x18F8 v0x01 — 20B fixed, EM7511/MC7411 MDM9250, LTE mode transitions."""
     log_time: int
     version: int     # [0] const 0x01 — DIAG version byte
     type_b: int      # [1] const 0x02
@@ -131,18 +134,18 @@ class Diag0x18F8:
 
 @dataclass
 class Diag0x18F8V2:
-    """0x18F8 v0x02 — dual-shape, RM520N-GL (SDX62) + EM9291 (SDX65).
+    """0x18F8 v0x02 — dual-shape, RM520N-GL + EM9291 (both SDX62).
 
     ``record_type`` (byte[1]) selects the shape: 0x01 → 72 B static table
-    (or its 48 B compact form, ``length == 48``), 0x02 → 20 B per-record status. Byte-identical across both chipset gens
-    (cross-gen attested; see the module docstring).
+    (or its 48 B compact form, ``length == 48``), 0x02 → 20 B per-record status. Byte-identical across both modems
+    (cross-vendor attested; see the module docstring).
     """
     log_time: int
     version: int          # [0] const 0x02 — DIAG version byte
     record_type: int      # [1] 0x01 (72B table) | 0x02 (20B status)
     length: int           # record length (72 or 20)
     # v0x02-B (20B) named fields — None on the 72B shape:
-    field_2: int | None       # [2] per-record value (30-36 SDX62 / 57-61 SDX65)
+    field_2: int | None       # [2] per-record value (30-36 RM520N-GL / 57-61 EM9291)
     field_3: int | None       # [3] varies 0x0b-0x10
     measurement: int | None   # [6:8] u16 — the VBATT band (F3-grounded; = v0x01 [6:8])
     vbatt_threshold: int | None  # [16:18] u16 — VBATT EFS threshold (2700 ↔ F3)
@@ -176,7 +179,7 @@ class Diag0x18F8V2:
 # measurement and NOT a battery-voltage reading (the voltage is in
 # vbatt_core.c "ADC read … new level is %d", not in this record).
 #
-# v0x01 is emitted by the Sierra EM7511 (MDM9650); RM520N-GL/EM9291 emit
+# v0x01 is emitted by the Sierra EM7511 (MDM9250); RM520N-GL/EM9291 emit
 # ONLY v0x02.
 
 @register(
@@ -188,12 +191,12 @@ class Diag0x18F8V2:
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Clean-room RE. v0x01: 12 EM7511 MDM9650 records across airplane/SIM/"
+        "Clean-room RE. v0x01: 12 EM7511 MDM9250 records across airplane/SIM/"
         "reboot transitions, 19/20 bytes constant (sentinel_d [16:20] is not: "
         "0 / varied on SC200E, so it is not pinned). v0x02: dual-shape (72B, "
         "or a 48 B compact form, record_type=0x01 static table + 20B "
-        "record_type=0x02 status), byte-identical across RM520N-GL SDX62 + "
-        "EM9291 SDX65. F3-grounded subsystem = VBATT: every record co-emits "
+        "record_type=0x02 status), byte-identical across RM520N-GL + EM9291 "
+        "(both SDX62). F3-grounded subsystem = VBATT: every record co-emits "
         "with vbatt_core.c prints and u16 [6:8] equals their band argument "
         "(v0x01 'new band %d', v0x02 'New Tech:%d Band:%d'), exposed as "
         "vbatt_band; v0x02-B [16:18] = VBATT EFS threshold (2700), exposed as "
@@ -259,7 +262,7 @@ def parse_0x18f8(log_time: int, data: bytes) -> Diag0x18F8 | Diag0x18F8V2 | None
     if version == 0x02:
         record_type = data[1]
         if record_type == 0x01:
-            # 72B static table (cross-gen-identical). Preserve the body.
+            # 72B static table (cross-vendor-identical). Preserve the body.
             # A 48 B COMPACT form of the same table is attested —
             # the identical three ``[4 u16 IDs][2 u16 values][00 00]`` blocks
             # without the 8 zero bytes between IDs and values (3 x 8 = 24 B

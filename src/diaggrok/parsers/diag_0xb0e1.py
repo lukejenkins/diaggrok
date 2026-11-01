@@ -173,7 +173,7 @@ def _decode_apn_labels(pdu: bytes) -> str | None:
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "Clean-room RE from EM7511 MDM9650, checked across 55 records / 9 "
+        "Clean-room RE from EM7511 MDM9250, checked across 55 records / 9 "
         "captures (variable length, plaintext APN under EEA0), with a byte-0 "
         "version gate. The TS 24.301 §9.1 security-protected layout is "
         "F3-grounded: [4] = sec_hdr_type 2 | PD 7, [5:9] NAS-MAC, [9] NAS "

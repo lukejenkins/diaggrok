@@ -308,7 +308,7 @@ class Diag0x15B2:
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "RE from the whole corpus (4 records: MC7411 MDM9x50 ×3, LM960A18 "
+        "RE from the whole corpus (4 records: MC7411 MDM9250 ×3, LM960A18 "
         "SDX20 ×1). F3-grounded by LM960 lte_rrc_loc_services.c:1765-"
         "1801 prints of the same response (rel/lat/lon/alt/unc_cir/semi-axes/"
         "unc_altitude/tod_ms) + MC7411 same-tick 0x1476 bit-exact on 3/3 "

@@ -518,7 +518,7 @@ class Diag0x15BD:
 
     ## Size variants
 
-    - **289 bytes** — all modern chipsets (SDX20+: EM7511 MDM9650,
+    - **289 bytes** — all modern chipsets (SDX20+: EM7511 MDM9250,
       LM960 SDX20, EG18-NA SDX20 V2, EM9190 SDX55, etc.), version byte == 3
     - **285 bytes** — MC7455/EM7455 (MDM9x30) and AirCard 791L (MDM9x35),
       version byte == 2; 4 bytes shorter because it has NO header_tick —
@@ -804,7 +804,7 @@ def _decode_v3_sub_records(body: bytes) -> list[V3SubRecord]:
 
 # Ground-truth recipe — not yet run on hardware (hw_run_performed=False); every
 # field is a hypothesis. Target: SIMCom SIM7600NA-H (MDM9207), a v=0x03 / 289B
-# emitter (same MDM9x07 class as the EP06-A). This is a
+# emitter (same layout as the MDM9240 EP06-A). This is a
 # DISCOVERY/correlation recipe: the decoded fields are GNSS measurement-engine
 # internals (monotonic ticks + a slowly-varying epoch index) — no AT command
 # returns their literal values, so they ground by emit-gating and increment/
@@ -840,7 +840,7 @@ def _decode_v3_sub_records(body: bytes) -> list[V3SubRecord]:
     source_type="re",
     source_detail=(
         "Clean-room RE across FN980m SDX55, EG18-NA SDX20 V2, LM960 SDX20, "
-        "EM7511 MDM9650, EM9190 SDX55, EP06A MDM9x07 (289B, version=3) and "
+        "EM7511 MDM9250, EM9190 SDX55, EP06A MDM9240 (289B, version=3) and "
         "MC7455/EM7455 MDM9x30 + AirCard 791L MDM9x35 (285B, version=2); "
         "corpus basis 7,465 records / 72,590+2,060 sub-records / 73 captures / "
         "45 chipsets. Both versions decode into 10×28B sub-records with the "

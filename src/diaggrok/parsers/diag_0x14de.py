@@ -51,7 +51,7 @@ Provenance and validation:
   jointly grounds this code's pseudorange fields and 0x14E1's clock
   polynomial on a third silicon family (after EG25-G MDM9607 and FN980m
   SDX55).
-- **EG12-GT (SDX20/MDM9x50)**: 1,065 records, all v=0x02, 100% parse;
+- **EG12-GT (SDX20)**: 1,065 records, all v=0x02, 100% parse;
   version byte and fixed 1839 B size are byte-identical to EG18-NA SDX20 V2.
 
 The ``OemdreSv`` per-SV helper dataclass has no ``type`` JSON field and

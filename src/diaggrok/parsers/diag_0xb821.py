@@ -64,7 +64,14 @@ Version 26 layout (SDX72 RG650V, Rel-17):
     msg_length and msg_data — header grows 31→35. Observed at zero across
     the v26 corpus; SCAT's v23/v24/v26 struct exposes them as
     ``unk1/unk2/unk3/segment_id`` (RRC segmentation — segment_id values 1-7
-    indicate a chunked PDU). Treated as opaque here.
+    indicate a chunked PDU). Not interpreted here, but kept raw as
+    ``reserved_raw`` (v30): until v29 the parser read past them, so they were
+    the one header region an accepted record did not surface.
+
+Bytes past header_size + msg_length (never seen: the corpus walk below
+finds header_size + msg_length == record_size on every record) are kept raw
+as ``trailing_raw`` (v30), so every byte of an accepted record is on the
+dataclass.
 
 Version 7 (early Rel-15) is not declared: no capture in the corpus carries
 pkt_ver 7, so it has no ground truth, and a v7 record returns None (registry
@@ -390,6 +397,14 @@ class Diag0xB821:
     sib_mask: int                   # 4-byte u32 sib_mask
     msg_length: int
     msg_data: bytes                 # raw ASN.1 PER-encoded NR RRC message
+    # RAW since v30, from the Kaitai audit: the 4 bytes v23/v26 insert between
+    # msg_length and msg_data ([31:35]); None on versions without them. Zero
+    # on every committed fixture and across the v26 corpus, but a third-party
+    # decoder names a segment id here, so they are kept rather than skipped.
+    reserved_raw: Optional[bytes] = None
+    # RAW (v30): bytes past header_size + msg_length. Empty on every corpus
+    # record; kept so a record with slack does not silently lose it.
+    trailing_raw: bytes = b''
     # v17+ only: 60-bit NR Cell Global Identity (NCGI) inserted between
     # bearer_id and arfcn — the CAMPED serving cell's identity, stamped onto
     # every record (constant across a camp, NOT per-record/per-neighbour).
@@ -624,6 +639,10 @@ class Diag0xB821:
         }
         if self.cell_global_id is not None:
             d['cell_global_id'] = self.cell_global_id
+        if self.reserved_raw is not None:
+            d['reserved_raw'] = self.reserved_raw.hex()
+        if self.trailing_raw:
+            d['trailing_raw'] = self.trailing_raw.hex()
         if self.ncgi_nci is not None:
             d['ncgi_mcc'] = self.ncgi_mcc
             d['ncgi_mnc'] = self.ncgi_mnc
@@ -814,7 +833,7 @@ def _decode_outer_choice(
 @register(LOG_NR5G_RRC_OTA_MSG, domain="rrc",
     name="0xB821",
     description="NR5G RRC Over-The-Air message with ASN.1 PER-encoded content",
-    version=29,
+    version=30,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -875,13 +894,15 @@ def _decode_outer_choice(
         "joins). v12 pdu_id 25 is a bare RadioBearerConfig, byte-equal to the "
         "carrying LTE nr-RadioBearerConfig2-r15 on 3/3 records. Still "
         "unmapped: v9 pdu_id 24/25 and v17 29. Committed fixtures use "
-        "synthetic identities."
+        "synthetic identities. v30 keeps the v23/v26 4-byte run before "
+        "msg_data (reserved_raw) and any bytes past the declared PDU "
+        "(trailing_raw), so every byte of an accepted record is surfaced."
     ),
     source_url="https://github.com/lukejenkins",
     issues=(),
     primary_issue=None,
-    fields_identified=67,
-    fields_parsed=67,
+    fields_identified=69,
+    fields_parsed=69,
     field_invariants={
         # Validated against 1,544 DLF records / 23 captures / 4 chipsets plus
         # 7 RG650V SDX72 v26 records.
@@ -971,6 +992,14 @@ def parse_0xb821(log_time: int, data: bytes) -> Diag0xB821 | None:
     if len(data) < header_size + msg_length:
         return None
     msg_data = data[header_size:header_size + msg_length]
+    # v23/v26 put 4 bytes between msg_length and msg_data (header 35, not 31);
+    # every other version starts msg_data right after msg_length. Kept raw
+    # (v30), as are any bytes past the declared PDU, so no byte of an
+    # accepted record is dropped.
+    reserved_off = _MSG_LEN_OFFSET[version] + 2
+    reserved_raw = (bytes(data[reserved_off:header_size])
+                    if header_size > reserved_off else None)
+    trailing_raw = bytes(data[header_size + msg_length:])
 
     channel_name = pkt_ver_to_channel_name(version, pdu_id)
     msg_class_index, msg_class_name = _decode_outer_choice(channel_name, msg_data)
@@ -991,6 +1020,8 @@ def parse_0xb821(log_time: int, data: bytes) -> Diag0xB821 | None:
         sib_mask=sib_mask,
         msg_length=msg_length,
         msg_data=msg_data,
+        reserved_raw=reserved_raw,
+        trailing_raw=trailing_raw,
         cell_global_id=cell_global_id,
         ncgi_mcc=ncgi[0] if ncgi else "",
         ncgi_mnc=ncgi[1] if ncgi else "",

@@ -21,7 +21,7 @@ varying by the number of inline cell entries:
         |      |        |                                      | Quectel EG25-G,
         |      |        |                                      | EG95-NA
   0x08 |  42B |   7B   | 42..154 in 7B steps (top: 42B@99.0%) | SDX20 LM960 +
-        |      |        |                                      | MDM9x40 MC7411
+        |      |        |                                      | MDM9250 MC7411
   0x0b |  25B |   5B   | 25..185 in 5B steps (top: 25B@82%)   | SDX55 — Telit
         |      |        |                                      | FN980m, Sierra
         |      |        |                                      | EM9190
@@ -70,7 +70,7 @@ F3 attribution, per version
     in 0-503 (RM520N 0%, EM9190 1.6%, SIM8202 1.2%, RM500Q 4.0%). The
     correlation search on RM520N finds 0 hypotheses. signal_quality is
     descending-sorted in 239/281 = 85% of multi-cell records.
-  v=0x08 (SDX20 LM960 + MDM9x40 MC7411 — 230,600 records): LTE-ML1
+  v=0x08 (SDX20 LM960 + MDM9250 MC7411 — 230,600 records): LTE-ML1
     idle/serving-measurement attribution. On an LM960 F3 capture (2,421
     v0x08 records; 1.40M F3 prints) the co-present LTE F3 is dominated by
     idle-measurement sites — ``lte_ml1_common_rssi_ind.c`` (serving
@@ -186,7 +186,7 @@ _4177_VERSION_PROFILE: dict[int, tuple[int, int]] = {
     0x01: (24, 5),  # MDM9625 Foxconn T77W595 — WCDMA Step-1 peaks, 5B per peak
     0x05: (29, 0),  # MDM9x30 Sierra MC7455 — fixed 29B
     0x07: (34, 7),  # MDM9207+MDM9x07 Quectel EG25-G/EG95-NA — 7B per cell
-    0x08: (42, 7),  # SDX20 LM960 + MDM9x40 MC7411 — 7B per cell
+    0x08: (42, 7),  # SDX20 LM960 + MDM9250 MC7411 — 7B per cell
     0x0b: (25, 5),  # SDX55 Telit FN980m + Sierra EM9190 — 5B per cell
 }
 
@@ -318,7 +318,7 @@ class Diag0x4177:
     source_type="re",
     source_detail=(
         "Cross-chipset corpus: 194,395 records / 44 captures. 4 versions with "
-        "chipset-keyed semantics: v=0x08 (SDX20 LM960 + MDM9x40 MC7411, 94.3%, "
+        "chipset-keyed semantics: v=0x08 (SDX20 LM960 + MDM9250 MC7411, 94.3%, "
         "42B base + 7B stride), v=0x05 (MDM9x30 MC7455, 2.9%, 29B fixed), "
         "v=0x07 (MDM9207 EG25-G + MDM9x07, 1.4%, 34B base + 7B stride), v=0x0b "
         "(SDX55 FN980m + EM9190, 1.3%, 25B base + 5B stride). Stride invariance "

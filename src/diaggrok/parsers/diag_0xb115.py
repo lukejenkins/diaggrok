@@ -19,7 +19,7 @@ covering 100% of the observed corpus:
 A sixth value, 0x18 (296B, all-zero), is admitted separately (see below).
 
 Chipset coverage: 0x7a/0x79 on SDX62 (em9291) / SDX55 (fn980, em9190) /
-MDM9628 (m2000) / Casa CFW3212; 0x29 on EP06A + MC7455 (SDX20); 0x16 on
+MDM9628 (m2000) / Casa CFW3212; 0x29 on EP06A (MDM9240) + MC7455 (MDM9230); 0x16 on
 EG25-G + EG95NA (MDM9607); **0x01 on Sierra MC7700 (SWI9200X / MDM9200-era)**.
 A `version` enum field-invariant rejects any unknown format byte (returns
 None at layer-2) rather than silently mis-parsing it: an identical size does
@@ -229,7 +229,7 @@ class Diag0xB115:
     For format 0x7a/0x79 the body is an 8B header (`u16@1 == 0x20*num_entries`)
     followed by `num_entries` x 16B entries, each surfaced as a dict of
     neutral structural fields. Formats 0x16 (MDM9207 EG25-G/EG95NA, 296B = 8
-    slots) and 0x29 (MDM9230 EM7455/MC7455 + EP06A, 608B = 17 slots) are decoded
+    slots) and 0x29 (MDM9230 EM7455/MC7455 + MDM9240 EP06A, 608B = 17 slots) are decoded
     as a 40B header + N x 32B cell-slots: each populated slot carries
     `{earfcn, pci, pci_flag, a, measurement}`.
     Top-level `earfcn` is the u32-LE at byte-offset 4

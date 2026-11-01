@@ -6,7 +6,7 @@ It is the UL twin of 0xB063 and shares its v0x01 subpacket container.
 ### Layout
 
 One wire version, **v0x01**, on every observed chipset (MDM9x07 EG25-G
-through SDX62 RM520N-GL / SDX65 EM9291). The modern DL entry-list versions
+through SDX62 RM520N-GL / EM9291). The modern DL entry-list versions
 (0xB063 v0x31/v0x32) have no UL counterpart.
 
     @0   u8   version            0x01

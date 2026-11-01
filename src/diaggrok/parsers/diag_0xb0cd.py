@@ -5,8 +5,8 @@ attach, SIM power cycle, and periodically during active LTE sessions. Each
 emission represents the CA band combination profile active for the current
 serving band; the primary band in combo[0] changes with the camped cell.
 
-Payload layout (fixed 3603 bytes, confirmed on MDM9650):
-    [0]       u8   version        (0x20 = 32 on SDX20/MDM9650)
+Payload layout (fixed 3603 bytes, confirmed on MDM9250, Sierra EM7511 / MC7411):
+    [0]       u8   version        (0x20 = 32 on SDX20/MDM9250)
     [1]       u8   num_combos     (count of populated combo slots, 0–100)
     [2]       u8   reserved       (always 0x00)
     [3..3602] 100 × 36-byte combo slots, each containing 6 CC slots:
@@ -53,7 +53,7 @@ _V28_SIZE = 4203
 _V28_CC_SIZE = 7
 _V28_COMBO_SIZE = _MAX_CCS * _V28_CC_SIZE  # 42 bytes per combo slot
 
-# v0x29 profile (v41) — SDX6x/SDX7x (Sierra EM9291 SDX65, an SDX72 modem).
+# v0x29 profile (v41) — SDX6x/SDX7x (Sierra EM9291 SDX62, an SDX72 modem).
 # VARIABLE-size: keeps v20/v28's fixed 100-combo-slot envelope, but each slot
 # is length-prefixed — a 1-byte CC count followed by that many 7-byte CCs —
 # so total size varies with how many carriers each combo declares.
@@ -75,7 +75,7 @@ _V29_HDR_SIZE = 2
 _V29_CC_SIZE = 7
 _V29_SLOTS = _MAX_COMBOS  # 100 length-prefixed combo slots
 
-# CA bandwidth classes 3GPP 36.101 Table 5.6A-1: A..F. v0x20 MDM9650 captures
+# CA bandwidth classes 3GPP 36.101 Table 5.6A-1: A..F. v0x20 MDM9250 captures
 # only ever exercise A-D; v0x28 SDX55 captures surface class E (=5) on wide
 # TDD bands (B46/B48/B66), so the name table is extended through F here.
 _BW_CLASS_NAMES: dict[int, str] = {
@@ -162,7 +162,7 @@ class Diag0xB0CD:
         }
 
 
-# v0x20 is the MDM9650 profile emitted by the Sierra MC7411 + EM7511. The log
+# v0x20 is the MDM9250 profile emitted by the Sierra MC7411 + EM7511. The log
 # name LOG_LTE_RRC_SUPPORTED_CA_COMBOS agrees with the docstring title.
 #
 # comboCap whole-combo join (v0x28 + v0x29). The firmware's plaintext print
@@ -204,7 +204,7 @@ class Diag0xB0CD:
 # Exact byte-consumption is the layout proof for the variable-size v0x29
 # format: a wrong stride desyncs and fails the `off != len(data)` gate. The
 # parser decodes 252/252 v0x29 records exactly (0 misses, 0 invariant
-# violations) across RM520N-GL SDX62 and EM9291 SDX65, over 55 distinct
+# violations) across RM520N-GL and EM9291 (both SDX62), over 55 distinct
 # sizes; every CC decodes to a real 3GPP band (31 distinct: 1,2,3,4,5,7,8,12,
 # 13,14,17,18,19,20,25,26,28,29,30,32,34,38,39,40,41,42,43,46,48,66,71) with
 # dl_bw_class in A–F and ul_bw_class in none/A/B/C. As an external oracle,
@@ -278,7 +278,7 @@ class Diag0xB0CD:
         "is a variable-size 100-slot envelope with length-prefixed "
         "variable-CC slots; F3-grounded via the RM520N-GL comboCap "
         "band/dl_bw_class/ul_bw_class value-match, and decoded 252/252 "
-        "records (0 misses) across RM520N-GL SDX62 and EM9291 SDX65, 55 "
+        "records (0 misses) across RM520N-GL and EM9291 (both SDX62), 55 "
         "distinct sizes, 31 real 3GPP bands; exact byte-consumption is the "
         "variable-size layout proof. A comboCap whole-combo join (each F3 "
         "burst matches exactly one combo, 4 captures, v0x28 + v0x29) grounds "
@@ -298,11 +298,11 @@ def parse_0xb0cd(log_time: int, data: bytes) -> Diag0xB0CD | None:
 
     Three version profiles decode:
 
-    * **v0x20 / 3603 B** — Sierra MDM9650 family (EM7511 + MC7411);
+    * **v0x20 / 3603 B** — Sierra MDM9250 family (EM7511 + MC7411);
       100 combos × 6 CC × **6 B**.
     * **v0x28 / 4203 B** — SDX55-class (Inseego M2000, Wistron LV55); identical
       header and 100×6-CC shape but 7-byte CCs (one trailing byte per CC).
-    * **v0x29 / variable** — SDX6x/SDX7x (Sierra EM9291 SDX65, SDX72);
+    * **v0x29 / variable** — SDX6x/SDX7x (Sierra EM9291 SDX62, SDX72);
       a 100-slot envelope where each slot is length-prefixed (1-byte CC count
       then that many 7-byte CCs), so total size varies. Decoded by walking all
       100 slots and requiring exact byte-consumption — a record that doesn't

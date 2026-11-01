@@ -20,7 +20,7 @@ modems / 3 vendors spanning 4 silicon generations
   • Telit  LM960A18      (SDX20)    — 2 records
   • Sierra MC7455        (MDM9x30)  — 1 record
   • SIMCom SIM7600NA-H   (MDM9x07)  — 2 records
-  • Sierra EM9291        (SDX65)    — 1 record
+  • Sierra EM9291        (SDX62)    — 1 record
   • Sierra MC7411                   — 1 record
 
 All records have SHA256 prefix `12277aebae1e4cc2…`. Byte-identity
@@ -82,7 +82,7 @@ class Diag0x7156:
     source_detail=(
         "Clean-room RE from 7 records / 5 modems / 4 chipset generations "
         "/ 3 vendors: Telit LM960 (SDX20), Sierra MC7455 (MDM9x30), SIMCom "
-        "SIM7600NA-H (MDM9x07), Sierra EM9291 (SDX65), Sierra MC7411. All "
+        "SIM7600NA-H (MDM9x07), Sierra EM9291 (SDX62), Sierra MC7411. All "
         "records have SHA256 prefix `12277aebae1e4cc2…` (`00 + 80×0xff`). "
         "Cross-vendor byte-identity falsifies any data-bearing hypothesis."
     ),

@@ -9,7 +9,7 @@ version byte selects the header size and the record stride.
              SIM7600, NL668, MC7700, R11e)
     0x2B     MDM9x30 / 9x35 (MC7455, EM7455,       12 B    28 B   1..20
              AC791L)
-    0x65     MDM9250 (EP06-A)                      12 B    44 B   1..20
+    0x65     MDM9240 (EP06-A)                      12 B    44 B   1..20
     0x7A     SDX20 / 9x50 (EM7565, LM960, MC7411,  16 B     8 B   1..20
              EM7511, EG12, EG18)
     0x8D     SDX24 (EM120R, EM160R, SC200E)        16 B    48 B   1..20

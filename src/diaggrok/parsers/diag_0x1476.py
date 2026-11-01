@@ -1,7 +1,7 @@
 """Position report parser (0x1476).
 
 The struct layout is established from our own GNSS DIAG capture corpus,
-not from third-party decoder source: the v1/v2/v10/v13/v24 and
+not from third-party decoder source: the v2/v10/v13/v24 and
 MDM9600/SWI9200X position-report offsets and types are pinned by those
 captures. The v10 (SDX20 V2) trailer is decoded from EG18-NA, LM960 and
 EM7511 captures, the 797 B MDM9600 variant from Sierra MC7700 captures, and
@@ -76,7 +76,7 @@ Per-version status
 
 - **v0x07 (7) and v0x08 (8), large-record fall-through variants.** v0x07:
   Sierra MC7455 / EM7455, MDM9x30-class, fixed 2115 B. v0x08: Quectel
-  EP06A, MDM9x07, fixed 2229 B. Both use the shared 291 B ``_POS_FMT``
+  EP06A, MDM9240, fixed 2229 B. Both use the shared 291 B ``_POS_FMT``
   struct for the header, velocity block and SV counts, but their **DOP
   triple sits at the v10 offset @228/232/236, not the struct's
   @236/240/244**; reading the struct offset would report the *vdop* slot as
@@ -150,7 +150,8 @@ from diaggrok.registry import register
 # Struct format strings — corpus-confirmed position-report layout
 # ---------------------------------------------------------------------------
 
-# position_report v1/v2 (83 fields, 291 bytes) — MDM9607 and earlier
+# position_report v2 (83 fields, 291 bytes) — MDM9607 and earlier.
+# v1 is not a declared version: no v1 record is attested in the corpus.
 _POS_FMT = '<BIBIHIBHIHIBHIIdd' + 'f' * 48 + 'BffffBBHffIIBBBBBB'
 _POS_SZ = calcsize(_POS_FMT)
 
@@ -239,7 +240,7 @@ class Diag0x1476:
     # List of GPS PRNs parsed from the trailer SV block. Populated by the
     # v10 (SDX20 V2) path and the MDM9600/SWI9200X 797 B path (decoded from
     # the offset-198 stride-20 array — see `_parse_mdm9600_gps_sv_block`).
-    # Empty for v1/v2 and v13+ parser paths (they don't use this field).
+    # Empty for v2 and v13+ parser paths (they don't use this field).
     gps_sv_prns: list[int] = field(default_factory=list)
     # v10-only (SDX20 V2): full per-SV Kalman residual + variance structs
     # from the trailer GPS SV block. One entry per tracked GPS SV. See
@@ -255,13 +256,41 @@ class Diag0x1476:
     # ``V10SecondarySv`` and :func:`_parse_v10_secondary_sv_block`.
     secondary_svs: list['V10SecondarySv'] = field(default_factory=list)
     # GLONASS time triplet — the direct GLONASS analog of gps_week/
-    # gps_tow_ms, exposed on the 291B _POS_FMT path (glo_four_year @29 u8,
-    # glo_days @30 u16, glo_tow_ms @32 u32) and the v6/v12 compact path. None
-    # on the v13/v24 and mdm9600 paths, where the offset is not yet located
-    # for that layout.
+    # gps_tow_ms, at B+6 / B+7 / B+9 on every regime (B = the gps_week
+    # offset): @29 on the 291B _POS_FMT path, the compact path, and since v27
+    # the v13+ (@38) and MDM9600 (@25) paths too. Corpus sidecars show
+    # the same signature on v13+ as on the exposed _POS_FMT control
+    # (four_year 8 = the 2024-27 cycle or the 0xFF no-solution byte, days_hi 3
+    # / 4 or 0xFF; 348,596 v13 / v21 / v24 / v26 records vs 573,877 v7 / v8 /
+    # v10), and four_year 3 (2004-07) on MDM9600, matching its 2006 GPS week.
     glo_four_year: int | None = None
     glo_days: int | None = None
     glo_tow_ms: int | None = None
+    # v26, from the Kaitai audit: header / struct bytes this parser read past
+    # without naming, live on the real fixtures. Surfaced verbatim, semantics
+    # unclaimed beyond the _POS_FMT names. None where a regime has no such slot.
+    #   pos_count     every regime: the u32 after the GLONASS triplet (B+13)
+    #   reserved1 / pos_vel_flag / pos_vel_flag2 / failure_code / fix_events
+    #                 [6:19], the _POS_FMT family (v2, v7, v8, v10) and MDM9600
+    #   fake_align    [19:23], the _POS_FMT family (absent on MDM9600)
+    #   clock_block_raw     _POS_FMT float lanes 9..44 [92:236] on v2;
+    #                       9..42 [92:228] on v7 / v8 / v10 (their DOP is @228)
+    #   post_dop_raw        [240:248] on v7 / v8 / v10
+    #   ellipse_sensor_raw  [248:285], the _POS_FMT ellipse / sensor run: one
+    #                       raw block, as its slots carry sentinels in
+    #                       firmware-dependent places on the real v8 / v10 records
+    #   hdr_gap_raw   [6:B] on the compact (v4 / v6 / v11 / v12) and v13+ headers
+    pos_count: int | None = None
+    reserved1: int | None = None
+    pos_vel_flag: int | None = None
+    pos_vel_flag2: int | None = None
+    failure_code: int | None = None
+    fix_events: int | None = None
+    fake_align: int | None = None
+    clock_block_raw: bytes | None = None
+    post_dop_raw: bytes | None = None
+    ellipse_sensor_raw: bytes | None = None
+    hdr_gap_raw: bytes | None = None
 
     # Known GNSS-engine cold-start seed positions (lat_rad, lon_rad).
     # These are hardcoded prediction positions emitted before the first
@@ -302,7 +331,7 @@ class Diag0x1476:
             'used': self.num_glo_svs, 'total': self.total_glo_svs,
         }
         # GLONASS time triplet — the GLONASS analog of gps_week/gps_tow_ms,
-        # exposed on the 291B path. Omitted when absent (v13/mdm9600 paths).
+        # exposed on every regime since v27.
         if self.glo_four_year is not None:
             glo_dict['four_year'] = self.glo_four_year
             glo_dict['days'] = self.glo_days
@@ -393,7 +422,20 @@ class Diag0x1476:
             }
         if self.v10_intermediate:
             out['v10_intermediate'] = self.v10_intermediate
+        struct_raw = {k: (v.hex() if isinstance(v, bytes) else v)
+                      for k in _STRUCT_RAW_FIELDS
+                      if (v := getattr(self, k)) is not None}
+        if struct_raw:
+            out['struct_raw'] = struct_raw
         return out
+
+
+# The v26 struct-raw fields, in to_dict's `struct_raw` order.
+_STRUCT_RAW_FIELDS = (
+    'pos_count', 'reserved1', 'pos_vel_flag', 'pos_vel_flag2', 'failure_code',
+    'fix_events', 'fake_align', 'hdr_gap_raw', 'clock_block_raw', 'post_dop_raw',
+    'ellipse_sensor_raw',
+)
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +446,7 @@ class Diag0x1476:
 # captures and confirmed on LM960, EM7511 and EG25-G captures.
 #
 # Byte layout of a v10 Diag0x1476 payload (2325 bytes total):
-#   0..290     v1/v2-compatible fixed-layout struct (`_POS_FMT`)
+#   0..290     v2-compatible fixed-layout struct (`_POS_FMT`)
 #              — version, f_count, pos_source, gps_week/tow, lat/lon (rad),
 #                float block (alt, velocity, DOP), SV counts (GPS/GLO/BDS only)
 #   291..322   32-byte intermediate block.  Exposed as named fields below;
@@ -431,7 +473,7 @@ class Diag0x1476:
 #              slot.  Some captures (e.g. EG18-NA with GLONASS tracking
 #              inactive) carry an all-zero block here.
 #   1160..2324 Reserved / zero on the entire observed corpus.  Galileo
-#              and QZSS counts still not present in the v1/v2 header and
+#              and QZSS counts still not present in the v2 header and
 #              have not surfaced here either.
 _V10_TRAILER_GPS_BLOCK_START = 323
 _V10_TRAILER_SV_ENTRY_SIZE = 22
@@ -1053,6 +1095,10 @@ def _parse_0x1476_v13(log_time: int, data: bytes) -> Diag0x1476:
         num_gps_svs=num_gps_svs, total_gps_svs=total_gps_svs,
         num_glo_svs=num_glo_svs, total_glo_svs=total_glo_svs,
         num_bds_svs=num_bds_svs, total_bds_svs=total_bds_svs,
+        pos_count=unpack_from('<I', data, 45)[0], hdr_gap_raw=bytes(data[6:32]),
+        glo_four_year=data[38],
+        glo_days=unpack_from('<H', data, 39)[0],
+        glo_tow_ms=unpack_from('<I', data, 41)[0],
     )
 
 
@@ -1235,6 +1281,16 @@ def _parse_0x1476_mdm9600(log_time: int, data: bytes) -> Diag0x1476:
         num_glo_svs=0, total_glo_svs=0,
         num_bds_svs=0, total_bds_svs=0,
         gps_sv_prns=gps_sv_prns,
+        # _POS_FMT's [6:19] header ints (the layout is _POS_FMT minus fake_align)
+        reserved1=unpack_from('<I', data, 6)[0],
+        pos_vel_flag=unpack_from('<H', data, 10)[0],
+        pos_vel_flag2=unpack_from('<I', data, 12)[0],
+        failure_code=data[16],
+        fix_events=unpack_from('<H', data, 17)[0],
+        pos_count=unpack_from('<I', data, 32)[0],
+        glo_four_year=data[25],
+        glo_days=unpack_from('<H', data, 26)[0],
+        glo_tow_ms=unpack_from('<I', data, 28)[0],
     )
 
 
@@ -1336,6 +1392,8 @@ def _parse_0x1476_compact(log_time: int, data: bytes) -> Diag0x1476:
         glo_four_year=data[b + 6],
         glo_days=unpack_from('<H', data, b + 7)[0],
         glo_tow_ms=unpack_from('<I', data, b + 9)[0],
+        pos_count=unpack_from('<I', data, b + 13)[0],
+        hdr_gap_raw=bytes(data[6:b]),
     )
 
 
@@ -1359,14 +1417,14 @@ def _length_fits_layout(version: int, n: int) -> bool:
 
 @register(LOG_GNSS_POSITION_REPORT, domain="gnss",
     name="0x1476",
-    description="Fix position, velocity, DOP, SV counts; v10 (SDX20 V2) trailer decoded with per-SV Kalman residuals, intermediate block and multi-constellation secondary SV block (all 7 observed const_ids named — GPS/GLONASS/BeiDou/Galileo/SBAS; odd const_ids are measurement-engine tracks); v1/v2/v4/v6/v7/v8/v11/v12/v13/v21/v24/v26 layouts; MDM9600/SWI9200X 797B legacy gpsOne variant — header, velocity block (heading/vel/vel_sigma), DOP triple (pdop²=hdop²+vdop² pinned) and per-SV GPS PRN array (offset-198 stride-20) — supported",
-    version=25,
+    description="Fix position, velocity, DOP, SV counts; v10 (SDX20 V2) trailer decoded with per-SV Kalman residuals, intermediate block and multi-constellation secondary SV block (all 7 observed const_ids named — GPS/GLONASS/BeiDou/Galileo/SBAS; odd const_ids are measurement-engine tracks); v2/v4/v6/v7/v8/v11/v12/v13/v21/v24/v26 layouts; MDM9600/SWI9200X 797B legacy gpsOne variant — header, velocity block (heading/vel/vel_sigma), DOP triple (pdop²=hdop²+vdop² pinned) and per-SV GPS PRN array (offset-198 stride-20) — supported",
+    version=27,
 
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
-    source_detail="Position-report layout established from our own GNSS DIAG capture corpus, not from third-party decoder source. Decoded variants: v1/v2 291 B _POS_FMT struct (MDM9607); MDM9600/SWI9200X 797 B v2 (Sierra MC7700, three firmware builds: header, velocity block, DOP triple @144 pinned by pdop²=hdop²+vdop² on 1799/1799 records, offset-198 stride-20 GPS PRN array); v7 (MC7455/EM7455, 2115 B), v8 (EP06A, 2229 B) and v10 (SDX20 V2, 2237/2325/2332 B) on the shared struct with the DOP triple at @228 (identity holds on 100% of real-fix records); v10 trailer: per-SV GPS Kalman residual/variance floats (variance and residual domains grounded against independent 0x14DE C/No), intermediate block, multi-constellation secondary SV block (const_ids named via an EM7511 capture with LG290P reference and LM960 GLONASS FCN cross-reference); v13 (SDX55, 2477 B), v21 (SDX65/SDX62, 647 B + N x 30 B), v24 (SDX62, 1215 B + N x 30 B) and v26 (T99W640, 1215 B + N x 30 B) on the v13/v24 path. Position is validated against same-antenna survey-grade LG290P fixes (EG25-G 2.84 m median, RM520N-GL 2.59 m, FN980 5.04 m, EG12-GT ~9 m) and field meanings against the firmware's own F3 prints (dsatm2mgpsif.c QMI_LOC DOP prints with the 500.0 no-DOP sentinel, tle_base.cpp 'PTM:ALE pos', LM960 gm_core.c/tle_log.c lat/lon). v6 (AirCard 791L MDM9x35, 1175 B) and v12 (EM160R/EM120R SDX24, 1895 B) use a compact header (the v13 header order at base 19 / 24; v13 = 32), F3-grounded: v12 (gps_week@24, gps_tow_ms@26) == ale_proc.c 'Nav solution GPS time (wk, tow)' 45/47 (shifts -6/-10/0 score 0/47); lat/lon @41/@49 round(deg*2^25/180) == loc_pd.c:2452/2454 coarse-position hex exactly; glo_four_year 255 == tm_core.c 'GLO4Year=255'; v6 lat/lon @36/@44 == tle_log.c 'TPC: Lat:38.000000, Lon:-117.000000' to 1e-9 deg 12/12, alt@52 == 'Alt:0.000000' 12/12 on the same DIAG tick; week 65535 == 'TimeValid:0'. v4 (Foxconn T77W595, 1151 B, base 19 = the v6 packing) and v11 (Franklin T9 MDM9207, 2244 B, base 23) join the same compact path: lat/lon f64 @b+17/@b+25 == tle_log.c 'TPC: SendPosReport: PosValid=1, Lat=, Lon=' to 1e-6 deg on the same DIAG epoch (F3 0.1-1 ms before the record), v4 43/43 over two positions (the 38/-117 default and a round-radian coarse seed, Punc 1172 km; value withheld), v11 65/65 over two captures; alt 0 == 'Alt:0.000000'; week 65535 == 'TimeValid:0'. v11 gps_tow_ms holds non-zero junk (mostly 255) while F3 prints GPSTow=0, so its TOW is meaningful only under a valid week. All v4/v6/v11/v12 corpus epochs are pos_source=4 with no fix, so their float block (heading -999.0 invalid sentinel; on v4/v11 heading_unc pi/sqrt(3) and vel_sigma 25/sqrt(3), un-initialised filter priors) is structural and DOP/SV counts are not located. 0x60 is silent for this code (no position/time event) and neither black-box oracle decodes it. Truncated payloads return None (registry WARN): v4/v6/v11/v12 off their exact size, v13 below 2477 B, v21/v24/v26 with a partial 30 B SV entry, v2 between 291 and 797 B, sub-291 B struct payloads, and v7/v8/v10 lengths below the largest attested size that are not themselves attested (v7/v8 also accept the bare 291 B struct used by the contract fixtures). Known gaps: v7/v8 trailer past the DOP triple, v26 SV tail, v13/v24 extended trailers, MDM9600 per-SV float sub-fields, Galileo/QZSS SV counts.",
-    # 29 named top-level fields cover v1/v2 header + v10 per-SV GPS
+    source_detail="Position-report layout established from our own GNSS DIAG capture corpus, not from third-party decoder source. Decoded variants: v2 291 B _POS_FMT struct (MDM9607); MDM9600/SWI9200X 797 B v2 (Sierra MC7700, three firmware builds: header, velocity block, DOP triple @144 pinned by pdop²=hdop²+vdop² on 1799/1799 records, offset-198 stride-20 GPS PRN array); v7 (MC7455/EM7455, 2115 B), v8 (EP06A, 2229 B) and v10 (SDX20 V2, 2237/2325/2332 B) on the shared struct with the DOP triple at @228 (identity holds on 100% of real-fix records); v10 trailer: per-SV GPS Kalman residual/variance floats (variance and residual domains grounded against independent 0x14DE C/No), intermediate block, multi-constellation secondary SV block (const_ids named via an EM7511 capture with LG290P reference and LM960 GLONASS FCN cross-reference); v13 (SDX55, 2477 B), v21 (SDX65/SDX62, 647 B + N x 30 B), v24 (SDX62, 1215 B + N x 30 B) and v26 (T99W640, 1215 B + N x 30 B) on the v13/v24 path. Position is validated against same-antenna survey-grade LG290P fixes (EG25-G 2.84 m median, RM520N-GL 2.59 m, FN980 5.04 m, EG12-GT ~9 m) and field meanings against the firmware's own F3 prints (dsatm2mgpsif.c QMI_LOC DOP prints with the 500.0 no-DOP sentinel, tle_base.cpp 'PTM:ALE pos', LM960 gm_core.c/tle_log.c lat/lon). v6 (AirCard 791L MDM9x35, 1175 B) and v12 (EM160R/EM120R SDX24, 1895 B) use a compact header (the v13 header order at base 19 / 24; v13 = 32), F3-grounded: v12 (gps_week@24, gps_tow_ms@26) == ale_proc.c 'Nav solution GPS time (wk, tow)' 45/47 (shifts -6/-10/0 score 0/47); lat/lon @41/@49 round(deg*2^25/180) == loc_pd.c:2452/2454 coarse-position hex exactly; glo_four_year 255 == tm_core.c 'GLO4Year=255'; v6 lat/lon @36/@44 == tle_log.c 'TPC: Lat:38.000000, Lon:-117.000000' to 1e-9 deg 12/12, alt@52 == 'Alt:0.000000' 12/12 on the same DIAG tick; week 65535 == 'TimeValid:0'. v4 (Foxconn T77W595, 1151 B, base 19 = the v6 packing) and v11 (Franklin T9 MDM9207, 2244 B, base 23) join the same compact path: lat/lon f64 @b+17/@b+25 == tle_log.c 'TPC: SendPosReport: PosValid=1, Lat=, Lon=' to 1e-6 deg on the same DIAG epoch (F3 0.1-1 ms before the record), v4 43/43 over two positions (the 38/-117 default and a round-radian coarse seed, Punc 1172 km; value withheld), v11 65/65 over two captures; alt 0 == 'Alt:0.000000'; week 65535 == 'TimeValid:0'. v11 gps_tow_ms holds non-zero junk (mostly 255) while F3 prints GPSTow=0, so its TOW is meaningful only under a valid week. All v4/v6/v11/v12 corpus epochs are pos_source=4 with no fix, so their float block (heading -999.0 invalid sentinel; on v4/v11 heading_unc pi/sqrt(3) and vel_sigma 25/sqrt(3), un-initialised filter priors) is structural and DOP/SV counts are not located. 0x60 is silent for this code (no position/time event) and neither black-box oracle decodes it. Truncated payloads return None (registry WARN): v4/v6/v11/v12 off their exact size, v13 below 2477 B, v21/v24/v26 with a partial 30 B SV entry, v2 between 291 and 797 B, sub-291 B struct payloads, and v7/v8/v10 lengths below the largest attested size that are not themselves attested (v7/v8 also accept the bare 291 B struct used by the contract fixtures). Known gaps: v7/v8 trailer past the DOP triple, v26 SV tail, v13/v24 extended trailers, MDM9600 per-SV float sub-fields, Galileo/QZSS SV counts.",
+    # 29 named top-level fields cover v2 header + v10 per-SV GPS
     # residuals + secondary-SV block + intermediate block. Known
     # limitations: v10 intermediate-block 32B not fully field-named
     # (exposed as dict); Galileo/QZSS SV counts still not located in any
@@ -1383,7 +1441,7 @@ def _length_fits_layout(version: int, n: int) -> bool:
     #
     # `version` enum [7, 8, 10, 13, 21, 24, 26]: every value observed at
     # offset+0. Crucially, v=7 (MC7455 SDX20-class only, 4,875 rec),
-    # v=8 (EP06A MDM9x07 only, 3,698 rec) and v=21 (RM520N-GL early
+    # v=8 (EP06A MDM9240 only, 3,698 rec) and v=21 (RM520N-GL early
     # capture only, 3 rec) are chipset-keyed minorities that would
     # silently mis-decode against an SDX55-only assumption; the (size,
     # version) profile reports the v=21 sample as a 647B/v=0x15 row.
@@ -1417,7 +1475,8 @@ def parse_0x1476(log_time: int, data: bytes) -> Diag0x1476 | None:
     Returns None (registry WARN) for an undeclared version or a record too
     short for its version's layout (see ``_length_fits_layout``).
 
-    Supports v1/v2 (291 bytes, MDM9607), the MDM9600/SWI9200X legacy
+    Supports v2 (291 bytes, MDM9607; v1 is undeclared because no v1 record
+    is attested, so a v1 record returns None), the MDM9600/SWI9200X legacy
     gpsOne variant (797 bytes, version byte 2, ``fake_align``-removed
     layout), v4/v6/v11/v12 (compact header), v7/v8/v10 (shared struct, v10 2325
     bytes on SDX20 V2), v13 (2477 bytes, SDX55), and v21/v24/v26 (SV-array
@@ -1426,7 +1485,7 @@ def parse_0x1476(log_time: int, data: bytes) -> Diag0x1476 | None:
 
     **v10 (EG18-NA / SDX20 V2)** details:
 
-    - The fixed 291-byte v1/v2 struct maps over the first 291 bytes of the
+    - The fixed 291-byte v2 struct maps over the first 291 bytes of the
       2325-byte v10 record for the header, velocity block and the
       GPS/GLONASS/BeiDou SV **counts** (@285..290), all of which decode to
       sensible values (e.g. gps_week=2413, lat/lon matching the capture site,
@@ -1504,7 +1563,7 @@ def parse_0x1476(log_time: int, data: bytes) -> Diag0x1476 | None:
     if version >= 13 and len(data) >= _POS_V13_MIN_SZ:
         return _parse_0x1476_v13(log_time, data)
 
-    # v1/v2 (291 bytes) and v10 (2325 bytes SDX20 V2) share the same
+    # v2 (291 bytes) and v10 (2325 bytes SDX20 V2) share the same
     # fixed-layout 291-byte struct.
     if len(data) < _POS_SZ:
         return None  # loud decline (registry WARN), not a ValueError
@@ -1518,8 +1577,8 @@ def parse_0x1476(log_time: int, data: bytes) -> Diag0x1476 | None:
     secondary_svs: list[V10SecondarySv] = []
     pdop, hdop, vdop = d['pdop'], d['hdop'], d['vdop']
     # DOP: the large-record GNSS variants — v7 (Sierra
-    # MC7455/EM7455, MDM9x30), v8 (Quectel EP06A, MDM9x07) and v10 (SDX20 V2)
-    # — all place the DOP triple 8 bytes EARLIER than the v1/v2 _POS_FMT struct
+    # MC7455/EM7455, MDM9x30), v8 (Quectel EP06A, MDM9240) and v10 (SDX20 V2)
+    # — all place the DOP triple 8 bytes EARLIER than the v2 _POS_FMT struct
     # does: pdop@228 / hdop@232 / vdop@236 (the struct reads @236/240/244, so
     # what it labels `pdop`@236 is really the *vdop*). Pinned by the motion-
     # independent identity pdop²=hdop²+vdop²:
@@ -1534,10 +1593,13 @@ def parse_0x1476(log_time: int, data: bytes) -> Diag0x1476 | None:
     # 500.0 is the receiver "no-DOP" sentinel (F3-confirmed on v10); prediction-
     # only epochs (pos_source=4) write 0.0. Both are non-physical for a DOP
     # (≥1.0 always) and render absent via to_dict's validity window. The
-    # SV-count bytes @285..290 are NOT shifted, so only the DOP read moves. v1/v2
+    # SV-count bytes @285..290 are NOT shifted, so only the DOP read moves. v2
     # (291 B) keep the struct offset — they never reach this branch (size < 323).
     # v21/v24 route through _parse_0x1476_v13 (version ≥ 13); v21 DOP @461.
-    if version in (7, 8, 10) and len(data) >= _V10_TRAILER_GPS_BLOCK_START:
+    # v26: at EVERY length, so the 291 B v7 / v8 contract records have
+    # the one layout their version has (no corpus v7 / v8 record is 291 B).
+    dop_at_228 = version in (7, 8, 10)
+    if dop_at_228:
         pdop = unpack_from('<f', data, 228)[0]
         hdop = unpack_from('<f', data, 232)[0]
         vdop = unpack_from('<f', data, 236)[0]
@@ -1588,4 +1650,14 @@ def parse_0x1476(log_time: int, data: bytes) -> Diag0x1476 | None:
         glo_four_year=d['glo_four_year'],
         glo_days=d['glo_days'],
         glo_tow_ms=d['glo_tow_ms'],
+        pos_count=d['pos_count'],
+        reserved1=d['reserved1'],
+        pos_vel_flag=d['pos_vel_flag'],
+        pos_vel_flag2=d['pos_vel_flag2'],
+        failure_code=d['failure_code'],
+        fix_events=d['fix_events'],
+        fake_align=d['fake_align'],
+        clock_block_raw=bytes(data[92:228 if dop_at_228 else 236]),
+        post_dop_raw=bytes(data[240:248]) if dop_at_228 else None,
+        ellipse_sensor_raw=bytes(data[248:285]),
     )

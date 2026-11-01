@@ -115,7 +115,7 @@ class Diag0x15B1:
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
-        "RE from the whole corpus (4 records: MC7411 MDM9x50 ×3, LM960A18 "
+        "RE from the whole corpus (4 records: MC7411 MDM9250 ×3, LM960A18 "
         "SDX20 ×1). F3-grounded on the LM960 drive capture: "
         "co-emitted 1:1 with pdapi.c:2846 pdsm_pd_get_best_avail_pos() "
         "(1 call / 1 record, 4 µs), client_id == F3 'PDSM client is 3491'."
