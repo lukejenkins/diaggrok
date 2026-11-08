@@ -30,11 +30,15 @@ The thing I care most about: each parser knows its own byte layout and **refuses
 
 ## Installation
 
-Not on PyPI yet — install straight from GitHub:
+From [PyPI](https://pypi.org/project/diaggrok/):
 
 ```bash
-pip install "diaggrok @ git+https://github.com/lukejenkins/diaggrok@main"
+pip install diaggrok
 ```
+
+Each PyPI version is the same code as the GitHub tag of the same number
+(`pip install diaggrok==2026.11.8` is tag `v2026.11.8`). diaggrok has no
+dependencies outside the standard library and needs Python 3.11+.
 
 ## Usage
 

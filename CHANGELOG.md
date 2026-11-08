@@ -9,6 +9,13 @@ zero-padded, `vYYYY.MM.DD`), so a tag reads exactly like the version PyPI
 shows. Releases before this file existed (`v2026.08.05`, `v2026.08.23`) carry
 no entries.
 
+## v2026.11.8.post1
+
+README only: the Installation section now says `pip install diaggrok`. The
+`v2026.11.8` README still said diaggrok was not on PyPI, and PyPI never lets a
+published version's description change, so this post-release carries the fix.
+The code is identical to `v2026.11.8`.
+
 ## v2026.11.8
 
 First release published to PyPI (`pip install diaggrok`). 197 log codes: the
