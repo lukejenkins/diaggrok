@@ -2,8 +2,33 @@
 
 One cell-list grammar for every version, at a per-version base offset
 (`_B825_LAYOUTS`), with a closed length budget; every cell typed, each version
-grounded on its own. Bytes nothing labels (per-cell trailer, 18 B blocks) stay
-raw in `body_raw`.
+grounded on its own. Bytes nothing labels (per-cell trailer, 18 B blocks) are
+exposed raw and positionally (v15: `cells[].trailer_raw`, `blocks[]`) and stay
+in `body_raw` too.
+
+**v15 raw view.** A layout mirror of this record with every byte a
+named sequential field showed four places where the parser's raw view was lossy
+even though `body_raw` kept the bytes:
+- the **band list** was reduced to a *set* of band numbers for the
+  detail-band check and never exposed — order, the entry's 2nd byte (0x01; 0x03
+  on a v0x06 two-cell band) and its 3rd byte (0x01 / 0x00 — 0x00 on the
+  non-PCell band of a two-band v0x04 record) were discarded. Now `bands[]`
+  = `{band, b2_raw, b3_raw}` in emission order.
+- a cell's **DL word was dropped** whenever its UL slot read absent on the first
+  entry (the near-SSB tune the carrier rule leaves untyped), and the UL
+  sentinel itself (0 vs 0x3333) was never exposed. Now every cell carries the
+  wire words `dl_word` / `ul_word` unconditionally; `carrier_arfcn_dl/ul`
+  stay the typed, rule-gated view of the same words.
+- the **per-cell trailer** (5 / 6 / 8 B) is `cells[].trailer_raw` (hex in
+  `to_dict`), and the **18 B blocks** are `blocks[]` (hex list).
+- `cells` is always a list (`[]` on an idle frame), never None.
+`blocks[]` are read from the record's TAIL (`len - 18 * block_count`): on every
+budget-closing record that is the grammar position, and on the enumerated
+stale-slot profiles (M2000 105 B non-camped, counts 0/0/1) it is where the
+firmware's fixed one-band / one-cell slot leaves the block. F3 (`gts.c`,
+`tm_cm_iface_nonship.c`, the RF driver) labels PCI / SSB / carrier only and is
+SILENT on the list bytes, trailers and blocks, so the new fields are positional
+raw names, not semantics (the 0x1807 rule).
 
 **Unified grammar — all six versions.**
 
@@ -216,7 +241,7 @@ Also known as: NR5G RRC Configuration Info
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from struct import unpack_from
 from typing import Any
 
@@ -320,10 +345,17 @@ class Diag0xB825:
     band_count: int | None = None
     cell_count: int | None = None
     block_count: int | None = None
-    # Every detail entry, in emission order: serv_cell_index, pci, band, arfcn_dl
-    # (SSB; absent on v0x08), carrier_arfcn_dl/ul (RF carrier centre; see
-    # _cell_dict for when each is typed).
-    cells: list[dict[str, int]] | None = None
+    # Band-list entries in emission order (v15): band u16 + the entry's two raw
+    # bytes (b2_raw 0x01 / 0x03, b3_raw 0x01 / 0x00; nothing labels them).
+    bands: list[dict[str, int]] = field(default_factory=list)
+    # Every detail entry, in emission order: serv_cell_index, pci, band, the raw
+    # wire words dl_word / ul_word (v15, always), arfcn_dl (SSB; absent on
+    # v0x08), carrier_arfcn_dl/ul (RF carrier centre; see _cell_dict for when
+    # each is typed) and trailer_raw (the per-cell trailer bytes, v15). Empty on
+    # an idle frame.
+    cells: list[dict[str, Any]] = field(default_factory=list)
+    # The n_blocks trailing 18 B blocks, raw, read from the record's tail (v15).
+    blocks: list[bytes] = field(default_factory=list)
     # The FIRST detail entry (PCell / SCG SpCell), flattened for back-compat.
     serv_cell_index: int | None = None
     pci: int | None = None
@@ -350,13 +382,25 @@ class Diag0xB825:
             v = getattr(self, k)
             if v is not None:
                 d[k] = v
+        if self.bands:
+            d["bands"] = [dict(b) for b in self.bands]
         if self.cells:
-            d["cells"] = self.cells
+            d["cells"] = [
+                {k: (v.hex() if isinstance(v, bytes) else v) for k, v in c.items()}
+                for c in self.cells
+            ]
+        if self.blocks:
+            d["blocks"] = [b.hex() for b in self.blocks]
         return d
 
 
-def _cell_dict(data: bytes, d: int, has_ssb: bool, first: bool) -> dict[str, int] | None:
+def _cell_dict(data: bytes, d: int, detail_len: int, has_ssb: bool,
+               first: bool) -> dict[str, Any] | None:
     """Decode one detail entry at offset ``d``; None if it is not a plausible cell.
+
+    The raw wire words ``dl_word`` / ``ul_word`` and the per-cell
+    ``trailer_raw`` (bytes [17:] with the SSB slot, [13:] without) are always
+    present (v15); the typed carrier fields below are the rule-gated view.
 
     Carrier-centre typing (GROUND: QCSuper/SCAT PointA + carrierBandwidth/2 on
     v0x04/v0x06/v0x08/v0x0a, F3 RF freq_khz on v0x03/v0x04, exact 3GPP duplex on
@@ -370,15 +414,19 @@ def _cell_dict(data: bytes, d: int, has_ssb: bool, first: bool) -> dict[str, int
     band = unpack_from("<H", data, d + (15 if has_ssb else 11))[0]
     if pci > _NR_PCI_MAX or not 1 <= band <= _NR_BAND_MAX:
         return None
-    cell = {"serv_cell_index": data[d], "pci": pci, "band": band}
+    dl, ul = unpack_from("<II", data, d + 3)
+    cell: dict[str, Any] = {
+        "serv_cell_index": data[d], "pci": pci, "band": band,
+        "dl_word": dl, "ul_word": ul,
+    }
     if has_ssb:
         cell["arfcn_dl"] = unpack_from("<I", data, d + 11)[0]
-    dl, ul = unpack_from("<II", data, d + 3)
     if ul not in _B825_UL_ABSENT:
         cell["carrier_arfcn_dl"] = dl
         cell["carrier_arfcn_ul"] = ul
     elif not first:
         cell["carrier_arfcn_dl"] = dl
+    cell["trailer_raw"] = bytes(data[d + (17 if has_ssb else 13): d + detail_len])
     return cell
 
 
@@ -399,9 +447,11 @@ def _cell_dict(data: bytes, d: int, has_ssb: bool, first: bool) -> dict[str, int
         "+ F3 RF freq_khz (v0x03/v0x04), qcsuper PointA+carrierBandwidth (v0x04/"
         "v0x08/v0x0a), SCAT NR-RRC SCell Info PointA+BW (v0x06), SCAT NR-ML1 + "
         "0xB823 (v0x00), exact 3GPP duplex on every UL pair; per-cell trailer and "
-        "18 B blocks raw"
+        "18 B blocks raw. Since v15 the band list "
+        "(bands[] band/b2_raw/b3_raw), every cell's raw dl_word/ul_word and "
+        "trailer_raw, and the 18 B blocks[] are exposed positionally raw"
     ),
-    version=14,
+    version=15,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -431,13 +481,18 @@ def _cell_dict(data: bytes, d: int, has_ssb: bool, first: bool) -> dict[str, int
         "Exact 3GPP duplex on every UL pair (386/386). UL-absent sentinel is 0 on "
         "SDX55/SDX72, 0x3333 on SDX6x; with UL absent the first entry's DL is a "
         "near-SSB RF tune and stays untyped. Per-cell trailer and 18 B blocks "
-        "stay raw."
+        "stay raw. Since v15 a layout mirror of the record "
+        "(every byte a named field) has found the band list "
+        "reduced to a set, a UL-absent first entry's DL word dropped, and the "
+        "trailer / blocks reachable only inside body_raw; now bands[], "
+        "cells[].dl_word/ul_word/trailer_raw and blocks[] (read from the tail) "
+        "are on the dataclass and in the four-way equivalence diff."
     ),
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=14,
-    fields_parsed=14,
+    fields_identified=19,
+    fields_parsed=19,
     field_invariants={
         # byte-0 release minor; full corpus set.
         "version": {"enum": sorted(_B825_VERSIONS_OBSERVED)},
@@ -470,16 +525,25 @@ def parse_0xb825(log_time: int, data: bytes) -> Diag0xB825 | None:
     ):
         return None
 
-    band_list = {
-        unpack_from("<H", data, list_off + 4 * i)[0] for i in range(n_bands)
-    }
+    bands: list[dict[str, int]] = []
+    for i in range(n_bands):
+        e = list_off + 4 * i
+        bands.append({"band": unpack_from("<H", data, e)[0],
+                      "b2_raw": data[e + 2], "b3_raw": data[e + 3]})
+    band_list = {b["band"] for b in bands}
     detail_off = list_off + 4 * n_bands
-    cells: list[dict[str, int]] = []
+    cells: list[dict[str, Any]] = []
     for j in range(n_cells):
-        cell = _cell_dict(data, detail_off + detail_len * j, has_ssb, first=(j == 0))
+        cell = _cell_dict(data, detail_off + detail_len * j, detail_len, has_ssb,
+                          first=(j == 0))
         if cell is None or cell["band"] not in band_list:
             return None
         cells.append(cell)
+    # Blocks are the record's last 18 * n_blocks bytes: the grammar position on a
+    # closing budget, and past the stale slot on the fixed-capacity profiles.
+    blk0 = len(data) - _B825_BLOCK_LEN * n_blocks
+    blocks = [bytes(data[blk0 + _B825_BLOCK_LEN * k: blk0 + _B825_BLOCK_LEN * (k + 1)])
+              for k in range(n_blocks)]
 
     body = data[4:]
     nonzero = sum(1 for b in body if b != 0)
@@ -500,7 +564,9 @@ def parse_0xb825(log_time: int, data: bytes) -> Diag0xB825 | None:
         band_count=n_bands,
         cell_count=n_cells,
         block_count=n_blocks,
-        cells=cells or None,
+        bands=bands,
+        cells=cells,
+        blocks=blocks,
         serv_cell_index=first.get("serv_cell_index"),
         pci=first.get("pci"),
         band=first.get("band"),

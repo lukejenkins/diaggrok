@@ -58,8 +58,16 @@ _V28_COMBO_SIZE = _MAX_CCS * _V28_CC_SIZE  # 42 bytes per combo slot
 # is length-prefixed — a 1-byte CC count followed by that many 7-byte CCs —
 # so total size varies with how many carriers each combo declares.
 #   [0]    u8  version (0x29)
-#   [1]    u8  num_combos (count of *populated* slots; advisory)
-#   [2..]  100 slots, each: u8 cc_count, then cc_count × 7-byte CC
+#   [1]    u8  num_combos (n, the populated slots)
+#   [2..]  n slots, each: u8 cc_count, then cc_count × 7-byte CC
+#   [..]   100 - n bytes, one per unpopulated slot, NO CC bodies (`tail_bytes`)
+# On a record with n < 100 that tail is usually all zero, so it reads the same
+# as 100 empty slots. But the Foxconn T99W640 (SDX72) emits a 123 B n=3 record
+# (2 + 3x8 + 97 = 123) whose tail is NON-zero and looks like stale CC bytes,
+# not slot counts. A 100-bodied-slot walk mis-reads it as CCs and fails. The
+# n-bodies-plus-tail model closes on every walked v0x29 record (10,229
+# records, 69 captures); the 100-bodied walk closes on all but those 3.
+# F3 is silent on the tail, so it is surfaced raw (since parser v7).
 # Per-CC 7-byte layout, grounded by a whole-combo comboCap join (see the
 # "comboCap whole-combo join" note below):
 #   [0:2] u16 band  [2] dl_bw_class  [3] ul_bw_class
@@ -73,7 +81,7 @@ _V28_COMBO_SIZE = _MAX_CCS * _V28_CC_SIZE  # 42 bytes per combo slot
 _V29_VERSION = 0x29
 _V29_HDR_SIZE = 2
 _V29_CC_SIZE = 7
-_V29_SLOTS = _MAX_COMBOS  # 100 length-prefixed combo slots
+_V29_SLOTS = _MAX_COMBOS  # 100-slot envelope: num_combos bodied + tail bytes
 
 # CA bandwidth classes 3GPP 36.101 Table 5.6A-1: A..F. v0x20 MDM9250 captures
 # only ever exercise A-D; v0x28 SDX55 captures surface class E (=5) on wide
@@ -108,9 +116,10 @@ class ComponentCarrier:
     ul_enabled: bool
     cc_ext: int | None = None
     # Raw codes, not layer counts. mimo_dl_idx: v0x29 CC+4 / v0x28 CC+3 (None
-    # on v0x20). mimo_ul_idx / modulation: v0x29 CC+5 / CC+6 only; those two
-    # names are inherited labels that no F3 print grounds (modulation is the
-    # same byte as cc_ext).
+    # on v0x20). mimo_ul_idx / modulation: CC+5 / CC+6 on v0x28 and v0x29
+    # (None on v0x20; v0x28 since parser v7); those two names are inherited
+    # labels that no F3 print grounds (modulation is the same byte as cc_ext).
+    # mimo_ul_idx is the raw value behind ul_enabled: 4 pairs with UL class C.
     mimo_dl_idx: int | None = None
     mimo_ul_idx: int | None = None
     modulation: int | None = None
@@ -149,6 +158,10 @@ class Diag0xB0CD:
     reserved: int | None
     combos: list[CaCombo]
     payload_size: int
+    # v0x29 only: the 100 - num_combos bytes after the bodied slots, raw (None
+    # on v0x20/v0x28). All zero on most records; non-zero (stale-CC-shaped,
+    # meaning ungrounded) on the T99W640 (SDX72) n=3 record.
+    tail_bytes: bytes | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,6 +172,7 @@ class Diag0xB0CD:
             'reserved': self.reserved,
             'combos': [c.to_dict() for c in self.combos],
             'payload_size': self.payload_size,
+            'tail_bytes': None if self.tail_bytes is None else self.tail_bytes.hex(),
         }
 
 
@@ -214,7 +228,10 @@ class Diag0xB0CD:
 # that 0xB0CD mirrors.
 #
 # `ul_enabled` on v0x29 is derived (UL present iff ul_bw_class set); on
-# v0x20/v0x28 it is bool(CC+5), which folds that byte's {1,4} together.
+# v0x20/v0x28 it is bool(CC+5). On v0x28 that folds CC+5's {1,4} together
+# (4 = UL class C), so since parser v7 v0x28 also surfaces CC+5 raw as
+# `mimo_ul_idx` and CC+6 as `modulation`, as v0x29 does. v0x20's CC+5 is {0,1}
+# on every walked record, so bool() is lossless there.
 #
 # v0x20 F3 grounding: the silicon that emits v0x20 (Sierra / Telit LM960,
 # MDM9x50/SDX20) has no per-CC comboCap print. Instead an EM7565 F3 capture
@@ -262,7 +279,7 @@ class Diag0xB0CD:
         "each; emitted on LTE attach and periodically; active profile depends on "
         "serving band (primary band of combo[0] changes per camped cell)"
     ),
-    version=6,
+    version=7,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -275,8 +292,10 @@ class Diag0xB0CD:
         "Quectel RM500Q — same header + 100×6-CC shape, 7-byte CCs; v0x28 "
         "F3-grounded via the RM500Q `comboCap:` print (lte_rrc_llcdb.c:39047, "
         "0x79 wire) value-matching band/dl_bw_class/ul_bw_class. v0x29 (v41) "
-        "is a variable-size 100-slot envelope with length-prefixed "
-        "variable-CC slots; F3-grounded via the RM520N-GL comboCap "
+        "is a variable-size 100-slot envelope: num_combos length-prefixed "
+        "variable-CC slots, then one tail byte per unpopulated slot (closes on "
+        "10,229/10,229 walked records, incl. the T99W640 SDX72 n=3 123 B "
+        "record with a non-zero tail); F3-grounded via the RM520N-GL comboCap "
         "band/dl_bw_class/ul_bw_class value-match, and decoded 252/252 "
         "records (0 misses) across RM520N-GL and EM9291 (both SDX62), 55 "
         "distinct sizes, 31 real 3GPP bands; exact byte-consumption is the "
@@ -303,9 +322,10 @@ def parse_0xb0cd(log_time: int, data: bytes) -> Diag0xB0CD | None:
     * **v0x28 / 4203 B** — SDX55-class (Inseego M2000, Wistron LV55); identical
       header and 100×6-CC shape but 7-byte CCs (one trailing byte per CC).
     * **v0x29 / variable** — SDX6x/SDX7x (Sierra EM9291 SDX62, SDX72);
-      a 100-slot envelope where each slot is length-prefixed (1-byte CC count
-      then that many 7-byte CCs), so total size varies. Decoded by walking all
-      100 slots and requiring exact byte-consumption — a record that doesn't
+      a 100-slot envelope: num_combos length-prefixed slots (1-byte CC count
+      then that many 7-byte CCs), then one tail byte per unpopulated slot
+      (raw `tail_bytes`), so total size varies. Decoded by walking the bodied
+      slots and requiring exact byte-consumption — a record that doesn't
       consume exactly returns None (surfaces as a parser miss, never a
       mis-parse).
 
@@ -340,7 +360,8 @@ def parse_0xb0cd(log_time: int, data: bytes) -> Diag0xB0CD | None:
             reserved_0x02 = data[off + 3]
             ul_bw_class = data[off + 4]
             ul_enabled = bool(data[off + 5])
-            cc_ext = data[off + 6] if cc_size == _V28_CC_SIZE else None
+            is_v28 = cc_size == _V28_CC_SIZE
+            cc_ext = data[off + 6] if is_v28 else None
             carriers.append(ComponentCarrier(
                 band=band,
                 dl_bw_class=dl_bw_class,
@@ -353,7 +374,15 @@ def parse_0xb0cd(log_time: int, data: bytes) -> Diag0xB0CD | None:
                 # v0x28 CC+3 is the comboCap-grounded DL MIMO code (v0x29
                 # CC+4). Not claimed on v0x20: no comboCap there, and its
                 # {2,4} domain is not v0x28's class-A {2,3}.
-                mimo_dl_idx=reserved_0x02 if cc_size == _V28_CC_SIZE else None,
+                mimo_dl_idx=reserved_0x02 if is_v28 else None,
+                # v0x28 CC+5 / CC+6 are v0x29's mimo_ul_idx / modulation bytes
+                # (same domains, same pairing). Surfaced raw because
+                # `ul_enabled` = bool(CC+5) folds CC+5 = 4 (UL class C, 206 of
+                # the sidecar-measured corpus CCs) into 1 (UL class A/B)
+                #. v0x20's CC+5 is {0,1} corpus-wide, so
+                # bool() loses nothing there and it stays None.
+                mimo_ul_idx=data[off + 5] if is_v28 else None,
+                modulation=cc_ext,
             ))
         if carriers:
             combos.append(CaCombo(carriers=carriers))
@@ -371,18 +400,22 @@ def parse_0xb0cd(log_time: int, data: bytes) -> Diag0xB0CD | None:
 def _parse_v29(log_time: int, data: bytes) -> Diag0xB0CD | None:
     """Parse the v0x29 (v41) variable-size profile.
 
-    Header is 2 bytes (version, num_combos); then exactly 100 length-prefixed
-    combo slots, each a 1-byte CC count followed by that many 7-byte CCs. The
-    walk MUST consume the buffer exactly — any record that over/under-runs the
-    100-slot envelope returns None so it surfaces as a parser miss rather than
-    a mis-parse (the differential-RE invariant that validated the layout).
+    Header is 2 bytes (version, num_combos = n); then n length-prefixed combo
+    slots, each a 1-byte CC count followed by that many 7-byte CCs; then
+    100 - n bytes, one per unpopulated slot, with no CC bodies (`tail_bytes`,
+    raw). The
+    walk MUST consume the buffer exactly: any record that over- or under-runs
+    returns None, so it surfaces as a parser miss rather than a mis-parse (the
+    differential-RE invariant that validated the layout).
     """
     num_combos = data[1]
+    if num_combos > _V29_SLOTS:
+        return None
     off = _V29_HDR_SIZE
     combos: list[CaCombo] = []
-    for _ in range(_V29_SLOTS):
+    for _ in range(num_combos):
         if off >= len(data):
-            return None  # ran off the end before 100 slots — not this layout
+            return None  # ran off the end before the n bodied slots — not this layout
         cc_count = data[off]
         off += 1
         carriers: list[ComponentCarrier] = []
@@ -414,9 +447,10 @@ def _parse_v29(log_time: int, data: bytes) -> Diag0xB0CD | None:
         if carriers:
             combos.append(CaCombo(carriers=carriers))
 
-    # Exact-consumption invariant: the 100-slot walk must land precisely at the
-    # end of the payload. This is what makes the variable-size parse safe.
-    if off != len(data):
+    # Exact-consumption invariant: the n bodied slots plus the 100 - n tail
+    # bytes must land precisely at the end of the payload. This is what makes
+    # the variable-size parse safe.
+    if off + (_V29_SLOTS - num_combos) != len(data):
         return None
 
     return Diag0xB0CD(
@@ -426,4 +460,5 @@ def _parse_v29(log_time: int, data: bytes) -> Diag0xB0CD | None:
         reserved=None,
         combos=combos,
         payload_size=len(data),
+        tail_bytes=bytes(data[off:]),
     )

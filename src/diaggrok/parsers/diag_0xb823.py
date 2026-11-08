@@ -11,7 +11,8 @@ distinguished by byte-0, with different field *presence* (not just offsets):
 **Version 4 (38 bytes):**
 
     [0]      u8     version (4)
-    [1:4]           reserved (0)
+    [1]             minor high byte (0x00 corpus-wide)
+    [2:4]    u16le  rel_major    (release MAJOR; 0 on v4)
     [4:6]    u16le  pci          (physical cell id, 0..1007)
     [6:10]   u32le  nr_arfcn     (carrier / DL NR-ARFCN)
     [10:14]  u32le  nr_arfcn_2   (second frequency — UL or SSB ARFCN; the
@@ -21,14 +22,18 @@ distinguished by byte-0, with different field *presence* (not just offsets):
     [14:16]  u16le  dl_bandwidth (raw; {10,15,100} match NR channel BW in MHz)
     [16:18]  u16le  ul_bandwidth (symmetric with dl_bandwidth across corpus)
     [18:22]  u32le  nci          (NR Cell Identity low word)
-    [22:26]  u32le  word_22      (0/1 across corpus — flag/count, left raw)
-    [26:38]  bytes  tail_raw     (12-byte trailer — see below)
+    [22:26]  u32le  word_22      ({0, 1, 3, 4} across corpus — unlabelled, left raw)
+    [26:38]  bytes  tail_raw     (12-byte trailer — see "Trailer" below):
+      [26:32]  bytes  tail_0_5_raw (unlabelled)
+      [32:36]  u32le  tac          (NR Tracking Area Code, 24-bit)
+      [36:38]  u16le  nr_band      (NR operating band number)
 
 **Version 2 (49 bytes):** the same logical record with an NCGI block inserted
 and a wider front header. v2 = v4 + 11 bytes:
 
     [0]      u8     version (2)
-    [1:7]           sub-header (00 03 00 01 01 00 in-corpus — format markers)
+    [1:7]           sub-header (00 03 00 01 01 00 in-corpus): [1] minor high
+                    byte, [2:4] u16le rel_major (3), [4:7] 01 01 00 (unlabelled)
     [7:9]    u16le  pci
     [9:17]   u64le  cell_global_id  (60-bit NR Cell Global Identity, the same
                                   field and packing as sibling 0xB821 v17+:
@@ -47,7 +52,8 @@ and a wider front header. v2 = v4 + 11 bytes:
     [27:29]  u16le  ul_bandwidth
     [29:33]  u32le  nci          (canonical late copy — present in both versions)
     [33:37]  u32le  word_22      (the v2 analogue of v4's word_22)
-    [37:49]  bytes  tail_raw     (identical 12-byte trailer shape as v4)
+    [37:49]  bytes  tail_raw     (the same 12-byte trailer as v4: tail_0_5_raw,
+                                  tac @43, nr_band @47)
 
 Cross-checks that anchor the layout: (1) the same physical cell (one PCI) is
 logged as v4 by RM500Q and v2 by EM9291 with byte-identical nr_arfcn /
@@ -169,12 +175,26 @@ capture could pin the firmware print site (CM ``tm_cm_iface_nonship.c`` as on
 v0x02, or ML1 ``gts.c`` as on v0x04), but the SCAT RRC ASN.1 decode already
 grounds every field.
 
-The 12-byte ``tail_raw`` (e.g. ``36 01 03 04 01 01`` + 6 cell-specific bytes) is
-identical in shape across all versions; its sub-fields vary per cell but are
-not confidently nameable without a reference decode, so it is left raw +
-preserved. A shared size does not imply a shared format, so layout is
-dispatched on byte-0 (the version) and size is gated to the per-version length
-as corroboration.
+**Trailer.** The 12-byte ``tail_raw`` (``rr rr rr rr rr rr | tt tt tt 00 |
+bb 00``) has the same shape in every version, and two of its fields have labels:
+
+* ``tac`` = u32le tail[6:10], the 24-bit NR Tracking Area Code. On an RXM-G1
+  v0x04 n41 cell the field equals, as an integer, both the firmware's own F3
+  ``TAC: … TAC=<tac>; TAC_str=<tac>`` and the TAC that ``AT+C5GREG`` returns
+  in the same capture. The RM520N-GL CM-layer print ``5G-NR CID Update:
+  TAC=%d`` shows only the TAC's top octet, which agrees with this field on both
+  cells of its capture.
+* ``nr_band`` = u16le tail[10:12], the NR operating band (41 / 77 / 25 / 5 …).
+  It sits in the 3GPP band whose DL NR-ARFCN range holds ``nr_arfcn`` on every
+  record, and SCAT's v0x03 SCell Info prints the same ``Band 41``.
+* ``tail_0_5_raw`` = tail[0:6] has no label in F3, 0x60 (absent in both
+  F3-armed captures) or AT, so it stays raw.
+
+``tail_raw`` is kept whole for back-compat. ``word_22`` (live, {0, 1, 3, 4}) and
+``rel_major`` are surfaced raw as well; earlier versions of this parser read
+past all four. A shared size
+does not imply a shared format, so layout is dispatched on byte-0 (the version)
+and size is gated to the per-version length as corroboration.
 
 Log name: NR5G RRC Serving Cell Info
 Also known as: LOG_NR5G_RRC_SERVING_CELL_INFO
@@ -210,8 +230,13 @@ class Diag0xB823:
     dl_bandwidth: int
     ul_bandwidth: int
     nci: int                   # NR Cell Identity low word (canonical late copy)
-    tail_raw: bytes
+    tail_raw: bytes            # the 12-byte trailer, whole (back-compat); its pieces below
     payload_size: int
+    # Surfaced in v11 (bytes earlier versions read past).
+    rel_major: int = 0         # u16@2, release MAJOR (0 on v0x04, 3 on v0x02/v0x03)
+    word_22: int = 0           # u32 (v4 @22 / v2,v3 @33): live {0,1,3,4}, unlabelled -> raw
+    tac: int = 0               # u32 tail[6:10]: NR Tracking Area Code (F3 + AT+C5GREG)
+    nr_band: int = 0           # u16 tail[10:12]: NR operating band (41, 77, 25, ...)
     # v2/v3 only (None / "" on v4): the 60-bit NCGI at [9:17] and its decode
     # (PLMN + full 36-bit NCI, via 0xB821's decode_ncgi). ncgi_marker is the
     # u64's high dword (PLMN << 4 | NCI[35:32]), kept raw for back-compat.
@@ -220,6 +245,11 @@ class Diag0xB823:
     ncgi_mcc: str = ""
     ncgi_mnc: str = ""
     ncgi_nci: Optional[int] = None
+
+    @property
+    def tail_0_5_raw(self) -> bytes:
+        """tail[0:6], the part of the trailer no oracle labels (kept raw)."""
+        return self.tail_raw[:6]
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -234,6 +264,10 @@ class Diag0xB823:
             "nci": self.nci,
             "tail_raw": self.tail_raw,
             "payload_size": self.payload_size,
+            "rel_major": self.rel_major,
+            "word_22": self.word_22,
+            "tac": self.tac,
+            "nr_band": self.nr_band,
         }
         if self.ncgi_marker is not None:
             d["ncgi_marker"] = self.ncgi_marker
@@ -250,17 +284,17 @@ class Diag0xB823:
     name="0xB823",
     wigle_direct=True,
     wigle_roles=("identity", "pci-earfcn-bridge", "rat-context"),
-    description="0xB823 — LOG_NR5G_RRC_SERVING_CELL_INFO {pci, nr_arfcn x2, bandwidth, nci, NCGI (PLMN + 36-bit NCI)}",
-    version=10,
+    description="0xB823 — LOG_NR5G_RRC_SERVING_CELL_INFO {pci, nr_arfcn x2, bandwidth, nci, NCGI (PLMN + 36-bit NCI), TAC, NR band}",
+    version=11,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
-    source_detail="LOG_NR5G_RRC_SERVING_CELL_INFO. Layout from a corpus body-walk (326 records / 51 captures / 5 models). Three minor-version layouts: v4=38B (SDX55), v2=49B (SDX62/SDX65), v3=49B (SDX72 T99W640 — same 49B layout as v2, only the minor byte differs). v2/v3 = v4 + a 60-bit NCGI u64 @[9:17] (PLMN TBCD << 36 | 36-bit NCI, decoded to ncgi_mcc/ncgi_mnc/ncgi_nci; its high dword, kept raw as ncgi_marker, is PLMN << 4 | NCI[35:32], not a format marker) + wider front header. Decodes pci/nr_arfcn/nr_arfcn_2/dl_bw/ul_bw/nci per version. Anchored by one PCI logged as v4 (RM500Q) and v2 (EM9291) with identical nr_arfcn/nci, and v2/v3 early-nci==late-nci. Grounding per version: v0x02 pci/nr_arfcn/nci verified on an RM520N-GL Verizon n5-SA cell (pci=<pci>/nr_arfcn=177150/nci=<nci>) by exact equality across AT+QENG, SCAT RRC SIB1 NCGI and QMI, nci cross-confirmed by co-captured 0xB825; v0x02 pci/nr_arfcn F3-grounded on tm_cm_iface_nonship.c:293 '5G-NR CID Update: Freq=<nr_arfcn> PSC=<pci>' for both cells of an RM520N-GL capture (<pci>/501390, <pci>/647328), corroborated by QCSuper NR-RRC physCellId. v0x04 pci/nr_arfcn F3-grounded on an RXM-G1 capture's NR5G ML1 site gts.c:2660 'Proc NR5G ... PCI <pci> 521310', corroborated by QCSuper NR-RRC physCellId. On v0x02/v0x04 F3 prints only the CID sentinel, so nci rests on AT/SCAT/QMI + 0xB825. v0x03 grounded by SCAT NR-RRC SCell Info on both aggregated n41 carriers ('NR-ARFCN 501390/499374 BW 100/100 PCI <pci> xCID <nci>', '521310/519324 BW 90/90 PCI <pci> xCID <nci>'), matching pci/nr_arfcn/nr_arfcn_2/dl_bw/ul_bw/nci exactly (xCID low-32 == nci), plus an AT cell-site survey; nr_arfcn_2 is the UL ARFCN on v0x03. The v0x03 captures carry no F3. 12B tail kept raw.",
+    source_detail="LOG_NR5G_RRC_SERVING_CELL_INFO. Layout from a corpus body-walk (326 records / 51 captures / 5 models). Three minor-version layouts: v4=38B (SDX55), v2=49B (SDX62/SDX65), v3=49B (SDX72 T99W640 — same 49B layout as v2, only the minor byte differs). v2/v3 = v4 + a 60-bit NCGI u64 @[9:17] (PLMN TBCD << 36 | 36-bit NCI, decoded to ncgi_mcc/ncgi_mnc/ncgi_nci; its high dword, kept raw as ncgi_marker, is PLMN << 4 | NCI[35:32], not a format marker) + wider front header. Decodes pci/nr_arfcn/nr_arfcn_2/dl_bw/ul_bw/nci/word_22/rel_major per version, plus tac (u32 tail[6:10], the 24-bit NR TAC, equal on an RXM-G1 v0x04 cell to the F3 'TAC=<tac>; TAC_str=<tac>' print and the AT+C5GREG TAC) and nr_band (u16 tail[10:12]). Anchored by one PCI logged as v4 (RM500Q) and v2 (EM9291) with identical nr_arfcn/nci, and v2/v3 early-nci==late-nci. Grounding per version: v0x02 pci/nr_arfcn/nci verified on an RM520N-GL Verizon n5-SA cell (pci=<pci>/nr_arfcn=177150/nci=<nci>) by exact equality across AT+QENG, SCAT RRC SIB1 NCGI and QMI, nci cross-confirmed by co-captured 0xB825; v0x02 pci/nr_arfcn F3-grounded on tm_cm_iface_nonship.c:293 '5G-NR CID Update: Freq=<nr_arfcn> PSC=<pci>' for both cells of an RM520N-GL capture (<pci>/501390, <pci>/647328), corroborated by QCSuper NR-RRC physCellId. v0x04 pci/nr_arfcn F3-grounded on an RXM-G1 capture's NR5G ML1 site gts.c:2660 'Proc NR5G ... PCI <pci> 521310', corroborated by QCSuper NR-RRC physCellId. On v0x02/v0x04 F3 prints only the CID sentinel, so nci rests on AT/SCAT/QMI + 0xB825. v0x03 grounded by SCAT NR-RRC SCell Info on both aggregated n41 carriers ('NR-ARFCN 501390/499374 BW 100/100 PCI <pci> xCID <nci>', '521310/519324 BW 90/90 PCI <pci> xCID <nci>'), matching pci/nr_arfcn/nr_arfcn_2/dl_bw/ul_bw/nci exactly (xCID low-32 == nci), plus an AT cell-site survey; nr_arfcn_2 is the UL ARFCN on v0x03. The v0x03 captures carry no F3. tail[0:6] kept raw.",
     source_url="",
     issues=(),
     primary_issue=None,
-    fields_identified=11,
-    fields_parsed=11,
+    fields_identified=15,
+    fields_parsed=15,
     field_invariants={
         # byte0 is the release MINOR (u16@0); see the version-tuple note in the
         # module docstring. v3 is the SDX72 (T99W640) minor.
@@ -282,6 +316,7 @@ def parse_0xb823(log_time: int, data: bytes) -> Diag0xB823 | None:
         dl_bandwidth = unpack_from('<H', data, 14)[0]
         ul_bandwidth = unpack_from('<H', data, 16)[0]
         nci = unpack_from('<I', data, 18)[0]
+        word_22 = unpack_from('<I', data, 22)[0]
         tail_raw = data[26:]
         ncgi_marker: Optional[int] = None
         cell_global_id: Optional[int] = None
@@ -294,7 +329,11 @@ def parse_0xb823(log_time: int, data: bytes) -> Diag0xB823 | None:
         dl_bandwidth = unpack_from('<H', data, 25)[0]
         ul_bandwidth = unpack_from('<H', data, 27)[0]
         nci = unpack_from('<I', data, 29)[0]
+        word_22 = unpack_from('<I', data, 33)[0]
         tail_raw = data[37:]
+
+    rel_major = unpack_from('<H', data, 2)[0]
+    tac, nr_band = unpack_from('<IH', tail_raw, 6)
 
     ncgi = decode_ncgi(cell_global_id)
     mcc, mnc, ncgi_nci = ncgi if ncgi else ("", "", None)
@@ -310,6 +349,10 @@ def parse_0xb823(log_time: int, data: bytes) -> Diag0xB823 | None:
         nci=nci,
         tail_raw=tail_raw,
         payload_size=len(data),
+        rel_major=rel_major,
+        word_22=word_22,
+        tac=tac,
+        nr_band=nr_band,
         ncgi_marker=ncgi_marker,
         cell_global_id=cell_global_id,
         ncgi_mcc=mcc,

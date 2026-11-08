@@ -12,10 +12,10 @@ varying by the number of inline cell entries:
 
   ver  | base | stride | sizes observed (records)             | chipset
   -----+------+--------+--------------------------------------+----------------
-  0x05 |  29B |   0    | 29 (5,724 — 100%)                    | MDM9x30
-                                                                 Sierra MC7455
-                                                                 fixed 29B, no
-                                                                 in-record list
+  0x05 |  29B |   6B   | 29 (4,530 — all MC7455); 35, 41, 47, | MDM9x30
+        |      |        | 125 (11 of 283 on the AirCard 791L)  | Sierra MC7455
+        |      |        |                                      | (0 cells) +
+        |      |        |                                      | MDM9x35 791L
   0x07 |  34B |   7B   | 34, 41, 48, 55, 62, 69, 76, 83, 90,  | MDM9207 +
         |      |        | 97, 146 (top: 34B@89%)               | MDM9x07 —
         |      |        |                                      | Quectel EG25-G,
@@ -26,25 +26,35 @@ varying by the number of inline cell entries:
         |      |        |                                      | FN980m, Sierra
         |      |        |                                      | EM9190
 
-Per-cell stride structure (v=0x08 7B, v=0x0b 5B, v=0x07 7B):
+Per-cell stride structure (v=0x05 6B, v=0x07 7B, v=0x08 7B, v=0x0b 5B) —
+the same on every version, and the same shape as v=0x01's Step-1 peak
+(corpus-verified over 241 captures and 518,097 records):
 
     [+0..+1]  u16 LE — wide-cardinality identifier (``cell_id``). NOT a PCI
-                       on any version (see below); semantics unnamed.
-    [+2]      u8     — narrow-range signal-quality byte (0x48..0x5e on
-                       SDX55, 0x61..0x65 on SDX20 single-cell). Cells in a
-                       record are SORTED DESCENDING by this byte (e.g. a
-                       32-cell SDX55 record: 0x5e → 0x4d monotonic; v=0x07
-                       60/61 multi-cell records). A measurement with a
-                       chipset-specific encoding; the dBm scale is
-                       ungrounded.
-  v=0x08-only:
-    [+3..+6]  4 bytes of zero padding (CONST 0x00 across all observed cells)
-  v=0x0b and v=0x07:
-    [+3]      u8 zero pad (CONST 0x00)
-    [+4]      enum-2 single-bit flag (0x00 / 0x01, ~50/50; 56.9 / 43.1 on
-              v=0x07)
-  v=0x07-only:
-    [+5..+6]  u8 zero pad (CONST 0x00)
+                       on any version (see below); < 20480 corpus-wide.
+    [+2..+3]  u16 LE — signal-quality / energy word. Cells in a record are
+                       SORTED DESCENDING by it. **u16, not u8 (v9):** [+3] is
+                       1 or 2 on 29 v=0x07 and 174 v=0x0b corpus elements, and
+                       the u16 reading is the better-sorted one (v0x07
+                       1,037 vs 1,028 / 1,140 multi-cell records; v0x0b 5,089
+                       vs 5,045 / 5,825). Chipset-specific encoding; the dBm
+                       scale is ungrounded.
+    [+4]      u8     — enum-2 flag (0x00 / 0x01) on EVERY version. On v=0x08
+                       it is 1 on 5,863 / 15,193 corpus elements; <= v8 read
+                       [+3..+6] there as "4 bytes of zero padding" and
+                       discarded it.
+    [+5]      v=0x05 zero pad; [+5..+6] v=0x07/0x08 zero pad (CONST 0x00).
+
+Header skeleton (v9 surfaces it raw; F3 names none of these bytes on
+v=0x05/0x07/0x08/0x0b — offsets in ``_HDR``): lead bytes, ``hdr_s16`` (i16),
+a constant run, a 7-byte ``hdr_var_raw`` (v05/v07/v08), ``hdr_word`` (u16, in
+the slot v=0x01 calls ``freq_word``), ``00 00``, the segment ``2d 20 00 XX
+00`` (XX 0x60 on v05/v08, 0x47 on v07/v0b), and ``hdr_count`` (u16): the
+elements FOUND, == n_cells or greater when the 16-entry cap clips (v0x0b:
+== n_cells on every record, up to 32). v07/v08/v0b end in a short tail
+(``00 00 68 01`` / ``68 01`` constants, ``ff``x6 on v08) carrying one
+version-only u16 on v08 ([34:36]) and two on v0b ([8:10], [23:25]). Every
+constant holds on 100% of its version's corpus records (``hdr_const_ok``).
 
 v=0x07 was validated over 1,800 EG25-G + EG95-NA records (212 with cells /
 518 cells).
@@ -181,13 +191,42 @@ from typing import Any
 from diaggrok.registry import register
 
 
-# Per-version (base_size, stride). stride==0 means "fixed base, no cells".
+# Per-version (base_size, stride).
 _4177_VERSION_PROFILE: dict[int, tuple[int, int]] = {
     0x01: (24, 5),  # MDM9625 Foxconn T77W595 — WCDMA Step-1 peaks, 5B per peak
-    0x05: (29, 0),  # MDM9x30 Sierra MC7455 — fixed 29B
+    0x05: (29, 6),  # MDM9x30 MC7455 (always 0 cells) + MDM9x35 AirCard 791L — 6B per cell
     0x07: (34, 7),  # MDM9207+MDM9x07 Quectel EG25-G/EG95-NA — 7B per cell
     0x08: (42, 7),  # SDX20 LM960 + MDM9250 MC7411 — 7B per cell
     0x0b: (25, 5),  # SDX55 Telit FN980m + Sierra EM9190 — 5B per cell
+}
+
+
+@dataclass(frozen=True)
+class _HdrLayout:
+    """Header offsets of one non-v01 version (see "Header skeleton" above)."""
+    s16: int                              # i16 hdr_s16
+    var: int | None                       # 7 B hdr_var_raw (v05/v07/v08)
+    word: int                             # u16 hdr_word
+    count: int                            # u16 hdr_count
+    extra: tuple[tuple[str, int], ...]    # version-only u16 words (attr, offset)
+    consts: tuple[tuple[int, bytes], ...]  # (offset, expected bytes)
+
+
+_SEG_60 = bytes.fromhex("2d20006000")
+_SEG_47 = bytes.fromhex("2d20004700")
+_RUN_6 = bytes.fromhex("000200020002")
+_HDR: dict[int, _HdrLayout] = {
+    0x05: _HdrLayout(3, 11, 18, 27, (),
+                     ((1, b"\x01\x01"), (5, _RUN_6), (20, b"\x00\x00"), (22, _SEG_60))),
+    0x07: _HdrLayout(4, 12, 19, 28, (),
+                     ((1, b"\x01\x01\x01"), (6, _RUN_6), (21, b"\x00\x00"), (23, _SEG_47),
+                      (30, bytes.fromhex("00006801")))),
+    0x08: _HdrLayout(4, 12, 19, 28, (("hdr_u16_at34", 34),),
+                     ((1, b"\x00\x01\x01"), (6, _RUN_6), (21, b"\x00\x00"), (23, _SEG_60),
+                      (30, bytes.fromhex("00006801")), (36, b"\xff" * 6))),
+    0x0b: _HdrLayout(3, None, 10, 19, (("hdr_u16_at8", 8), ("hdr_u16_at23", 23)),
+                     ((1, b"\x01\x01"), (5, b"\x00\x02\x00"), (12, b"\x00\x00"),
+                      (14, _SEG_47), (21, b"\x68\x01"))),
 }
 
 
@@ -195,21 +234,23 @@ _4177_VERSION_PROFILE: dict[int, tuple[int, int]] = {
 class Diag0x4177Cell:
     """One per-cell record from a 0x4177 in-record cell list.
 
-    Fields (see the module docstring):
+    Fields (see the module docstring), the same on every version:
       [+0..+1] u16 LE — wide-cardinality identifier, varies per cell. NOT a
-                        PCI (F3-checked on every cell-bearing version).
-      [+2]     u8     — narrow-range signal-quality byte. Cells in a
-                        single record are sorted DESCENDING by this byte
-                        (verified on 32-cell SDX55 records: 0x5e → 0x4d
-                        monotonic). Chipset-specific encoding; DO NOT trust
-                        a dBm conversion until reference-validated.
-      [+3] (v=0x07/0x0b) u8 zero pad (CONST 0x00 in corpus)
-      [+4] (v=0x07/0x0b) u8 enum-2 flag (0x00 / 0x01, ~50/50 distribution)
-      [+3..+6] (v=0x08 only) 4 bytes of zero padding (CONST 0x00)
+                        PCI (F3-checked on every cell-bearing version); < 20480
+                        corpus-wide (the Step-1 slot range, see v=0x01).
+      [+2..+3] u16 LE — signal-quality / energy word. Cells in a single
+                        record are sorted DESCENDING by it. u16, not u8 (v9):
+                        [+3] is non-zero on 29 v=0x07 and 174 v=0x0b corpus
+                        elements, which the old u8 read truncated. Chipset-
+                        specific encoding; no dBm conversion is grounded.
+      [+4]     u8     — enum-2 flag (0x00 / 0x01). Also on v=0x08 (v9): 1 on
+                        5,863 / 15,193 corpus elements, where <= v8 treated
+                        [+3..+6] as zero padding.
+      [+5]     (v=0x05) / [+5..+6] (v=0x07/0x08): zero pad (CONST 0x00).
     """
     cell_id: int  # u16 LE — identifier, NOT a PCI
-    signal_quality: int  # u8 — measurement, chipset-specific encoding
-    flag: int | None  # v=0x07/0x0b: enum-2 single-bit flag
+    signal_quality: int  # u16 LE — energy-like, descending, chipset-specific encoding
+    flag: int | None  # u8 enum-2 flag (every version since v9)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -257,10 +298,8 @@ class Diag0x4177Step1Peak:
 class Diag0x4177:
     """LTE PHY 0x4177 — 4 chipset-keyed versions, stride-family encoding.
 
-    Header fields within `base` are not decoded. Cell-stride fields
-    are emitted for v=0x07 (7B stride), v=0x08 (7B stride)
-    and v=0x0b (5B stride) — the three versions whose per-cell layout is
-    corpus-validated. v=0x05 is fixed-29B with no cell list.
+    Header fields are surfaced raw (``hdr_*``, v9). Cell-stride fields are
+    emitted for v=0x05 (6B), v=0x07 (7B), v=0x08 (7B) and v=0x0b (5B).
     """
     log_time: int
     version: int
@@ -274,8 +313,17 @@ class Diag0x4177:
     freq_word: int | None = None          # u16 @[13:15], ~131.43 kHz/LSB, raw
     freq_word_prev: int | None = None     # u16 @[11:13]: 0, or == freq_word
     hdr_i16_at2: int | None = None        # i16 @[2:4], unnamed (-426..-19)
-    hdr_const_ok: bool | None = None      # [0:2],[4:11],[15:22],[23] constants
+    hdr_const_ok: bool | None = None      # v01 [0:2],[4:11],[15:22],[23]; others _HDR consts
     peaks: list[Diag0x4177Step1Peak] = field(default_factory=list)
+    # v=0x05/0x07/0x08/0x0b header, raw (v9; F3 names none of it on these
+    # versions — offsets per _HDR). None on v=0x01.
+    hdr_s16: int | None = None            # i16 after the lead bytes (v01's hdr_i16_at2)
+    hdr_word: int | None = None           # u16 before 00 00 + segment (v01's freq_word slot)
+    hdr_count: int | None = None          # u16 elements FOUND (== n_cells, or > when capped)
+    hdr_var_raw: bytes | None = None      # 7 B variable run (v05/v07/v08)
+    hdr_u16_at8: int | None = None        # v0b only
+    hdr_u16_at23: int | None = None       # v0b only
+    hdr_u16_at34: int | None = None       # v08 only
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -296,6 +344,15 @@ class Diag0x4177:
             d['hdr_i16_at2'] = self.hdr_i16_at2
             d['hdr_const_ok'] = self.hdr_const_ok
             d['peaks'] = [p.to_dict() for p in self.peaks]
+        elif self.version in _HDR:
+            d['hdr_s16'] = self.hdr_s16
+            d['hdr_word'] = self.hdr_word
+            d['hdr_count'] = self.hdr_count
+            d['hdr_const_ok'] = self.hdr_const_ok
+            if self.hdr_var_raw is not None:
+                d['hdr_var_raw'] = self.hdr_var_raw.hex()
+            for name, _ in _HDR[self.version].extra:
+                d[name] = getattr(self, name)
         return d
 
 
@@ -312,7 +369,7 @@ class Diag0x4177:
     wigle_direct=True,
     wigle_roles=("identity",),
     description="0x4177 — v=0x01 (MDM9625 T77W595) is the WCDMA Step-1 searcher peak list (LOG_WCDMA_STEP_1_EDITION_2), F3-grounded: srchsched.c:3412 peak count == num_peaks 1,548/1,561, wsrch.c:13712 16-peak cap 44/44, 0x4179 PN windows sit on its slot positions 846/924. Historically LTE PHY (0x4177) — 4 chipset-keyed versions with per-version stride families; v=0x07/0x08/0x0b cell decode; cell_id is not a PCI on EG25-G (v0x07 MDM9207), LM960 (v0x08 SDX20), MC7411 (v0x08 MDM9250) or the SDX55/62 corpus (v0x0b); v0x07/v0x08/v0x0b LTE-ML1/LL1 attribution F3-grounded, v0x05 attributed by LTE-ML1 log-code co-presence (no F3 in its captures)",
-    version=8,
+    version=9,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -345,8 +402,8 @@ class Diag0x4177:
         "(null 2/924) — WCDMA Step-1 slot-sync peaks, as the name says."
     ),
     source_url="",
-    fields_identified=13,
-    fields_parsed=13,
+    fields_identified=20,
+    fields_parsed=20,
     issues=(),
     primary_issue=None,
     field_invariants={
@@ -364,36 +421,10 @@ def parse_0x4177(log_time: int, data: bytes) -> Diag0x4177 | None:
     size = len(data)
     if size < base:
         return None
-    if stride == 0:
-        if size != base:
-            return None
-        n_cells = 0
-        cells: list[Diag0x4177Cell] = []
-    else:
-        delta = size - base
-        if delta % stride != 0:
-            return None
-        n_cells = delta // stride
-        cells = []
-        # Per-cell stride decode for the three versions whose per-cell
-        # layout is corpus-validated: v=0x08, v=0x0b, and v=0x07 (1,800
-        # records / 212 with cells / 518 cells across EG25-G + EG95-NA,
-        # signal_quality descending-sorted 60/61 multi-cell records, [+4]
-        # enum-2 flag).
-        # v=0x05 is fixed-29B with no in-record cell list.
-        if n_cells > 0 and version in (0x07, 0x08, 0x0b):
-            for i in range(n_cells):
-                off = base + i * stride
-                cell_id = unpack_from('<H', data, off)[0]
-                signal_quality = data[off + 2]
-                # v=0x07 (7B stride) and v=0x0b (5B stride) both carry an
-                # enum-2 flag at [+4]; v=0x08 has 4 zero-pad bytes there.
-                flag = data[off + 4] if version in (0x07, 0x0b) else None
-                cells.append(Diag0x4177Cell(
-                    cell_id=cell_id,
-                    signal_quality=signal_quality,
-                    flag=flag,
-                ))
+    delta = size - base
+    if delta % stride != 0:
+        return None
+    n_cells = delta // stride
     if version == 0x01:
         peaks = [
             Diag0x4177Step1Peak(
@@ -419,6 +450,18 @@ def parse_0x4177(log_time: int, data: bytes) -> Diag0x4177 | None:
                           and data[15:22] == _V01_HDR_CONST_B and data[23] == 0),
             peaks=peaks,
         )
+    # v=0x05/0x07/0x08/0x0b: every element is u16 cell_id | u16 signal_quality
+    # | u8 flag | zero pad (v05 1 B, v07/v08 2 B, v0b none) — corpus-verified
+    # (whole-corpus walk, 518,097 records). v05 has elements only on MDM9x35.
+    cells = [
+        Diag0x4177Cell(
+            cell_id=unpack_from('<H', data, off)[0],
+            signal_quality=unpack_from('<H', data, off + 2)[0],
+            flag=data[off + 4],
+        )
+        for off in range(base, size, stride)
+    ]
+    hdr = _HDR[version]
     return Diag0x4177(
         log_time=log_time,
         version=version,
@@ -426,4 +469,10 @@ def parse_0x4177(log_time: int, data: bytes) -> Diag0x4177 | None:
         payload_size=size,
         n_cells=n_cells,
         cells=cells,
+        hdr_s16=unpack_from('<h', data, hdr.s16)[0],
+        hdr_word=unpack_from('<H', data, hdr.word)[0],
+        hdr_count=unpack_from('<H', data, hdr.count)[0],
+        hdr_var_raw=None if hdr.var is None else bytes(data[hdr.var:hdr.var + 7]),
+        hdr_const_ok=all(data[o:o + len(c)] == c for o, c in hdr.consts),
+        **{name: unpack_from('<H', data, off)[0] for name, off in hdr.extra},
     )

@@ -84,6 +84,10 @@ Burst slot (37 B):
 +29     8 B    tail_raw            0 on 1329/1329
 ======  =====  ==================  ============================================
 
+``to_dict`` emits ``tail_raw`` as hex (parser v4). Through v3 it returned the
+raw ``bytes``, so ``json.dumps(record.to_dict())`` raised ``TypeError`` on every
+record. The ``tail_raw`` attribute itself stays ``bytes``.
+
 Payload size is only a format guard. A future firmware could change the
 layout at 150 B under the same version byte, so both are pinned.
 
@@ -154,7 +158,7 @@ class Burst0x506A:
             "snr_coarse": self.snr_coarse,
             "reserved": self.reserved,
             "field_28": self.field_28,
-            "tail_raw": self.tail_raw,
+            "tail_raw": self.tail_raw.hex(),  # JSON-safe (v4; 0x1c8f precedent)
         }
 
 
@@ -217,7 +221,7 @@ def _parse_slot(index: int, s: bytes) -> Burst0x506A:
         "up to 4 bursts — FN, packed ARFCN+band, RSSI, RxPwr dBm×16 (SCAT A/B "
         "930/930, F3 CXM DL dBm10), DC I/Q, freq/timing offset, SNR"
     ),
-    version=3,
+    version=4,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",

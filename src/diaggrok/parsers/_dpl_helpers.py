@@ -18,11 +18,50 @@ by a **verbatim IP packet** (no Ethernet, no framing of its own)::
                               v0x00 0x1c/0x1d/0x38/0x39/0x3a/0x7b); NOT the IP
                               discriminator — use +7 (see below)
     +3  u8   direction        0x40 = TX/uplink, 0x00 = RX/downlink
-    +4  u24le counter         steps like a sequence between consecutive records
-    +7  u8   flags            bimodal {0x00, 0x80}. 0x80 marks an IP-bearing
-                              record on BOTH dialects and for EVERY +2 kind
-    +8  ..   payload          IP packet when IP-bearing (+7==0x80) and the
-                              length arithmetic holds
+    +4  u16le packet_seq      packet sequence number: one value per logged
+                              packet, shared by all of its segments
+    +6  u8   segment          segment index within the packet, 0..N-1
+    +7  u8   flags            {0x00, 0x80}: 0x80 marks the packet's LAST
+                              segment (``last_segment``)
+    +8  ..   payload          up to 256 bytes of the packet; a whole IP datagram
+                              when the packet is one segment (+6 == 0 and
+                              +7 == 0x80) and the length arithmetic holds
+
+Segmentation
+--------------------
+
+A packet longer than 256 bytes is logged as N records of one ``packet_seq``:
+segments 0..N-2 carry 256 body bytes (a 264-byte record) with flags 0x00, and
+segment N-1 carries the rest with flags 0x80. Until diaggrok v6 this header
+was read as a u24 counter at +4 and a +7 "IP-bearing" flag, which folded the
+segment index into the counter (seq + 65536 * segment) and called the leading
+segments "opaque snap cuts". The evidence:
+
+* across 340 sidecars, +6 takes only 6-7 values yet is non-zero on ~half the
+  records; on v0x00 its non-zero count equals the flags==0x00 count exactly
+  (185,953 = 185,953);
+* a joint walk of 7 captures (v0x00 EM7565, RC400L, 81UMV91B1; v0x01 M3100,
+  RXM-G1, M2000, R500L5) shows every multi-record packet as +6 = 0..N-1 under
+  one u16 packet_seq, flags 0x00 on all but the last;
+* reassembling by (version, direction, packet_seq) gives 45,286 / 45,394
+  multi-segment packets whose concatenated body satisfies the exact IPv4
+  total_length / IPv6 payload_length (EM7565 36,274 / 36,274; 81UMV91B1
+  601 / 601; M3100 18 / 18; RXM-G1 75 / 75; M2000 8,240 / 8,335), the same
+  ~1e-6-per-packet self-check the single-record decode rests on.
+
+F3 and 0x60 are silent on these fields; the names rest on that self-check.
+v6 renames the field ``counter`` -> ``packet_seq`` on purpose: its meaning
+changed (v5's value was seq + 65536 * segment), and 0x11EB is published, so a
+consumer still reading ``counter`` fails loudly instead of silently receiving
+different numbers.
+Reassembly is cross-record, so this per-record parser only exposes
+``packet_seq`` / ``segment`` / ``last_segment`` and decodes single-segment
+packets; the whole-packet decode belongs to a stream-level consumer.
+
+The "IP-bearing" tables below are the pre-v6 reading, kept because their
+counts stand: "flags set" there is "last segment", and the flag-clear 264-byte
+records and the "truncated" bucket are leading segments of multi-segment
+packets.
 
 How each field was grounded
 ---------------------------
@@ -173,7 +212,9 @@ DPL_VERSIONS_OBSERVED = (0x00, 0x01)
 #: exact. Kept as a named subtype value.
 PAYLOAD_KIND_IP_FULL = 0x41
 
-#: Byte +7 (flags) value that marks an **IP-bearing** record on the **v0x00**
+#: Byte +7 (flags) value that marks a packet's **last segment** (see
+#: "Segmentation"). Pre-v6 history, kept for its counts: it was read as marking
+#: an **IP-bearing** record on the **v0x00**
 #: dialect (MDM9x30 / MDM9x50 Sierra), where the +2 payload_kind enum differs
 #: (observed 0x1c always-complete, 0x38 truncation-prone). On a
 #: 60k-record EM7565 sample, +7==0x80 partitions IP-bearing (14,213) from opaque
@@ -184,6 +225,11 @@ PAYLOAD_KIND_IP_FULL = 0x41
 #: with +7==0x80 carry complete IP packets that pass both the length arithmetic
 #: and the IPv4 header checksum. A cross-dialect, cross-kind IP-bearing flag.
 FLAG_IP_BEARING = 0x80
+#: The same bit under its grounded name.
+FLAG_LAST_SEGMENT = FLAG_IP_BEARING
+
+#: Body bytes a leading (non-last) segment carries.
+DPL_SEGMENT_BODY_LEN = 256
 
 #: Byte +3 direction encoding, grounded on address/TTL/ICMP-type agreement.
 DIRECTION_TX = 0x40  # uplink   — UE-originated
@@ -202,8 +248,10 @@ class DplRecord:
     payload_kind: int
     direction_raw: int
     direction: str | None
-    counter: int
+    packet_seq: int  # u16 packet sequence number (+4..+5); v5's `counter`
+    segment: int  # segment index within the packet (+6)
     flags: int
+    last_segment: bool  # flags & FLAG_LAST_SEGMENT
     payload_size: int
     # Populated only when the record is IP-bearing (flags == FLAG_IP_BEARING)
     # *and* the length arithmetic validates. None otherwise — an un-decoded body is
@@ -225,8 +273,10 @@ class DplRecord:
             "payload_kind": self.payload_kind,
             "direction_raw": self.direction_raw,
             "direction": self.direction,
-            "counter": self.counter,
+            "packet_seq": self.packet_seq,
+            "segment": self.segment,
             "flags": self.flags,
+            "last_segment": self.last_segment,
             "payload_size": self.payload_size,
             "ip_version": self.ip_version,
             "ip_src": self.ip_src,
@@ -310,6 +360,11 @@ def parse_dpl(
         direction = _DIRECTION_NAMES.get(direction_raw)
 
     ip: dict[str, Any] = {}
+    segment = data[6]
+    last_segment = bool(data[7] & FLAG_LAST_SEGMENT)
+    # Only a single-segment packet (segment 0 AND last) holds a whole datagram
+    # in this one record. A later segment starts mid-datagram; a leading one
+    # holds only the first 256 bytes. Pre-v6 note, kept for its counts:
     # IP-bearing marker: flags (+7) == 0x80, on BOTH dialects. Grounded on
     # v0x00 (where the +2 enum 0x1c/0x38 differs) and on v0x01 (every
     # (kind, +7==0x80) group carries IP, and every IPv4 exact-length hit also
@@ -318,7 +373,7 @@ def parse_dpl(
     # so it adds no decodes. The
     # length arithmetic in _decode_ip remains the self-checking gate, so a
     # flag-set-but-truncated or continuation body falls through to raw.
-    carries_ip = data[7] == FLAG_IP_BEARING
+    carries_ip = segment == 0 and data[7] == FLAG_LAST_SEGMENT
     if carries_ip:
         ip = _decode_ip(body, len(data)) or {}
 
@@ -329,8 +384,10 @@ def parse_dpl(
         payload_kind=payload_kind,
         direction_raw=direction_raw,
         direction=direction,
-        counter=int.from_bytes(data[4:7], "little"),
+        packet_seq=int.from_bytes(data[4:6], "little"),
+        segment=segment,
         flags=data[7],
+        last_segment=last_segment,
         payload_size=len(data),
         ip_version=ip.get("ip_version"),
         ip_src=ip.get("ip_src"),

@@ -1033,7 +1033,9 @@ def _tally_qsh_trace(stats: "HdlcStats", frame_no_crc: bytes) -> None:
     )
     subsys_id = (w2 >> 6) & 0xFF
     stats.qsh_trace_subsys[subsys_id] += 1
-    stats.qsh_trace_sub_streams.setdefault(subsys_id, set()).add((w2 >> 1) & 0x1F)
+    sub_stream = (w2 >> 1) & 0x1F
+    stats.qsh_trace_sub_streams.setdefault(subsys_id, set()).add(sub_stream)
+    stats.qsh_trace_sub_stream_frames[(subsys_id, sub_stream)] += 1
     stats.qsh_trace_hashes[site_hash] += 1
     stats.qsh_trace_subtypes[subtype] += 1
     # Span, not a sorted list: the walk is in capture order, so first-seen and
@@ -1143,6 +1145,11 @@ class HdlcStats:
     # armed 0x9001 ``level`` bitmask: a sub_stream that was never armed should
     # never appear.
     qsh_trace_sub_streams: dict[int, set[int]] = field(default_factory=dict)
+    # (subsys_id, sub_stream) -> frames. The set above says which bits
+    # emitted; this says how much each did, which is what a golden-gap report
+    # needs (MPOWER bit 4 was 1.7M frames on FX3100, a bit golden does not arm).
+    # Sums per subsys_id to ``qsh_trace_subsys``.
+    qsh_trace_sub_stream_frames: Counter[tuple[int, int]] = field(default_factory=Counter)
     # Qtrace-site HASH census, and the DIAG-clock span the plane covers.
     #
     # The 0x9D envelope is fully decodable with no qdb

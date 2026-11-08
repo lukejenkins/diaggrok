@@ -84,10 +84,17 @@ _LEGACY_ALIASES: frozenset[str] = frozenset({
     "LOG_GNSS_INIT_1509",
     "LOG_GNSS_ME_GPS_L1C",
     "LOG_GNSS_ME_BDS_B1C",
+    "LOG_LTE_CELL_SEARCH_RESULTS",
 })
 
+# 0x4801 is a WCDMA code, not LTE: equipment id 4 (the 0x4xxx nibble), every
+# record follows EVENT_WCDMA_RRCCSP_SCAN_START, and its channel field equals the
+# firmware's own F3 WCDMA tune UARFCN set. The canonical name is the WCDMA RRC
+# acquisition summary; the LTE name stays only as a deprecated alias.
+LOG_WCDMA_RRC_ACQ_SUMMARY_INFORMATION = 0x4801
+LOG_LTE_CELL_SEARCH_RESULTS         = LOG_WCDMA_RRC_ACQ_SUMMARY_INFORMATION  # deprecated alias
+
 # LTE log codes
-LOG_LTE_CELL_SEARCH_RESULTS         = 0x4801
 LOG_LTE_ML1_MEASUREMENT             = 0x41BC
 # 0x18AE is GNSS Global Time Services (GTS), NOT an LTE ML1 measurement report.
 # The canonical log name is LOG_GNSS_GLOBAL_TIME_SERVICES_EVENTS, and F3

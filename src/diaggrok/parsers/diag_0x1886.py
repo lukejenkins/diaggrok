@@ -10,6 +10,7 @@ Also seen applied to this code, but belonging to a different log: LOG_EVENT_MTP_
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from struct import unpack_from
 from typing import Any
@@ -183,6 +184,44 @@ _MDM9607_SV_ID_OFFSET = 44
 _MDM9607_HDR_B1 = 4
 _MDM9607_HDR_B2 = 0x46
 
+# ---------------------------------------------------------------------------
+# SDX55 variable-length variant, header (b1,b2)=(6,5) — the 71-byte slot is the
+# SAME struct as the MDM9607 variant above.
+# ---------------------------------------------------------------------------
+# Grounded on an SDX55 FWA gateway (FX2000-3, 527 B records = 30 + 7*71, N=7)
+# against two independent plaintext F3 sites in the same capture:
+#
+#   per slot: [0]  u8   sv_id_raw — PRN = sv_id_raw − 44.  420/420 slots pair
+#                       with a co-temporal ``GAL_SV: <prn>, Src, Ms, SubMs,
+#                       TuncMs, Speed`` print (mc_msg.c) by PRN.
+#             [8]  u16  cno_raw — C/N0 in 0.01 dB-Hz.  BIT-EXACT: 88/88 equal
+#                       10 x the ``C/No`` (0.1 dB-Hz) of the Galileo acquisition
+#                       peak print (mc_peak.c, ``Gnss:3``) for that PRN in the
+#                       next record.
+#             [15] u32  sv_time_ms   — SV time, integer GPS ms of week
+#             [19] f32  sv_time_sub_ms — its sub-millisecond fraction.  The pair
+#                       equals the print's ``Ms + SubMs`` plus a fixed offset
+#                       (0.27378 +/- 0.00017 ms for Src 3, 0.26687 +/- 0.00015
+#                       for Src 1; constant over the whole capture), carry
+#                       included.  Header gps_msec minus this SV time is
+#                       66..90 ms on every slot: the signal transit time.
+#             [27] f32  speed_mps — SV line-of-sight speed, m/s.  r = 1.000 vs
+#                       the print's integer ``Speed`` (residual sd ~3 m/s).
+#             [36] u32  flags1 — per-SV status.  Takes 0x02c02006, 0x02c02000
+#                       and 0x02c82000 inside the SAME records, every one of
+#                       which decodes correctly, so it is NOT a layout key.
+#             [44] f32  azimuth_rad, [48] f32 elevation_rad — within 1 deg of
+#                       the integer ``locPd_dumpSvIn`` print (Galileo ids
+#                       301..336) on 832/856 and 836/856 joins.
+#
+# Decode is gated on the (6,5) header, ``size == 30 + N*71`` with N = byte
+# [29], and EVERY slot passing a physical check (PRN 1..36, C/N0 <= 60 dB-Hz,
+# finite azimuth 0..2pi and elevation -pi/2..pi/2).  A record failing any
+# check falls through to the pre-existing paths unchanged.
+_SDX55_GAL_HDR_B1 = 6
+_SDX55_GAL_HDR_B2 = 5
+_SDX55_GAL_MAX_CNO_RAW = 6000   # 60 dB-Hz
+
 
 def _mdm9607_prn_from_raw(raw: int) -> int | None:
     """Map an MDM9607 slot sv_id byte to Galileo PRN, or None if out of range."""
@@ -308,6 +347,72 @@ def _parse_mdm9607_sv_slot(data: bytes, offset: int) -> Mdm9607GalSv:
     )
 
 
+@dataclass
+class Sdx55GalSv:
+    """Per-SV Galileo slot for the SDX55 (6,5) variable-length variant (71 bytes).
+
+    Same slot struct as :class:`Mdm9607GalSv` (sv_id, C/N0, azimuth, elevation
+    at the same offsets) plus the SV time and speed grounded on this variant.
+    ``raw`` keeps the full slot for the bytes not yet named.
+    """
+    sv_id_raw: int              # u8 @ slot+0
+    prn: int | None             # PRN = sv_id_raw − 44, or None if out of range
+    cno_raw: int                # u16 @ slot+8 — C/N0 in 0.01 dB-Hz
+    sv_time_ms: int             # u32 @ slot+15 — SV time, GPS ms of week
+    sv_time_sub_ms: float       # f32 @ slot+19 — sub-ms fraction of sv_time_ms
+    speed_mps: float            # f32 @ slot+27 — line-of-sight speed, m/s
+    flags1: int                 # u32 @ slot+36 — per-SV status (not a layout key)
+    azimuth_rad: float          # f32 @ slot+44
+    elevation_rad: float        # f32 @ slot+48
+    raw: bytes
+
+    @property
+    def cno_db_hz(self) -> float:
+        return self.cno_raw * 0.01
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'sv_id_raw': self.sv_id_raw,
+            'prn': self.prn,
+            'cno_raw': self.cno_raw,
+            'cno_db_hz': self.cno_db_hz,
+            'sv_time_ms': self.sv_time_ms,
+            'sv_time_sub_ms': self.sv_time_sub_ms,
+            'speed_mps': self.speed_mps,
+            'flags1': self.flags1,
+            'azimuth_rad': self.azimuth_rad,
+            'elevation_rad': self.elevation_rad,
+        }
+
+
+def _parse_sdx55_gal_slot(data: bytes, offset: int) -> Sdx55GalSv:
+    sv_id_raw = data[offset]
+    return Sdx55GalSv(
+        sv_id_raw=sv_id_raw,
+        prn=_mdm9607_prn_from_raw(sv_id_raw),
+        cno_raw=unpack_from('<H', data, offset + 8)[0],
+        sv_time_ms=unpack_from('<I', data, offset + 15)[0],
+        sv_time_sub_ms=unpack_from('<f', data, offset + 19)[0],
+        speed_mps=unpack_from('<f', data, offset + 27)[0],
+        flags1=unpack_from('<I', data, offset + 36)[0],
+        azimuth_rad=unpack_from('<f', data, offset + 44)[0],
+        elevation_rad=unpack_from('<f', data, offset + 48)[0],
+        raw=bytes(data[offset:offset + _SLOT_SIZE]),
+    )
+
+
+def _sdx55_gal_slot_physical(sv: Sdx55GalSv) -> bool:
+    """True iff a decoded slot is physically plausible (the decode gate)."""
+    az, el = sv.azimuth_rad, sv.elevation_rad
+    return (
+        sv.prn is not None and 1 <= sv.prn <= 36
+        and sv.cno_raw <= _SDX55_GAL_MAX_CNO_RAW
+        and math.isfinite(az) and math.isfinite(el)
+        and 0.0 <= az <= 2 * math.pi + 1e-3
+        and -math.pi / 2 - 1e-3 <= el <= math.pi / 2 + 1e-3
+    )
+
+
 def _parse_sv_slot(data: bytes, offset: int) -> GalileoSv:
     sv_id_raw = data[offset]
     return GalileoSv(
@@ -348,7 +453,7 @@ class Diag0x1886:
     fixed 30-byte header + N × 71-byte slots, where the 30 B form is the
     no-SV bottom of the ladder.
 
-    Three formats are decoded, all at version byte 0:
+    Four formats are decoded, all at version byte 0:
 
     - **811-byte SDX55 rung** — Telit FN980m SDX55, header ``(b1,b2)=(6,5)`` +
       per-slot ``flags1=0x02c02006``.  30-byte fixed header + 71-byte anchor
@@ -363,12 +468,22 @@ class Diag0x1886:
       @31, azimuth @44, elevation @48.  Validated against the co-temporal
       0x14DE Galileo report (290/290 at N=11, 13/13 at N=13).  Label
       ``mdm9607_gal``.  See the constants block above for the layout.
+    - **SDX55 (6,5) variable-length variant** — header ``(b1,b2)=(6,5)``,
+      30-byte header + N × 71-byte slots (N = byte [29]), the SAME slot struct
+      as the MDM9607 form (PRN = raw − 44, C/N0 @8, azimuth @44, elevation
+      @48) plus SV time ms/sub-ms @15/@19 and line-of-sight speed @27.  Grounded
+      on an SDX55 FWA gateway's 527 B (N=7) records against plaintext F3: the
+      ``GAL_SV`` measurement print (PRN 420/420, SV time to a fixed offset,
+      speed r = 1.000), the Galileo acquisition-peak C/No (88/88 bit-exact)
+      and ``locPd_dumpSvIn`` az/el.  Decoded only when every slot passes a
+      physical gate; label ``sdx55_gal``.  Per-slot ``flags1`` varies inside
+      valid records, so it is a status field, not a layout key.
     - **30-byte rung** — indoor SDX55 captures (73 samples, no SVs
       populated).  Only the 30-byte header is present; the
       ``float_legacy_*`` fields decode this form.
 
-    The other size rungs (101…1166 B) decode to ``parser_format='unknown'``
-    — they are real records, just unmapped.
+    Records of the other size rungs (101…1166 B) that fail the ``sdx55_gal``
+    gate decode to ``parser_format='unknown'`` — real records, just unmapped.
 
     **The 811 B FN980m slot layout does not extend to the intermediate
     rungs.**  Decoding each ``101 + N×71`` rung of the (header_b1, header_b2)
@@ -420,7 +535,7 @@ class Diag0x1886:
     float_legacy_3: float | None = None
     # Full-format fields
     header_raw: bytes = b''   # 101 bytes of header + anchor block (full format)
-    svs: list[GalileoSv | Mdm9607GalSv] = field(default_factory=list)
+    svs: list[GalileoSv | Mdm9607GalSv | Sdx55GalSv] = field(default_factory=list)
     # Header u32 @3 = GNSS FCount (ms) and u32 @9 = GPS ms-of-week, on EVERY form
     # (F3-grounded: equal, <= 1 ms, to nf_navsolution.c "UpdEnvDetector:
     # [Fcount=%lu, GpsMsec=%lu" arg0/arg1 and gile_proc.c "… GpsMsec %u" arg0;
@@ -428,7 +543,7 @@ class Diag0x1886:
     f_count: int | None = None
     gps_msec: int | None = None
     raw_hex: str = ''         # full payload hex for future RE
-    parser_format: str = 'unknown'  # 'sdx55_full_811' | 'sdx55_811_unrecognized' | 'mdm9607_gal' | 'mdm9607_gal_unrecognized' | 'legacy_30' | 'unknown'
+    parser_format: str = 'unknown'  # 'sdx55_full_811' | 'sdx55_811_unrecognized' | 'mdm9607_gal' | 'mdm9607_gal_unrecognized' | 'sdx55_gal' | 'legacy_30' | 'unknown'
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -465,7 +580,7 @@ class Diag0x1886:
 @register(LOG_GNSS_GAL_MEASUREMENT_REPORT_C, domain="gnss",
     name="0x1886",
     issues=(),
-    description="Galileo E1/L1 measurement report: SDX55 full 811-byte format with 10 SV slots (gated on the FN980m flags1=0x02c02006 slot signature; other 811-byte slot layouts land in 'sdx55_811_unrecognized' instead of a garbage SV decode), the MDM9607 (EG25-G) variable-length variant 'mdm9607_gal' (header b1=4/b2=0x46, 30-byte header + N×71-byte slots, PRN=raw-44, C/N0 u16 in 0.01 dB-Hz, measurement uncertainty, azimuth/elevation bit-exact vs the co-temporal 0x14DE Galileo report; failed-layout (4,0x46) records land in 'mdm9607_gal_unrecognized'), and the legacy 30-byte indoor format.",
+    description="Galileo E1/L1 measurement report: SDX55 full 811-byte format with 10 SV slots (gated on the FN980m flags1=0x02c02006 slot signature; other 811-byte slot layouts land in 'sdx55_811_unrecognized' instead of a garbage SV decode), the MDM9607 (EG25-G) variable-length variant 'mdm9607_gal' (header b1=4/b2=0x46, 30-byte header + N×71-byte slots, PRN=raw-44, C/N0 u16 in 0.01 dB-Hz, measurement uncertainty, azimuth/elevation bit-exact vs the co-temporal 0x14DE Galileo report; failed-layout (4,0x46) records land in 'mdm9607_gal_unrecognized'), the SDX55 (6,5) variable-length variant 'sdx55_gal' (same 71-byte slot as the MDM9607 form plus SV time ms/sub-ms @15/@19 and line-of-sight speed @27; PRN, C/N0, SV time, speed and az/el grounded against co-temporal plaintext F3; decoded only when every slot passes a physical gate), and the legacy 30-byte indoor format.",
     version=9,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
@@ -572,15 +687,62 @@ def parse_0x1886(log_time: int, data: bytes) -> Diag0x1886 | None:
             parser_format='mdm9607_gal' if layout_ok else 'mdm9607_gal_unrecognized',
         )
 
+    # FN980m-validated 811-byte layout keeps precedence: a record it accepts is
+    # decoded exactly as before.
+    fn_svs: list[GalileoSv] = []
     if len(data) == _SDX55_FULL_SIZE:
-        svs = [
+        fn_svs = [
             _parse_sv_slot(data, _SDX55_HDR_SIZE + i * _SDX55_SV_SIZE)
             for i in range(_SDX55_N_SLOTS)
         ]
-        layout_ok = (
-            svs[0].flags1 == _FN980M_SLOT_FLAGS1
-            and all(sv.prn is not None for sv in svs)
-        )
+        if (
+            fn_svs[0].flags1 == _FN980M_SLOT_FLAGS1
+            and all(sv.prn is not None for sv in fn_svs)
+        ):
+            return Diag0x1886(
+                log_time=log_time,
+                version=version,
+                payload_size=len(data),
+                header_b1=header_b1,
+                header_b2=header_b2,
+                header_raw=bytes(data[:_SDX55_HDR_SIZE]),
+                svs=fn_svs,
+                f_count=unpack_from('<I', data, 3)[0],
+                gps_msec=unpack_from('<I', data, 9)[0],
+                raw_hex=data.hex(),
+                parser_format='sdx55_full_811',
+            )
+
+    # SDX55 (6,5) variable-length variant: same 71-byte slot as the MDM9607
+    # form.  Every slot must pass the physical gate; otherwise fall through so
+    # the pre-existing unrecognized / legacy handling is unchanged.
+    # NOTE: the FN980m 811 B fixture ALSO passes this gate (slot 0 = PRN 4 at
+    # 31.2 dB-Hz, ten zero-C/N0 slots), which suggests that form is the same
+    # struct with PRN = raw - 44.  It stays on the path above until it is
+    # re-grounded against an oracle on that device.
+    n_hdr = data[_HDR_SLOT_COUNT_OFF]
+    if (
+        header_b1 == _SDX55_GAL_HDR_B1 and header_b2 == _SDX55_GAL_HDR_B2
+        and n_hdr >= 1 and len(data) == _HDR_SIZE + n_hdr * _SLOT_SIZE
+    ):
+        g_svs = [_parse_sdx55_gal_slot(data, _HDR_SIZE + i * _SLOT_SIZE)
+                 for i in range(n_hdr)]
+        if all(_sdx55_gal_slot_physical(sv) for sv in g_svs):
+            return Diag0x1886(
+                log_time=log_time,
+                version=version,
+                payload_size=len(data),
+                header_b1=header_b1,
+                header_b2=header_b2,
+                header_raw=bytes(data[:_HDR_SIZE]),
+                svs=g_svs,
+                f_count=unpack_from('<I', data, 3)[0],
+                gps_msec=unpack_from('<I', data, 9)[0],
+                raw_hex=data.hex(),
+                parser_format='sdx55_gal',
+            )
+
+    if len(data) == _SDX55_FULL_SIZE:
         return Diag0x1886(
             log_time=log_time,
             version=version,
@@ -588,11 +750,11 @@ def parse_0x1886(log_time: int, data: bytes) -> Diag0x1886 | None:
             header_b1=header_b1,
             header_b2=header_b2,
             header_raw=bytes(data[:_SDX55_HDR_SIZE]),
-            svs=svs if layout_ok else [],
+            svs=[],
             f_count=unpack_from('<I', data, 3)[0],
             gps_msec=unpack_from('<I', data, 9)[0],
             raw_hex=data.hex(),
-            parser_format='sdx55_full_811' if layout_ok else 'sdx55_811_unrecognized',
+            parser_format='sdx55_811_unrecognized',
         )
 
     # Legacy 30-byte indoor/degraded format (also every unmapped size rung).

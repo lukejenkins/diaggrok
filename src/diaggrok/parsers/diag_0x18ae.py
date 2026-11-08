@@ -108,8 +108,12 @@ and 75B forms (SDX55: EM9190 / M2000) carry just ``compact_status``.
     log_time: int
     version: int
     payload_size: int
-    sfn_counter: int | None = None  # bits 20-31 of u32 at [3:7] (v4): GTS-latched SysFN
-    sched_data: int | None = None   # bits 0-19 of u32 at [3:7] (v4)
+    # bits 20-31 / 0-19 of the u32 at [3:7] (v4/v5). v11: that u32 is the LOW
+    # WORD of the 19.2 MHz ``timer_19m2`` (rate-measured), so sfn_counter is
+    # timer/2^20 mod 4096 — a 54.6 ms tick, not an LTE SysFN value (the v0x04
+    # verdict tied it to gts.c:502 by name, never by value). Kept for compat.
+    sfn_counter: int | None = None
+    sched_data: int | None = None
     compact_status: int | None = None  # u16 at [1:3] for compact (3B v6)
     # v6 dominant 16B form (MDM9150; and its 8B twin) is `06 <sub> <b2> 01
     # <u32@[4:8]> ...` — a type-tagged GTS record whose real varying payload is
@@ -142,9 +146,35 @@ and 75B forms (SDX55: EM9190 / M2000) carry just ``compact_status``.
     fcount: int | None = None          # [39:43] u32  — F3 "FC" (LTE frame count)
     # RAW/CANDIDATE — these two vary per record but are printed by NO F3 site
     # in any capture that carries them, so they are surfaced unnamed rather
-    # than guessed at.
+    # than guessed at. (The ``v8_`` prefix predates the finding that v0x06
+    # event 0x09 carries the same body; they are set on both.)
     v8_raw_u32_35: int | None = None   # [35:39] u32, ~2.09e7, varies
     v8_raw_i32_44: int | None = None   # [44:48] i32, small negative, drifts
+    # --- v11: the bytes a per-byte layout audit found discarded --------------
+    # u64 free-running timer at [3:11] (v0x04/v0x05 event 0x04 15 B and event
+    # 0x01 432 B) / [4:12] (v0x06 event 0x04 16 B). Measured at exactly
+    # 19.200 MHz against the DIAG record clock on EM7565, EM7511 (across a
+    # 2^32 carry into [7]) and 81UMV91M21 — the USTMR clock that v0x08's
+    # F3-confirmed ``ustmr`` runs on. F3 names no field at THESE offsets, so it
+    # keeps a measured, not an F3, name. ``sfn_counter``/``sched_data`` and
+    # ``v6_value`` are bit-slices of its low 32 bits.
+    timer_19m2: int | None = None
+    # 432 B full form: the header after the timer and the 6 B trailer. Live
+    # (e.g. [16] 0x14/0x05, u16 [18:20], u16 [20:22], trailer [428:431]) and
+    # unnamed by F3, so surfaced raw.
+    full_hdr_raw: bytes | None = None      # [11:26]
+    full_trailer_raw: bytes | None = None  # [426:432]
+    # Event 0x09 GTS time record (v0x06 and v0x08): the bytes the F3 print
+    # does not render. Live, unnamed, surfaced raw. [5]/[25]/[43] are bytes
+    # the coincidental-hit guard refuses to call ``P``/``FC``-flag; raw
+    # exposure is not that claim ([5] is 0 on the no-valid-time form). [38],
+    # the guard's fourth byte, is the top byte of v8_raw_u32_35 [35:39].
+    gts_raw_2_6: bytes | None = None   # [2:6]: [2] 2 on v0x06 / 0 on v0x08
+    gts_raw_25: int | None = None      # [25]
+    gts_raw_34: int | None = None      # [34]: high nibble only observed
+    gts_raw_43: int | None = None      # [43]
+    gts_raw_u32_48: int | None = None  # [48:52], 0..4 observed
+    gts_raw_52_75: bytes | None = None  # [52:75]: [67:75] live on v0x06
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -167,10 +197,13 @@ and 75B forms (SDX55: EM9190 / M2000) carry just ``compact_status``.
             d['gts_event_type'] = self.gts_event_type
         for key in ('gts_time_src', 'gps_week', 'gps_msec', 'clock_bias_s',
                     'time_unc_s', 'ustmr', 'fcount',
-                    'v8_raw_u32_35', 'v8_raw_i32_44'):
+                    'v8_raw_u32_35', 'v8_raw_i32_44', 'timer_19m2',
+                    'full_hdr_raw', 'full_trailer_raw', 'gts_raw_2_6',
+                    'gts_raw_25', 'gts_raw_34', 'gts_raw_43',
+                    'gts_raw_u32_48', 'gts_raw_52_75'):
             val = getattr(self, key)
             if val is not None:
-                d[key] = val
+                d[key] = val.hex() if isinstance(val, bytes) else val
         return d
 
 
@@ -203,6 +236,14 @@ _V8_EVENT_GET_GTS_TIME = 0x09
 # Byte offsets inside the event-0x09 body, every one F3-confirmed byte-exact
 # against that record's own GetGtsTime print.
 _V8_MIN_LEN = 48  # through the last decoded field ([44:48])
+_GTS_FULL_LEN = 75  # the attested event-0x09 size, through the raw tail
+# Versions whose event 0x09 is the GTS time record: v0x08 (SDX62/SDX72) and
+# v0x06 (SDX55: the same 75 B body, printed by gts.c:5993 GetGtsTime and
+# matching it byte-exact).
+_GTS_TIME_VERSIONS = (0x06, 0x08)
+# Events whose header is `<ver> <ev> <b2> <u64 timer @[3:11]>` (v0x04/v0x05).
+_TIMER_EVENTS_V45 = (0x04, 0x01)
+_EVENT_TIMER_V6 = 0x04  # `06 04 00 01 <u64 timer @[4:12]>`
 
 
 # --- Per-(version, event) record sizes ---------------------------------------
@@ -271,6 +312,10 @@ def _decode_v4_full_entries(data: bytes) -> list[dict[str, int]]:
             'index_u16': unpack_from('<H', slot, 12)[0],
             'counter_b': unpack_from('<H', slot, 14)[0],
             'marker': slot[16],
+            # v11: the "reserved" runs are ~1% non-zero corpus-wide (rel 8 and
+            # rel 18 the hottest); surfaced raw rather than discarded.
+            'rsv_3_12': slot[3:12].hex(),
+            'rsv_17_20': slot[17:20].hex(),
         })
     return entries
 
@@ -280,7 +325,7 @@ def _decode_v4_full_entries(data: bytes) -> list[dict[str, int]]:
     wigle_direct=True,
     wigle_roles=("signal",),
     description="GNSS Global Time Services (GTS) events — compact (15B/3B SysFN/status) and full (432B/75B GTS time-tag array) forms, version-dependent (not an LTE ML1 measurement report)",
-    version=10,
+    version=11,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -330,7 +375,20 @@ def _decode_v4_full_entries(data: bytes) -> list[dict[str, int]]:
         "[44:48] i32 vary but are named by no F3 site, so they are surfaced RAW. "
         "A T99W640 bring-up capture has week=0 in all 1,412 75B records — GTS "
         "running with no valid GPS time, matching the F3 string `GTS: "
-        "BestGPSTime - No valid GPS Time`."
+        "BestGPSTime - No valid GPS Time`. "
+        "v0x06 event 0x09 (SDX55, 75B) is the v0x08 GTS time record: on a "
+        "RM500Q-AE the F3 print `gts.c:5993 GetGtsTime P %d Tsrc %d W %d Ms %d "
+        "B %f Tu %f U 0x%llx FC %d %d` joins its records on the DIAG tick and "
+        "matches 202/202 on Tsrc, W, Ms, B, Tu, U and FC (202 distinct ms, 202 "
+        "ustmr, 191 bias); on a FN980 all 129 records share a tick with a "
+        "`gts.c:5963 GetGtsTime - No Time Avl` print; an M2000 record's GPS "
+        "time equals its capture's wall-clock start to the second. There the "
+        "F3 `P` is 0 while byte [5] is 1, so [5] is not `P`. The u32 at [3:7] "
+        "(v4/v5) and [4:8] "
+        "(v6 16B) is the low word of a u64 timer measured at exactly 19.200 MHz "
+        "(timer_19m2); the live bytes the parser used to discard (432B header "
+        "[11:26] / trailer / slot reserved runs, GTS-time [2:6]/[25]/[34]/[43]/"
+        "[48:75]) are surfaced raw."
     ),
     source_url="",
     issues=(),
@@ -341,8 +399,11 @@ def _decode_v4_full_entries(data: bytes) -> list[dict[str, int]]:
     # + v0x08: gts_event_type, gts_time_src, gps_week, gps_msec,
     #   clock_bias_s, time_unc_s, ustmr, fcount, v8_raw_u32_35, v8_raw_i32_44
     #   = 10 more.
-    fields_identified=22,
-    fields_parsed=22,
+    # + v11 (per-byte layout audit): timer_19m2, full_hdr_raw, full_trailer_raw,
+    #   gts_raw_2_6, gts_raw_25, gts_raw_34, gts_raw_43, gts_raw_u32_48,
+    #   gts_raw_52_75 = 9 more.
+    fields_identified=31,
+    fields_parsed=31,
     field_invariants={
         "version": {"enum": [0x04, 0x05, 0x06, 0x08]},
         "payload_size": {"enum": [
@@ -418,6 +479,19 @@ def parse_0x18ae(log_time: int, data: bytes) -> Diag0x18AE | None:
     fcount: int | None = None
     v8_raw_u32_35: int | None = None
     v8_raw_i32_44: int | None = None
+    timer_19m2: int | None = None
+    full_hdr_raw: bytes | None = None
+    full_trailer_raw: bytes | None = None
+    gts_raw_2_6: bytes | None = None
+    gts_raw_25: int | None = None
+    gts_raw_34: int | None = None
+    gts_raw_43: int | None = None
+    gts_raw_u32_48: int | None = None
+    gts_raw_52_75: bytes | None = None
+
+    # Byte [1] is the GTS event type on every version (see _EVENT_SIZES).
+    gts_event_type = data[1]
+    event = gts_event_type
 
     if version in (4, 5) and len(data) >= 7:
         # v0x05 (MDM9250) is the cross-silicon twin of v0x04 (SDX20), also
@@ -432,10 +506,16 @@ def parse_0x18ae(log_time: int, data: bytes) -> Diag0x18AE | None:
         if raw != 0:
             sfn_counter = (raw >> 20) & 0xFFF  # bits 20-31: SFN counter
             sched_data = raw & 0xFFFFF          # bits 0-19: scheduling data
+        if event in _TIMER_EVENTS_V45 and len(data) >= 11:
+            # The u32 above is the low word of a u64 19.2 MHz timer at [3:11]
+            # whose live high bytes [7:11] were discarded before v11.
+            timer_19m2 = unpack_from('<Q', data, 3)[0]
         if len(data) == _V4_FULL_SIZE:
             # 432B full form: also decode the 20-slot entry array.
             full_entries = _decode_v4_full_entries(data)
             num_entries_populated = len(full_entries)
+            full_hdr_raw = data[11:_V4_FULL_HDR]
+            full_trailer_raw = data[_V4_FULL_HDR + _V4_FULL_NENT * _V4_FULL_ENTRY:]
     elif version == 6 and len(data) >= 3:
         compact_status = unpack_from('<H', data, 1)[0]
         # v6 dominant 16B form (MDM9150; 15.1M records corpus-wide) and its 8B
@@ -446,14 +526,17 @@ def parse_0x18ae(log_time: int, data: bytes) -> Diag0x18AE | None:
         # unidentified). Present on every observed v6 form >= 8B (16/8/65/73/
         # 433/3178B); the byte at [3] is a constant 0x01 across the corpus but
         # is NOT asserted as an invariant (a populated body may fill it).
-        if len(data) >= 8:
+        # Not on event 0x09: there [4:8] straddles the constant byte [5], the
+        # time source [6] and half the GPS week — the GTS time record below.
+        if len(data) >= 8 and event != _V8_EVENT_GET_GTS_TIME:
             v6_value = unpack_from('<I', data, 4)[0]
-    elif version == 8 and len(data) >= 2:
-        # v0x08 (SDX62 / SDX72) — GTS events, keyed on the event-type byte at
-        # [1], NOT on the payload size (the same event is a different length on
-        # SDX62 vs SDX72). See _V8_EVENT_* above.
-        gts_event_type = data[1]
-        if gts_event_type == _V8_EVENT_GET_GTS_TIME and len(data) >= _V8_MIN_LEN:
+        if event == _EVENT_TIMER_V6 and len(data) >= 12:
+            timer_19m2 = unpack_from('<Q', data, 4)[0]
+
+    if version in _GTS_TIME_VERSIONS:
+        # GTS events keyed on the event-type byte at [1], NOT on the payload
+        # size (the same event is a different length on SDX62 vs SDX72).
+        if event == _V8_EVENT_GET_GTS_TIME and len(data) >= _V8_MIN_LEN:
             # Event 0x09 is emitted 1:1 with the firmware's own
             # ``gts.c:6842 GetGtsTime`` F3 print, which renders these very
             # fields — so each offset below is F3-confirmed byte-exact, not
@@ -469,6 +552,14 @@ def parse_0x18ae(log_time: int, data: bytes) -> Diag0x18AE | None:
             # RAW/CANDIDATE — vary per record, named by no F3 site.
             v8_raw_u32_35 = unpack_from('<I', data, 35)[0]
             v8_raw_i32_44 = unpack_from('<i', data, 44)[0]
+            # v11: the bytes no F3 site renders, surfaced raw (live; unnamed).
+            gts_raw_2_6 = data[2:6]
+            gts_raw_25 = data[25]
+            gts_raw_34 = data[34]
+            gts_raw_43 = data[43]
+            if len(data) >= _GTS_FULL_LEN:
+                gts_raw_u32_48 = unpack_from('<I', data, 48)[0]
+                gts_raw_52_75 = data[52:_GTS_FULL_LEN]
 
     return Diag0x18AE(
         log_time=log_time,
@@ -490,4 +581,13 @@ def parse_0x18ae(log_time: int, data: bytes) -> Diag0x18AE | None:
         fcount=fcount,
         v8_raw_u32_35=v8_raw_u32_35,
         v8_raw_i32_44=v8_raw_i32_44,
+        timer_19m2=timer_19m2,
+        full_hdr_raw=full_hdr_raw,
+        full_trailer_raw=full_trailer_raw,
+        gts_raw_2_6=gts_raw_2_6,
+        gts_raw_25=gts_raw_25,
+        gts_raw_34=gts_raw_34,
+        gts_raw_43=gts_raw_43,
+        gts_raw_u32_48=gts_raw_u32_48,
+        gts_raw_52_75=gts_raw_52_75,
     )

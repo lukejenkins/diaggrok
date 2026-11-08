@@ -231,12 +231,14 @@ class Diag0x1476:
     pdop: float
     hdop: float
     vdop: float
-    num_gps_svs: int
-    total_gps_svs: int
-    num_glo_svs: int
-    total_glo_svs: int
-    num_bds_svs: int
-    total_bds_svs: int
+    # None = not located for this version (v21 since v28: its v13-offset bytes
+    # 358..363 are inside the v24-size float block, so they are not counts).
+    num_gps_svs: int | None
+    total_gps_svs: int | None
+    num_glo_svs: int | None
+    total_glo_svs: int | None
+    num_bds_svs: int | None
+    total_bds_svs: int | None
     # List of GPS PRNs parsed from the trailer SV block. Populated by the
     # v10 (SDX20 V2) path and the MDM9600/SWI9200X 797 B path (decoded from
     # the offset-198 stride-20 array — see `_parse_mdm9600_gps_sv_block`).
@@ -280,6 +282,20 @@ class Diag0x1476:
     #                       raw block, as its slots carry sentinels in
     #                       firmware-dependent places on the real v8 / v10 records
     #   hdr_gap_raw   [6:B] on the compact (v4 / v6 / v11 / v12) and v13+ headers
+    # Since v28: the v24 / v26 SV-count tail [565:1215) around the five
+    # counts this parser names (565 / 567 / 599 / 601 / 611). Live on real records:
+    # the Inseego FX3100 (v24) carries a third per-constellation count at c+6
+    # (571 / 605 / 617) and a second BDS count at 613, the Sierra EM9291 (v24)
+    # carries bytes at 603 / 605, the T99W640 (v26) at 605; RM520N-GL (v24)
+    # reads zero there. [612:1215] is non-zero on every real v24 / v26 fixture.
+    # Raw, not named: F3 is present on the FX3100 (the emitter's own
+    # gps_common.c 'PosReport1476: TotalBCN' print, 500/500 records) and equals
+    # no byte of the record, so it does not label these.
+    #   sv_pad_566 [566] u8         sv_block_568_raw [568:599]
+    #   sv_pad_600 [600] u8         sv_block_602_raw [602:611]
+    #   sv_block_612_raw [612:1215] (the per-SV 30 B array starts at 1215)
+    # The pads read zero on every record walked; they are surfaced so the
+    # equivalence diff covers them instead of assuming them.
     pos_count: int | None = None
     reserved1: int | None = None
     pos_vel_flag: int | None = None
@@ -291,6 +307,13 @@ class Diag0x1476:
     post_dop_raw: bytes | None = None
     ellipse_sensor_raw: bytes | None = None
     hdr_gap_raw: bytes | None = None
+    sv_pad_566: int | None = None
+    sv_block_568_raw: bytes | None = None
+    sv_pad_600: int | None = None
+    sv_block_602_raw: bytes | None = None
+    sv_block_612_raw: bytes | None = None
+    # v21 only (v28): [481:647], between the float block and the SV array.
+    v21_tail_raw: bytes | None = None
 
     # Known GNSS-engine cold-start seed positions (lat_rad, lon_rad).
     # These are hardcoded prediction positions emitted before the first
@@ -309,7 +332,9 @@ class Diag0x1476:
         Consumers should skip these records — they represent the GNSS
         engine's default prediction, not a real satellite fix.
         """
-        if self.pos_source != 4 or self.num_gps_svs != 0:
+        # An unlocated count (None, v21) is unknown, not "SVs used": it does
+        # not rule the seed out; the position match below decides.
+        if self.pos_source != 4 or self.num_gps_svs not in (0, None):
             return False
         for seed_lat, seed_lon in self._COLD_START_SEEDS:
             if (abs(self.lat_rad - seed_lat) < 0.001 and
@@ -434,7 +459,8 @@ class Diag0x1476:
 _STRUCT_RAW_FIELDS = (
     'pos_count', 'reserved1', 'pos_vel_flag', 'pos_vel_flag2', 'failure_code',
     'fix_events', 'fake_align', 'hdr_gap_raw', 'clock_block_raw', 'post_dop_raw',
-    'ellipse_sensor_raw',
+    'ellipse_sensor_raw', 'sv_pad_566', 'sv_block_568_raw', 'sv_pad_600',
+    'sv_block_602_raw', 'sv_block_612_raw', 'v21_tail_raw',
 )
 
 
@@ -1075,7 +1101,23 @@ def _parse_0x1476_v13(log_time: int, data: bytes) -> Diag0x1476:
         total_glo_svs = data[601]
         num_bds_svs = data[611] if len(data) > 611 else 0
         total_bds_svs = 0  # BDS total not yet located in v24
+        # The bytes around the counts, raw (v28): live on FX3100 / EM9291.
+        sv_tail = dict(
+            sv_pad_566=data[566], sv_block_568_raw=bytes(data[568:599]),
+            sv_pad_600=data[600], sv_block_602_raw=bytes(data[602:611]),
+            sv_block_612_raw=bytes(data[612:1215]) if len(data) >= 1215 else None)
     else:
+        sv_tail = {}
+    if version == 0x15:
+        # v21, since v28: the DOP sits at the v24 offset 461, so v21 carries
+        # the v24-size 104-float block [65:481] and v13's 358..363 are float
+        # bytes. Until v28 they were emitted as SV counts (e.g. 98 / 18 on a
+        # real M3100 fix). Where v21 keeps its counts is not grounded, so the
+        # counts are None and the tail [481:647] is surfaced raw.
+        num_gps_svs = total_gps_svs = num_glo_svs = None
+        total_glo_svs = num_bds_svs = total_bds_svs = None
+        sv_tail = {'v21_tail_raw': bytes(data[481:647])}
+    elif not (version >= 24 and len(data) >= 612):
         # v13 tail: SV counts at offsets 358-363 (consecutive bytes)
         num_gps_svs = data[358] if len(data) > 358 else 0
         total_gps_svs = data[359] if len(data) > 359 else 0
@@ -1099,6 +1141,7 @@ def _parse_0x1476_v13(log_time: int, data: bytes) -> Diag0x1476:
         glo_four_year=data[38],
         glo_days=unpack_from('<H', data, 39)[0],
         glo_tow_ms=unpack_from('<I', data, 41)[0],
+        **sv_tail,
     )
 
 
@@ -1321,7 +1364,8 @@ _VERSIONS_1476_4918: tuple[int, ...] = (0x02, 0x04, 0x06, 0x07, 0x08, 0x0A, 0x0B
 #   prediction epochs with no SV entries; 1547 B real-fix = 647 + 30 x 30;
 #   corpus 647..2267, all on-grid).
 # * v2 (0x02): the only attested v2 is the 797 B MDM9600 record; the 291 B
-#   _POS_FMT v2 still parses, but 292..796 B is a truncated MDM9600 record.
+#   _POS_FMT v2 still parses (only with a zero u16 @19, v28), but 292..796 B is
+#   a truncated MDM9600 record.
 # There is no length/count field in any of these headers, so the stride is the
 # only integrity check available: a trailing partial SV entry means the record
 # was cut. v7/v8/v10 have no stride either; they are gated on their attested
@@ -1418,7 +1462,7 @@ def _length_fits_layout(version: int, n: int) -> bool:
 @register(LOG_GNSS_POSITION_REPORT, domain="gnss",
     name="0x1476",
     description="Fix position, velocity, DOP, SV counts; v10 (SDX20 V2) trailer decoded with per-SV Kalman residuals, intermediate block and multi-constellation secondary SV block (all 7 observed const_ids named — GPS/GLONASS/BeiDou/Galileo/SBAS; odd const_ids are measurement-engine tracks); v2/v4/v6/v7/v8/v11/v12/v13/v21/v24/v26 layouts; MDM9600/SWI9200X 797B legacy gpsOne variant — header, velocity block (heading/vel/vel_sigma), DOP triple (pdop²=hdop²+vdop² pinned) and per-SV GPS PRN array (offset-198 stride-20) — supported",
-    version=27,
+    version=28,
 
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
@@ -1567,6 +1611,15 @@ def parse_0x1476(log_time: int, data: bytes) -> Diag0x1476 | None:
     # fixed-layout 291-byte struct.
     if len(data) < _POS_SZ:
         return None  # loud decline (registry WARN), not a ValueError
+    # v28: a v2 that is not 797 B takes _POS_FMT, whose fake_align pad
+    # [19:23] is zero on 573,877 / 573,877 real v7 / v8 / v10 records (the same
+    # struct). A non-zero u16 at 19 is not that pad: it is a cut MDM9600 record
+    # (its gps_week sits at 19) and _POS_FMT would read garbage from it. The
+    # per-version .ksy switches on this byte, and its C++ leg refuses such a
+    # record; diaggrok now refuses it too (a real MC7700 record cut to 291 B
+    # was decoded as a _POS_FMT fix until v28).
+    if version == 2 and unpack_from('<H', data, 19)[0] != 0:
+        return None
     d = unpack_dict(_POS_FMT, _POS_FIELDS, data)
 
     # v10-only: walk the trailer GPS SV block for the PRN list + residuals,

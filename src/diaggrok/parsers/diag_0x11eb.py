@@ -41,8 +41,14 @@ decoder does.
 emits the unified DPL form and never the per-direction form (0 records across
 2,071 scanned captures).
 
-``counter`` is the u24 at +4. A ``u32`` read at +4 would straddle the counter
-and the +7 flag byte, so there is no ``config_word`` field.
+``packet_seq`` is the u16 packet sequence number at +4, ``segment`` the u8
+at +6, and +7 == 0x80 marks a packet's last segment (diaggrok v6): a packet
+over 256 bytes is logged as N records of one packet_seq,
+segments 0..N-1. v5 and earlier read a u24 ``counter`` at +4, folding the
+segment index in (seq + 65536 * segment); v6 renames it so a stale consumer
+fails loudly. Reassembling by (version, direction, packet_seq) yields 45,286 / 45,394 multi-segment packets whose concatenated body
+satisfies the exact IP length arithmetic. Full evidence: ``_dpl_helpers``
+"Segmentation". Only single-segment packets are IP-decoded per record.
 
 ASCII content: the canonical ``LOG_DATA_PROTOCOL_LOGGING_C`` name fits the
 observation — this code logs protocol-services data payloads, and on a
@@ -101,7 +107,7 @@ class Diag0x11EB(DplRecord):
         "header + verbatim IP packet; byte +3 carries the TX/RX direction "
         "that 0x1574/0x1575 split into separate codes"
     ),
-    version=5,
+    version=6,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -126,8 +132,8 @@ class Diag0x11EB(DplRecord):
     # SIP/IMS text (REGISTER sip:..., IMSI-derived IMS
     # public identity) still stands for the non-IP payload kinds.
     ascii_kinds=("config-token", "identifier"),
-    fields_identified=6,
-    fields_parsed=6,
+    fields_identified=7,
+    fields_parsed=7,
     field_invariants={
         "version": {"enum": list(DPL_VERSIONS_OBSERVED)},
     },

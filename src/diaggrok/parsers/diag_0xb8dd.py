@@ -14,9 +14,24 @@ is rejected (None) and a throttled WARN names the size.
 Common header:
     [0]      u8   version
     [2]      u8   hdr_b2 — 0x00 on v0x07, 0x03 on v0x06 (raw)
-    [4:6]    u16  SFN (bits 0..9) | slot << 10. SFN == the firmware's own
-                  ``RX_IU_TIME_UPDATE … sysframe`` F3 print: RXM-G1 v0x07
-                  339/790 exact, RM520N v0x06 32/195, shifted control 0.
+    [4:6]    u16  bits 0..9 SFN; bits 10..15 ``sfn_word_hi6`` (raw). SFN == the
+                  firmware's own ``RX_IU_TIME_UPDATE … sysframe`` F3 print:
+                  RXM-G1 v0x07 339/790 exact, RM520N v0x06 32/195, shifted
+                  control 0. The six bits above it are NOT a slot index; the
+                  v5 Kaitai layout audit refuted it: a per-capture
+                  histogram over 13,400
+                  records / 8 modems reads {0, 5} on the RXM-G1, the RM520N-GL
+                  and the FT980m FR2 mmWave camp (a 120 kHz-SCS slot index
+                  would sweep 0..79 there), {16, 32} on the EM9190 (lone bits
+                  14 / 15), 16 on the RM500Q-AE, {16, 20} on the M2000,
+                  {0, 16, 32, 48} on the LV55, {32, 37} on the R500L5 and 37
+                  (= 32 + 5) on the M3100 - set {0, 5, 16, 20, 32, 37, 48},
+                  bits 14..15 plus a small low field. They behave as a flag /
+                  record-kind field: on the
+                  RM520N the 5 / 0 split selects which of u32@8 / u32@12 is
+                  populated (105 / 90), on the FT980m which value u32@156
+                  takes (1162 / 876). F3 is silent on them, so they are exposed
+                  raw and un-named (the 0x1807 marker_a/marker_b rule).
     [6:8]    u16  raw. NOT the serving PCI: unlike 0xB8D8's u16@6 it never
                   matches 0xB97F's serving PCI above noise (4 modems).
 
@@ -124,7 +139,7 @@ class Diag0xB8DD:
     version: int
     hdr_b2: int
     sfn: int
-    slot: int
+    sfn_word_hi6: int  # bits 10..15 of u16@4, raw (was mis-modelled as `slot` in v3/v4)
     hdr_word6: int
     payload_size: int
     nr_arfcn: int
@@ -142,7 +157,7 @@ class Diag0xB8DD:
             "version": self.version,
             "hdr_b2": self.hdr_b2,
             "sfn": self.sfn,
-            "slot": self.slot,
+            "sfn_word_hi6": self.sfn_word_hi6,
             "hdr_word6": self.hdr_word6,
             "payload_size": self.payload_size,
             "nr_arfcn": self.nr_arfcn,
@@ -159,14 +174,19 @@ class Diag0xB8DD:
     0xB8DD,
     name="0xB8DD",
     description=(
-        "0xB8DD — NR5G LL1 FW Serving FTL: SFN/slot, per-chain FTL SNR (== 0xB8D8), "
+        "0xB8DD — NR5G LL1 FW Serving FTL: SFN, per-chain FTL SNR (== 0xB8D8), "
         "XO frequency error Q45, NR-ARFCN, RF kHz (v0x07); F3-grounded v0x06/v0x07"
     ),
-    version=4,
+    version=5,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(
+        "v5: `slot` (u16@4 >> 10) replaced by the raw `sfn_word_hi6`: the value "
+        "is {0, 5} on 3 modems incl. an FR2 mmWave camp, {16, 32} on the EM9190, "
+        "20 on the M2000, 48 on the LV55 and 37 on the M3100 (8 modems) - a flag / "
+        "record-kind field, not a slot index "
+        "(the Kaitai layout audit). "
         "v4: exact length per version; any other size is rejected (None + WARN), "
         "no header-only record. v3: v0x07 544 B (SDX55) + v0x06 588 B "
         "(SDX62/SDX65) body decode. sfn == F3 RX_IU_TIME_UPDATE sysframe; "
@@ -220,7 +240,7 @@ def parse_0xb8dd(log_time: int, data: bytes) -> Diag0xB8DD | None:
         version=version,
         hdr_b2=data[2],
         sfn=word4 & 0x3FF,
-        slot=word4 >> 10,
+        sfn_word_hi6=word4 >> 10,
         hdr_word6=word6,
         payload_size=len(data),
         nr_arfcn=nr_arfcn,

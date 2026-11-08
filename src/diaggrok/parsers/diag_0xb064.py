@@ -14,14 +14,18 @@ through SDX62 RM520N-GL / EM9291). The modern DL entry-list versions
     @2   2B   hdr_raw            raw
     per subpacket:
     +0   u8   subpacket_id       0x08 (UL transport block)
-    +1   u8   subpacket_version  1 (MDM9x07/MDM9x30/MDM9x50), 2 (SDX20/SDX24/MDM9250 MC7411/SDX55), 3 (SDX62/SDX65)
+    +1   u8   subpacket_version  1 (MDM9x07/MDM9x30/MDM9x50), 2 (SDX20/SDX24/MDM9250 MC7411/SDX55), 3 (SDX62/SDX65),
+                                 5 (Orbic R562L5), 7 (SDX72 RG650V-NA), 8 (Foxconn T99W640)
     +2   u16  subpacket_size     includes this 4-byte header
     +4   u8   num_samples
     then num_samples packed samples, then 0..3 alignment bytes to the subpacket end.
     A subpacket overrunning the record, or a sample overrunning its subpacket,
     returns None (registry WARN) instead of a short list.
 
-    sample (12 B + mac_hdr; subpacket_version >= 2 prefixes u8 sub_id_raw, u8 cell_id_raw):
+    sample (12 B + mac_hdr), after a per-version prefix:
+      v1          none
+      v2 v3 v5 v8 u8 sub_id_raw, u8 cell_id_raw  (v5 / v8: 01 00 on every sample)
+      v7          u8 prefix_raw                  (00 on every sample; unnamed, no oracle)
       u8  harq_id
       u8  rnti_type           0 C-RNTI, 3 RA-RNTI (the RAR-granted Msg3)
       u16 timing              sfn bits 4-15, subframe bits 0-3
@@ -88,7 +92,13 @@ in any capture. That Msg3 is in 0xB062, which SCAT reads it from.
   SDX20/MDM9250 (X16) captures (TDD or carrier-aggregation, not resolved).
   sver 1 holds it at a constant offset of 4 on most captures: there the
   timing is the PDCCH grant subframe, n, of a TB sent at n+4.
-* **Raw:** sub_id_raw (1; 0 on SWI9X50 Sierra builds), cell_id_raw (0),
+* **sp08 v5 / v7 / v8, no F3 or 0x60 oracle:** every bearing
+  capture walked (v5: 1 R562L5 capture, 10 samples; v7: 2 RG650V-NA, 41,465;
+  v8: 4 T99W640, 213). Each subpacket frames with 0..3 zero alignment bytes,
+  and the tbs arithmetic, rlc_pdus == SDU subheaders, bsr_trig <-> BSR CE and
+  harq_id == (10*sfn + subframe) mod 8 (offset 0, as sver 3) hold on every
+  sample. A 2 B prefix on v7 frames 0 of 19 records on the smaller capture.
+* **Raw:** prefix_raw (v7), sub_id_raw (1; 0 on SWI9X50 Sierra builds), cell_id_raw (0),
   bsr_event_raw (0-3), bsr_trig 1/2/5 (~570 samples), hdr_raw.
 
 Log name: LOG_LTE_MAC_UL_TRANSPORT_BLOCK
@@ -103,6 +113,14 @@ from typing import Any
 from diaggrok.registry import register
 
 _B064_VERSION_OBSERVED = 0x01
+
+#: Sample prefix by UL-TB subpacket version: the bytes before harq_id.
+#: v1 none; v2 / v3 / v5 / v8 u8 sub_id_raw + u8 cell_id_raw (01 00 on every
+#: v5 / v8 corpus sample, the v3 values); v7 (SDX72) one raw byte, prefix_raw
+#: (00 on 41,465 / 41,465; no oracle says which of the two it is).
+_SAMPLE_PREFIX = {1: (), 2: ("sub_id_raw", "cell_id_raw"), 3: ("sub_id_raw", "cell_id_raw"),
+                  5: ("sub_id_raw", "cell_id_raw"), 7: ("prefix_raw",),
+                  8: ("sub_id_raw", "cell_id_raw")}
 
 #: Sample rnti_type, the 0xB063 enum (grounded: see module docstring).
 RNTI_TYPES = {0: "C-RNTI", 3: "RA-RNTI"}
@@ -207,11 +225,12 @@ class Diag0xB064:
 
 def _sample(body: bytes, o: int, sver: int) -> tuple[dict[str, Any], int] | None:
     s: dict[str, Any] = {}
-    if sver >= 2:
-        if o + 2 > len(body):
-            return None
-        s["sub_id_raw"], s["cell_id_raw"] = body[o], body[o + 1]
-        o += 2
+    prefix = _SAMPLE_PREFIX[sver]
+    if o + len(prefix) > len(body):
+        return None
+    for name in prefix:
+        s[name] = body[o]
+        o += 1
     if o + 12 > len(body):
         return None
     harq_id, rnti_type = body[o], body[o + 1]
@@ -261,7 +280,7 @@ def _parse_subpackets(data: bytes) -> tuple[list[dict[str, Any]], int] | None:
             "align_raw": b"",
         }
         o = 1
-        if sid == 0x08 and sver in (1, 2, 3):
+        if sid == 0x08 and sver in _SAMPLE_PREFIX:
             for _ in range(body[0]):
                 r = _sample(body, o, sver)
                 if r is None:
@@ -278,7 +297,7 @@ def _parse_subpackets(data: bytes) -> tuple[list[dict[str, Any]], int] | None:
     0xB064,
     name="0xB064",
     description="0xB064 — LTE MAC UL Transport Block: per-TB HARQ id, RNTI type (C-RNTI / RA-RNTI Msg3), SFN/subframe, grant size, RLC PDU count, padding, BSR trigger, UL-SCH MAC subheaders + CEs (BSR, PHR, C-RNTI, DC-PHR)",
-    version=5,
+    version=6,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -308,9 +327,10 @@ def _parse_subpackets(data: bytes) -> tuple[list[dict[str, Any]], int] | None:
         # The body layout is picked PER SUBPACKET: the UL-TB subpacket
         # 0x08 is v1 (MDM9x07/9x30/9x50, 12 B sample), v2 (SDX20..SDX55) or v3
         # (SDX62/SDX65), both +2 B sub_id/cell_id prefix. Pinned so an unseen
-        # subpacket version is loud.
+        # subpacket version is loud. v5 (R562L5) / v8 (T99W640) are the v3
+        # sample; v7 (SDX72 RG650V-NA) has a 1 B prefix.
         "subpackets[].subpacket_id": {"enum": [0x08]},
-        "subpackets[].subpacket_version": {"enum": [1, 2, 3]},
+        "subpackets[].subpacket_version": {"enum": [1, 2, 3, 5, 7, 8]},
     },
     # F3-sweep layout axis (list form): the unit of F3 work is
     # (0xB064, v0x01, sp08.vN).

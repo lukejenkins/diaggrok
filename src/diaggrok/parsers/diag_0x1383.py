@@ -118,6 +118,18 @@ v0x05 (MC7455, 40 records / 2 captures): structure only — same [0:87]
 layout (DOP identity 2/2, leap 18 under bit 0x04 11/11). No co-temporal
 NMEA or F3 in either capture.
 
+## Raw tails (v6, the Kaitai audit)
+
+`tail_61` [61:75] and `tail_raw` carry live bytes on the committed fixtures:
+tail_61 [62:66] / [66:70] differ by chipset, and v0x08 [95:107] / [138:142]
+vary per record. F3 is silent on them (the PD / TM sites that fire 1:1 label
+only the time and velocity validity; 0x60 event 3204 labels no field), so they
+stay raw, not split into invented named words. Until v5 they were on the
+dataclass but missing from `to_dict()`, so every JSON consumer lost them; v6
+emits both as hex (the 0x1C8F `name_buffer_residue` convention). An
+independent Kaitai layout of all three versions diffs both against this
+parser.
+
 ## Superseded claims
 
 * "byte 0 = entry_count, version_less" — refuted: three
@@ -272,6 +284,9 @@ class Diag0x1383:
             'vdop': dop(self.vdop_x10),
             'tdop': dop(self.tdop_x10),
             'gdop': dop(self.gdop_x10),
+            # v6: raw, not named — live on real records, F3-silent.
+            'tail_61': self.tail_61.hex(),
+            'tail_raw': self.tail_raw.hex(),
             'body_reserved_zeros_ok': self.body_reserved_zeros_ok,
             'payload_size': self.payload_size,
         }
@@ -297,7 +312,7 @@ def _reserved_zeros_ok(data: bytes) -> bool | None:
         "metre uncertainties, altitude, heading, speed, GPS week/TOW, "
         "leap seconds, H/P/V(/T/G) DOP, PDSM client_id."
     ),
-    version=5,
+    version=6,
     author="Luke Jenkins", author_url="https://github.com/lukejenkins",
     source_type="re",
     source_detail=(

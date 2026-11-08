@@ -21,7 +21,10 @@ Layout (v0x02, the sole version; fixed 19 B; 7,267 records / 336 captures /
     [15:19]  u32   m_tmsi           LITTLE-endian (wire GUTI is big-endian)
 
 When ``guti_valid == 0`` bytes [8:19] are 0xFF fill and the GUTI fields are
-``None``. The GUTI survives deregistration (it is kept in the USIM), so a
+``None``. The corpus sidecars agree: guti_valid is 0 in 5,436 of 11,029
+records, and every offset 8..18 is 0xFF in at least those 5,436.
+``guti_plmn_raw`` carries bytes [9:12] unconditionally, so a PLMN that does
+not TBCD-decode still keeps its bytes. The GUTI survives deregistration (it is kept in the USIM), so a
 DEREGISTERED record may still carry ``guti_valid == 1``.
 
 Grounding (three chipsets, two PLMNs):
@@ -161,6 +164,7 @@ class Diag0xB0EE:
     plmn: dict[str, str] | None
     guti_valid: int
     guti_ue_id_type: int
+    guti_plmn_raw: bytes
     guti_plmn: dict[str, str] | None
     mme_group_id: int | None
     mme_code: int | None
@@ -180,6 +184,7 @@ class Diag0xB0EE:
             "plmn": self.plmn,
             "guti_valid": self.guti_valid,
             "guti_ue_id_type": self.guti_ue_id_type,
+            "guti_plmn_hex": self.guti_plmn_raw.hex(),
             "guti_plmn": self.guti_plmn,
             "mme_group_id": self.mme_group_id,
             "mme_code": self.mme_code,
@@ -197,7 +202,7 @@ class Diag0xB0EE:
         "corpus-checked), registered PLMN, and the UE GUTI (PLMN / MMEGI / "
         "MMEC / M-TMSI, grounded 4/4 against the NAS OTA EPS-mobile-identity IE)"
     ),
-    version=4,
+    version=5,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -215,7 +220,8 @@ class Diag0xB0EE:
         "FN990B AT#LTEDS table; substate corpus check over 157 captures: all "
         "in range, REG_INIT exactly {0,1}, pre-Attach DEREGISTERED substate "
         "7/4/2 (252/257), never NO_IMSI. Version and payload size are gated "
-        "(v0x02, 19 B)."
+        "(v0x02, 19 B). v5: guti_plmn_raw (bytes 9..11) is exposed beside "
+        "the decoded guti_plmn, as plmn_raw is beside plmn."
     ),
     source_url="",
     issues=(),
@@ -251,6 +257,7 @@ def parse_0xb0ee(log_time: int, data: bytes) -> Diag0xB0EE | None:
         plmn=_plmn(data[4:7]),
         guti_valid=guti_valid,
         guti_ue_id_type=guti_ue_id_type,
+        guti_plmn_raw=bytes(data[9:12]),
         guti_plmn=_plmn(data[9:12]) if has_guti else None,
         mme_group_id=unpack_from("<H", data, 12)[0] if has_guti else None,
         mme_code=data[14] if has_guti else None,

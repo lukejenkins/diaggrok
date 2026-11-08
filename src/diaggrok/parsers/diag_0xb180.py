@@ -89,10 +89,30 @@ firmware the blocks are **measured** cells and can include the serving cell. Its
 `ML1 ASDiv: Filtered RSRP0` print, which comes within ~9 ms: 183 of 209 blocks fall within 3 dB, and the difference is centred near 0. That corroborates the scale but is not a 1:1 ground: RSRP0 is a
 filtered rx0 value.
 
-#### v0x04 grounding: in-capture 0xB0C0 (no F3 plane on MDM9200)
+#### v0x04 byte 1 = 0x00 with 32-byte blocks (BandLuxe C505) — size-picked stride
 
-The MC7700 / SWI9200X predates the QSH / QSR4 F3 plane, so no F3 oracle exists
-for v0x04. The EARFCN is instead grounded on the **co-temporal 0xB0C0 (LTE RRC
+The BandLuxe C505 (MDM9200, `QC_0_00016749_0_001_0030`) keeps the MC7700 header
+tag `04 00 00 00` but sizes `8 + N x 32` (40/72/104 B). Each 32B block is the
+MC7700 28B block (w0..w6: w0[9:20] = const 0x640, w4 = 0, w5 == w6, the pair
+copies all hold) plus a 4B w7 that is uninitialised memory on the last block
+(`dead00`, ASCII `LTE`, ...). Byte 1 cannot tell 28B from 32B, so the **size**
+picks the stride; the two collide only at 232 B (8 x 28 = 7 x 32), which drops
+with a WARN instead of guessing. The count byte @6 differs from the T77W595 form:
+bits [7:6] count **populated** blocks mod 4 (`0x07`/`0x08` none, `0x47`/`0x48`
+one) on every C505 record, so that is the gate.
+
+**F3-grounded (PCI).** A stationary C505 correlation capture (Verizon B4, EARFCN 2050 == `$BREARFCN`,
+serving PCI 221) carries plaintext `lte_ml1_cdb.c` `CDB get status [ LTE: pci %d
+fcn 2050 ]` prints. All 19 populated blocks' PCIs match a same-PCI CDB print
+within **<= 6 ms**; the shifted-PCI (+7) null matches **0/19** even at 20 s. The
+serving PCI never appears in a block. RSRP -112..-120 dBm and RSRQ -18.6..-26.8 dB
+are plausible weak neighbours (the build prints no `Ngbr Cell` RSRP line, so the
+scales remain a structural transfer).
+
+#### v0x04 grounding: in-capture 0xB0C0 (no F3 plane on MC7700)
+
+The MC7700 / SWI9200X capture set carries no usable F3 plane, so no F3 oracle exists
+for the MC7700 v0x04 form. The EARFCN is instead grounded on the **co-temporal 0xB0C0 (LTE RRC
 Serving Cell Info)** record: across all 7 v0x04 captures that also carry 0xB0C0,
 the 0xB180 v0x04 `u16@4` EARFCN equals the 0xB0C0 serving EARFCN in **100 %** of
 captures — 2175 in five captures, 2300 in one. On the 2300 capture the sibling
@@ -188,9 +208,11 @@ _STRUCT_VERSION = 0x05
 _HEADER_LEN_V4 = 8
 _ENTRY_STRIDE_V4 = 28
 _STRUCT_VERSION_V4 = 0x04
-# v0x04 sub-layout tag (byte 1) -> block stride. 0x00 = MC7700 28B blocks;
-# 0x01 = Foxconn T77W595 32B (v0x05-shaped) blocks.
-_V4_STRIDE_BY_TAG = {0x00: _ENTRY_STRIDE_V4, 0x01: _ENTRY_STRIDE}
+# v0x04 sub-layout tag (byte 1). 0x01 = Foxconn T77W595 32B (v0x05-shaped)
+# blocks. 0x00 = MC7700-shaped blocks at a SIZE-picked stride: 28B (Sierra
+# MC7700 / SWI9200X) or 32B (BandLuxe C505, the 28B block + a raw w7).
+_V4_TAG_MC7700 = 0x00
+_V4_TAG_T77W595 = 0x01
 
 logger = logging.getLogger(__name__)
 _LAYOUT_ALARMS: Counter = Counter()
@@ -215,7 +237,7 @@ def _bits(word: int, lo: int, width: int) -> int:
     return (word >> lo) & ((1 << width) - 1)
 
 
-def _decode_block(block: bytes) -> dict[str, Any]:
+def _decode_block(block: bytes, rssi: bool) -> dict[str, Any]:
     """Decode one neighbour block (F3-grounded, see module docstring).
 
     Shared word layout (v0x05 32 B = 8 u32 words; v0x04 28 B = words 0..6):
@@ -230,12 +252,15 @@ def _decode_block(block: bytes) -> dict[str, Any]:
       w5[11:30] ttl_ref_time_ant0    GROUND (F3 ``Ngbr meas req … ttl_ref_time ant0``)
       w6[11:30] ttl_ref_time_ant1    GROUND (F3 ``… ant1``)
       w5/w6[0:11], [30:32]           RAW (0x7FF / 2-bit flag)
-      w7 (32B blocks only)           RAW trailer (low byte 0x45/0xC5; upper bytes unstable)
+      w7 (32B blocks only)           RAW trailer (v0x05 / T77W595: low byte 0x45/0xC5;
+                                     C505: uninitialised memory on the last block)
+    ``rssi`` is False for MC7700-shaped blocks (28B MC7700 and 32B C505), whose
+    w0[9:20] is a constant 0x640 -> surfaced as ``w0_mid_raw``, never ``rssi_dbm``.
     An all-zero leading 24 bytes marks an unpopulated (padding) slot -> ``populated=False``.
     """
     n = len(block) // 4
     w = unpack_from("<%dI" % n, block, 0)
-    populated = any(block[:24])
+    populated = _populated(block)
     out: dict[str, Any] = {"populated": populated}
     if not populated:
         return out
@@ -251,12 +276,17 @@ def _decode_block(block: bytes) -> dict[str, Any]:
         w5_flags_raw=(_bits(w[5], 0, 11), _bits(w[5], 30, 2)),
         w6_flags_raw=(_bits(w[6], 0, 11), _bits(w[6], 30, 2)),
     )
-    if n == 8:  # 32B block: v0x05, and v0x04 sub-layout 0x01 (T77W595)
+    if rssi:  # v0x05, and v0x04 sub-layout 0x01 (T77W595)
         out["rssi_dbm"] = _bits(w[0], 9, 11) / 16 - 110
-        out["w7_raw"] = w[7]
-    else:  # 28B MC7700 v0x04: bits 9..19 sit at a constant 0x640 — not RSSI-shaped
+    else:  # MC7700-shaped v0x04: bits 9..19 sit at a constant 0x640 — not RSSI-shaped
         out["w0_mid_raw"] = _bits(w[0], 9, 11)
+    if n == 8:  # 32B block
+        out["w7_raw"] = w[7]
     return out
+
+
+def _populated(block: bytes) -> bool:
+    return any(block[:24])
 
 
 @dataclass
@@ -311,8 +341,8 @@ class Diag0xB180:
     # 0xB0C0 SIB1 exactly like siblings 0xB192/0xB195 (v0x05 only).
     wigle_direct=True,
     wigle_roles=("signal", "pci-earfcn-bridge", "rat-context"),
-    description="0xB180 — LTE ML1 Neighbor Measurements packet (per-neighbour pci/rsrp/rsrq/rssi blocks, F3-grounded; v0x05: 12B header + N×32B blocks; v0x04: 8B header + N×28B blocks (MC7700, byte 1 = 0x00) or N×32B blocks (T77W595, byte 1 = 0x01), u16 earfcn)",
-    version=9,
+    description="0xB180 — LTE ML1 Neighbor Measurements packet (per-neighbour pci/rsrp/rsrq/rssi blocks, F3-grounded; v0x05: 12B header + N×32B blocks; v0x04: 8B header + N×28B blocks (MC7700, byte 1 = 0x00), N×32B MC7700-shaped blocks (C505, byte 1 = 0x00, size-picked) or N×32B blocks (T77W595, byte 1 = 0x01), u16 earfcn)",
+    version=10,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -323,7 +353,10 @@ class Diag0xB180:
         "SWI9200X, 276 records / 9 captures): 8B header with a u16@4 EARFCN + "
         "N×28B blocks; a second v0x04 sub-layout (byte 1 = 0x01, Foxconn "
         "T77W595, ~920 records) has the same 8B header with v0x05-shaped 32B "
-        "blocks and the N-mod-4 count bits at byte 6. Each block is one NEIGHBOUR cell: pci w0[0:9], rssi "
+        "blocks and the N-mod-4 count bits at byte 6; a third (byte 1 = 0x00 at "
+        "8 + N×32, BandLuxe C505 MDM9200) is the 28B MC7700 block + a raw w7, "
+        "its PCI F3-grounded 19/19 within 6 ms on lte_ml1_cdb.c 'CDB get status "
+        "[ LTE: pci %d ]' (PCI+7 null 0/19). Each block is one NEIGHBOUR cell: pci w0[0:9], rssi "
         "w0[9:20]/16-110, rsrp w0[20:32]/16-180, rsrq w2[12:22]/16-30, "
         "ttl_ref_time w5/w6[11:30]; on v0x05 these are F3-grounded 1:1 on the "
         "same diag tick against lte_ml1_md.c 'Ngbr Cell' prints on MC7411 "
@@ -366,24 +399,54 @@ def parse_0xb180(log_time: int, data: bytes) -> Diag0xB180 | None:
     # of byte 8; a disagreement means whole blocks are missing -> None.
     # v0x04 byte 1 selects the block stride (28B MC7700 / 32B T77W595); the
     # 32B form carries the same N-mod-4 count bits as v0x05, at byte 6.
+    # v0x04 byte 1 = 0x00 (MC7700-shaped blocks) picks its stride from the
+    # size: 8 + N x 28 (MC7700) or 8 + N x 32 (C505). The two collide only at
+    # 232 B (N = 8 / 7), which drops loudly rather than guess. The C505 count
+    # byte's bits [7:6] count POPULATED blocks (mod 4), checked below.
+    # count_rule: "n" = bits [7:6] == N mod 4; "populated" = == populated mod 4.
+    count_at: int | None = None
+    count_rule = "n"
+    rssi = True
     if version == _STRUCT_VERSION:
         hdr_len, stride, count_at = _HEADER_LEN, _ENTRY_STRIDE, 8
     else:
-        if len(data) < 2 or data[1] not in _V4_STRIDE_BY_TAG:
-            tag = "missing" if len(data) < 2 else f"0x{data[1]:02X}"
-            _layout_alarm(data, f"unknown v0x04 sub-layout tag {tag} (byte 1; "
-                                "known 0x00 = 28B blocks, 0x01 = 32B blocks)")
+        hdr_len = _HEADER_LEN_V4
+        tag = data[1] if len(data) > 1 else None
+        if tag == _V4_TAG_T77W595:
+            stride, count_at = _ENTRY_STRIDE, 6
+        elif tag == _V4_TAG_MC7700:
+            rssi = False
+            body = len(data) - hdr_len
+            fits = [s for s in (_ENTRY_STRIDE_V4, _ENTRY_STRIDE)
+                    if body >= 0 and body % s == 0]
+            if body > 0 and len(fits) == 2:
+                _layout_alarm(data, "v0x04 byte 1 = 0x00 size is ambiguous: tiles as both "
+                                    f"8 + {body // 28} x 28B (MC7700) and 8 + {body // 32} x 32B (C505)")
+                return None
+            stride = fits[0] if fits else _ENTRY_STRIDE_V4
+            if stride == _ENTRY_STRIDE:
+                count_at, count_rule = 6, "populated"
+        else:
+            shown = "missing" if tag is None else f"0x{tag:02X}"
+            _layout_alarm(data, f"unknown v0x04 sub-layout tag {shown} (byte 1; known 0x00 = "
+                                "28B or 32B MC7700-shaped blocks, 0x01 = 32B blocks)")
             return None
-        hdr_len, stride = _HEADER_LEN_V4, _V4_STRIDE_BY_TAG[data[1]]
-        count_at = 6 if stride == _ENTRY_STRIDE else None
     if len(data) < hdr_len or (len(data) - hdr_len) % stride:
-        _layout_alarm(data, f"len is not {hdr_len} + N x {stride}B blocks (truncated or unknown size)")
+        strides = "28B or 32B" if not rssi else f"{stride}B"
+        _layout_alarm(data, f"len is not {hdr_len} + N x {strides} blocks (truncated or unknown size)")
         return None
     num_cells = (len(data) - hdr_len) // stride
-    if count_at is not None and (data[count_at] >> 6) != num_cells % 4:
-        _layout_alarm(data, f"count byte @{count_at} = 0x{data[count_at]:02X} disagrees "
-                            f"with N={num_cells} (bits [7:6] != N mod 4)")
-        return None
+    if count_at is not None:
+        if count_rule == "n":
+            want, what = num_cells, f"N={num_cells}"
+        else:
+            want = sum(_populated(data[hdr_len + stride * k: hdr_len + stride * (k + 1)])
+                       for k in range(num_cells))
+            what = f"{want} populated of N={num_cells} blocks"
+        if (data[count_at] >> 6) != want % 4:
+            _layout_alarm(data, f"count byte @{count_at} = 0x{data[count_at]:02X} disagrees "
+                                f"with {what} (bits [7:6] mod 4)")
+            return None
 
     # EARFCN — version-specific width. v0x05 (modern silicon) reads the
     # DIAG×AT-validated u32@4; v0x04 (older MDM9200 / Sierra MC7700 packing)
@@ -410,7 +473,7 @@ def parse_0xb180(log_time: int, data: bytes) -> Diag0xB180 | None:
         for k in range(num_cells)
     ]
 
-    neighbors = [_decode_block(c) for c in cells]
+    neighbors = [_decode_block(c, rssi) for c in cells]
 
     return Diag0xB180(
         log_time=log_time,

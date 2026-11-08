@@ -52,8 +52,10 @@ RM500Q / LV55 / FN980 / M2000 / T99W175): a flat TB-entry list.
       length L), byte 3 = first CE payload byte (CE) / b3_raw (SDU)
       MAC CE: ce_payload = bytes 3 .. 3+L (L <= 9; UE Contention Resolution
       Identity = 6 B, Timing Advance Command = 1 B)
-      SDU: bytes 4-11 el_raw; byte 8 != 0 => an RLC extension follows of
-      8*byte9 B plus 0..byte9 extra 4-byte words (rlc_ext_raw, raw).
+      SDU: bytes 4-11 el_raw; byte 8 != 0 => an RLC extension follows: n = byte9
+      item words, then T trailer words, 4*n + 4*T B (rlc_ext_raw, raw). The
+      primary rule allows T in [n, 2n]; a relaxed fallback allows T in
+      [1, min(3, 2n)] (see below).
     Unused element / header bytes are often uninitialised firmware memory; they
     are exposed raw, never named.
 
@@ -62,12 +64,24 @@ flag in the group header predicts the extra word most, not all, of the time), so
 entries are framed by constraint: every entry header must be valid (subframe
 < 10, <= 16 elements, low nibble of h3 0) and the record must end exactly. The
 strict pass also requires h3 == 0. A record with more than one valid framing
-takes the one with the fewest extra words and sets `framing_ambiguous`. A record
-with no valid framing returns None (registry WARN); about 3 of ~4,000 sampled
-v0x32 records hit this (one truncated mid-entry, one RLC group with fewer item
-words than group headers). Likewise a v0x01 subpacket or sample that overruns
-the record / its subpacket returns None instead of a silently short subpacket
-list.
+takes the one with the fewest extra words and sets `framing_ambiguous`.
+
+**Relaxed fallback, v6**. Only when neither primary pass frames the
+record, two more passes allow T in [1, min(3, 2n)] and require every entry's
+harq_id < 8; such a record sets `framing_relaxed`. Orbic R500L5 (SDX55, V2.0.3.9
+and V2.0.4.3) v0x31 and RG650V-NA (SDX72) v0x32 log n = 3..5 item words with
+only 2..3 trailer words (T < n), which the primary rule cannot frame; the census
+counted 111 v0x31 + 11 v0x32 such drops. Sample (84 captures, 14,387 records):
+24 drop -> parse, all unambiguous, 14,363 unchanged, 0 regressions; on the 536
+rescued entries sum(element L) <= tbs 536/536 (primary-framed control
+43,672/43,679). The harq guard rejects a byte-count-only fit on one RG650V-NA
+record (harq 13, L 3,184 > tbs 44) that the relaxed range alone accepted.
+
+A record with no valid framing still returns None. Every drop WARNs with its
+reason (1st, 10th, 100th ... per (version, len, reason)), naming the furthest
+entry a partial framing reached, or the search cap; a v0x01 subpacket or sample
+that overruns the record / its subpacket is a named drop, and a v0x01 subpacket
+with an unknown id / version is kept raw in align_raw but WARNed.
 
 ### Grounding
 
@@ -135,6 +149,8 @@ Also known as: LOG_LTE_MAC_DL_TRANSPORT_BLOCK, LTE MAC DL Transport Block
 """
 from __future__ import annotations
 
+import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from struct import unpack_from
 from typing import Any
@@ -142,6 +158,32 @@ from typing import Any
 from diaggrok.registry import register
 
 _B063_VERSIONS_OBSERVED = (0x01, 0x31, 0x32)
+
+logger = logging.getLogger(__name__)
+_LAYOUT_ALARMS: Counter = Counter()
+
+
+def _layout_alarm(data: bytes, why: str) -> None:
+    """WARN on a dropped or partly-walked record, naming its form and the reason.
+
+    The registry's own WARN fires once per (code, version), so a new size or a
+    framing failure inside an already-seen version would otherwise go unreported
+    . Logs the 1st, 10th, 100th, ... per (version, len, reason).
+    """
+    key = (data[0] if data else None, len(data), why)
+    _LAYOUT_ALARMS[key] += 1
+    n = _LAYOUT_ALARMS[key]
+    if str(n).rstrip("0") != "1":
+        return
+    logger.warning(
+        "diaggrok 0xB063 layout issue #%d: version=0x%02X len=%d head=%s — %s "
+        "", n, data[0] if data else 0, len(data),
+        bytes(data[:8]).hex(), why,
+    )
+
+
+class _StateCapExceeded(Exception):
+    """The constraint framer hit _MAX_STATES before finishing."""
 
 #: v0x01 sample rnti_type (grounded: see module docstring). 1 is unobserved.
 RNTI_TYPES = {0: "C-RNTI", 2: "P-RNTI", 3: "RA-RNTI", 4: "TC-RNTI", 5: "SI-RNTI"}
@@ -181,6 +223,7 @@ class Diag0xB063:
     hdr_word6_raw: int | None = None
     cell_stats_raw: bytes = b""
     framing_ambiguous: bool = False
+    framing_relaxed: bool = False
     unparsed_raw: bytes = b""
     payload_size: int = 0
 
@@ -197,6 +240,7 @@ class Diag0xB063:
             "hdr_word6_raw": self.hdr_word6_raw,
             "cell_stats_raw": self.cell_stats_raw,
             "framing_ambiguous": self.framing_ambiguous,
+            "framing_relaxed": self.framing_relaxed,
             "unparsed_raw": self.unparsed_raw,
             "payload_size": self.payload_size,
         }
@@ -243,18 +287,22 @@ def _v01_sample(body: bytes, o: int, sver: int) -> tuple[dict[str, Any], int] | 
     return s, o + hl
 
 
-def _parse_v01(data: bytes) -> tuple[list[dict[str, Any]], int] | None:
-    """Walk the declared subpackets; None when any declared subpacket or sample
-    does not fit (truncated -> loud None, never a silently short list)."""
+def _parse_v01(data: bytes) -> tuple[list[dict[str, Any]], int] | str:
+    """Walk the declared subpackets; a reason string when any declared
+    subpacket or sample does not fit (truncated -> loud drop, never a silently
+    short list). An unknown subpacket id / version is kept (raw in align_raw)
+    but WARNed, so a new sample layout is not silently swallowed."""
     subs: list[dict[str, Any]] = []
     off = 4
-    for _ in range(data[1]):
+    for i in range(data[1]):
         if off + 4 > len(data):
-            return None
+            return (f"v0x01 subpacket {i}/{data[1]} header @{off} overruns "
+                    f"the {len(data)} B record")
         sid, sver = data[off], data[off + 1]
         ssz = unpack_from("<H", data, off + 2)[0]
         if ssz < 5 or off + ssz > len(data):
-            return None
+            return (f"v0x01 subpacket {i}/{data[1]} (id 0x{sid:02X} v{sver}) "
+                    f"size {ssz} @{off} is < 5 or overruns the {len(data)} B record")
         body = data[off + 4:off + ssz]
         sp: dict[str, Any] = {
             "subpacket_id": sid,
@@ -266,12 +314,17 @@ def _parse_v01(data: bytes) -> tuple[list[dict[str, Any]], int] | None:
         }
         o = 1
         if sid == 0x07 and sver in (1, 2, 4):
-            for _ in range(body[0]):
+            for j in range(body[0]):
                 r = _v01_sample(body, o, sver)
                 if r is None:
-                    return None
+                    return (f"v0x01 subpacket {i} (id 0x07 v{sver}) sample "
+                            f"{j}/{body[0]} @{o} overruns its {ssz} B subpacket")
                 sp["samples"].append(r[0])
                 o = r[1]
+        else:
+            _layout_alarm(data, f"v0x01 subpacket {i} id 0x{sid:02X} v{sver} "
+                                f"({ssz} B) is not a known sample layout; kept "
+                                f"raw in align_raw")
         sp["align_raw"] = bytes(body[o:])
         subs.append(sp)
         off += ssz
@@ -280,27 +333,45 @@ def _parse_v01(data: bytes) -> tuple[list[dict[str, Any]], int] | None:
 
 # --- v0x31 / v0x32: TB entry list --------------------------------------------
 
-def _entry_hdr_ok(data: bytes, o: int, strict: bool) -> bool:
+def _entry_hdr_ok(data: bytes, o: int, strict: bool, relaxed: bool = False) -> bool:
     if o + _ENTRY_HDR > len(data):
         return False
     timing = unpack_from("<I", data, o + 8)[0]
     h3 = data[o + 15]
+    # The relaxed fallback is less trusted, so it also needs harq_id < 8 (the
+    # FDD HARQ process range): it keeps the fallback from accepting a framing
+    # that only fits the byte count; one RG650V-NA record did.
     return (((timing >> 10) & 0xF) < 10 and data[o + 13] <= 16
-            and (h3 == 0 if strict else (h3 & 0x0F) == 0))
+            and (h3 == 0 if strict else (h3 & 0x0F) == 0)
+            and (not relaxed or data[o + 12] >> 4 < 8))
 
 
-def _ext_choices(data: bytes, o: int) -> tuple[int, ...]:
-    """RLC extension lengths allowed after the element at `o` (0 = none)."""
+def _ext_choices(data: bytes, o: int, relaxed: bool = False) -> tuple[int, ...]:
+    """RLC extension lengths allowed after the element at `o` (0 = none).
+
+    The extension is n = byte9 item words then T trailer words (4·n + 4·T B).
+    The primary rule allows T in [n, 2n]. The relaxed fallback allows
+    T in [1, min(3, 2n)]: Orbic R500L5 (SDX55) v0x31 and RG650V-NA (SDX72)
+    v0x32 log n = 3..5 item words with only 2..3 trailer words, which the
+    primary rule cannot frame. T = 1..3 is every trailer the corpus attests.
+    """
     e = data[o:o + _ELEMENT]
     if e[0] & 1 or not e[8]:
         return (0,)
-    return tuple(8 * e[9] + 4 * j for j in range(e[9] + 1))
+    n = e[9]
+    if relaxed:
+        return tuple(4 * n + 4 * t for t in range(1, min(3, 2 * n) + 1))
+    return tuple(8 * n + 4 * j for j in range(n + 1))
 
 
-def _frame(data: bytes, base: int, n: int, strict: bool):
+def _frame(data: bytes, base: int, n: int, strict: bool, diag: dict | None = None,
+           relaxed: bool = False):
     """Constraint-frame n entries from `base` to the exact end of `data`.
 
     Returns (entries, ambiguous): entries = [(entry_off, [(el_off, ext_len), ...])].
+    With no framing, `diag['deepest']` (when given) is the furthest
+    (entry_idx, offset) any partial framing reached, for the drop WARN.
+    Raises _StateCapExceeded past _MAX_STATES.
     Iterative memoised DP over (offset, entry_idx, elements_left); every
     transition advances the offset or the entry index, so it terminates.
     """
@@ -312,14 +383,14 @@ def _frame(data: bytes, base: int, n: int, strict: bool):
         if m < 0:  # expecting the header of entry k
             if k == n:
                 return []
-            if not _entry_hdr_ok(data, o, strict):
+            if not _entry_hdr_ok(data, o, strict, relaxed):
                 return []
             return [(o + _ENTRY_HDR, k, data[o + 13])]
         if m == 0:
             return [(o, k + 1, -1)]
         if o + _ELEMENT > end:
             return []
-        return [(o + _ELEMENT + x, k, m - 1) for x in _ext_choices(data, o)]
+        return [(o + _ELEMENT + x, k, m - 1) for x in _ext_choices(data, o, relaxed)]
 
     def is_final(state):
         o, k, m = state
@@ -328,8 +399,8 @@ def _frame(data: bytes, base: int, n: int, strict: bool):
     start = (base, 0, -1)
     stack = [start]
     while stack:
-        if len(memo) > _MAX_STATES:  # pathological record: give up, keep it raw
-            return None, False
+        if len(memo) > _MAX_STATES:  # pathological record: give up (named drop)
+            raise _StateCapExceeded
         st = stack[-1]
         if st in memo:
             stack.pop()
@@ -342,6 +413,8 @@ def _frame(data: bytes, base: int, n: int, strict: bool):
         stack.pop()
         memo[st] = 1 if is_final(st) else min(2, sum(memo[s] for s in nxt))
     if memo.get(start, 0) == 0:
+        if diag is not None:
+            diag["deepest"] = max(((k, o) for o, k, _ in memo), default=(0, base))
         return None, False
     # Walk the first solution (succ order = fewest extra words first).
     entries: list[tuple[int, list[tuple[int, int]]]] = []
@@ -384,14 +457,28 @@ def _element(data: bytes, o: int, ext: int) -> dict[str, Any]:
 
 
 def _parse_entries(data: bytes, base: int, n: int):
-    """None when no framing of the declared n entries ends exactly at the record
-    end (a truncated / unframeable entry list is a loud None)."""
-    for strict in (True, False):
-        framed, amb = _frame(data, base, n, strict)
+    """A reason string when no framing of the declared n entries ends exactly
+    at the record end (a truncated / unframeable entry list is a loud drop)."""
+    diag: dict[str, Any] = {}
+    capped = False
+    # The relaxed passes run only when the primary rule frames nothing, so a
+    # record the primary rule frames is decoded exactly as before.
+    for relaxed, strict in ((False, True), (False, False), (True, True), (True, False)):
+        try:
+            framed, amb = _frame(data, base, n, strict, diag, relaxed)
+        except _StateCapExceeded:
+            capped = True
+            continue
         if framed is not None:
             break
     else:
-        return None
+        if capped:
+            return (f"v0x{data[0]:02X} entry framing of {n} entries gave up "
+                    f"after {_MAX_STATES} states")
+        k, o = diag.get("deepest", (0, base))
+        return (f"v0x{data[0]:02X} no framing of {n} declared entries ends at "
+                f"the record end; furthest partial framing reached entry {k} "
+                f"@{o} of {len(data)} B")
     out = []
     for eo, els in framed:
         tbs, word4, timing = unpack_from("<III", data, eo)
@@ -409,14 +496,14 @@ def _parse_entries(data: bytes, base: int, n: int):
             "h3_raw": h[3],
             "elements": [_element(data, o, x) for o, x in els],
         })
-    return out, amb, b""
+    return out, amb, relaxed
 
 
 @register(
     0xB063,
     name="0xB063",
     description="0xB063 — LTE MAC DL Transport Block: per-TB RNTI type, HARQ id, SFN/subframe, TBS, MAC subheader LCID/length, MAC CEs (contention resolution, TA), v0x01 TB head bytes",
-    version=5,
+    version=6,
     author="Luke Jenkins",
     author_url="https://github.com/lukejenkins",
     source_type="re",
@@ -430,11 +517,14 @@ def _parse_entries(data: bytes, base: int, n: int):
         "LTE_MAC_RRC_PCCH_DL_DATA_IND 69/69 + 0xB0C0 PCCH byte-join 69/69; SCAT "
         "MAC-LTE 9/9 (EG18-NA) + SI 6/6 (EM7565); RM520N-GL v0x32 46 Msg4s: CRI == "
         "Msg3 46/46, CCCH L == DL-CCCH len 46/46, F3 LTE_MAC_RRC_CCCH_DL_DATA_IND "
-        "1:1; LV55 v0x31 2/2; SCAT (lcid, L) 57,539/57,540 entries. Truncated "
-        "payloads return None (registry WARN) rather than a silently short "
-        "record: a v0x01 subpacket whose subpacket_size overruns the record, a "
-        "sample overrunning its subpacket, or a v0x31/v0x32 entry list with no "
-        "framing that ends at the record end."
+        "1:1; LV55 v0x31 2/2; SCAT (lcid, L) 57,539/57,540 entries. RLC "
+        "extension = n item words + T trailer words; primary T in [n, 2n], "
+        "relaxed fallback T in [1, min(3, 2n)] with harq_id < 8 (R500L5 v0x31, "
+        "RG650V-NA v0x32; framing_relaxed). Truncated payloads return None with "
+        "a reason-carrying WARN rather than a silently short record: a v0x01 "
+        "subpacket whose subpacket_size overruns the record, a sample "
+        "overrunning its subpacket, or a v0x31/v0x32 entry list with no framing "
+        "that ends at the record end."
     ),
     source_url="",
     issues=(),
@@ -456,9 +546,11 @@ def _parse_entries(data: bytes, base: int, n: int):
 )
 def parse_0xb063(log_time: int, data: bytes) -> Diag0xB063 | None:
     if len(data) < 4:
+        _layout_alarm(data, "payload shorter than the 4 B header")
         return None
     version = data[0]
     if version not in _B063_VERSIONS_OBSERVED:
+        _layout_alarm(data, "unknown version (known: 0x01, 0x31, 0x32)")
         return None
     rec = Diag0xB063(
         log_time=log_time,
@@ -470,24 +562,29 @@ def parse_0xb063(log_time: int, data: bytes) -> Diag0xB063 | None:
     if version == 0x01:
         rec.num_subpackets = data[1]
         walked = _parse_v01(data)
-        if walked is None:
+        if isinstance(walked, str):
+            _layout_alarm(data, walked)
             return None
         rec.subpackets, used = walked
         rec.unparsed_raw = bytes(data[used:])
         return rec
     if version == 0x32:
         if len(data) < 8:
+            _layout_alarm(data, "v0x32 shorter than its 8 B header")
             return None
         n, base = unpack_from("<I", data, 4)[0], 8
     else:
         if len(data) < _V31_ENTRIES_OFF:
+            _layout_alarm(data, f"v0x31 shorter than its {_V31_ENTRIES_OFF} B "
+                                f"header + cell_stats block")
             return None
         n, rec.hdr_word6_raw = unpack_from("<HH", data, 4)
         rec.cell_stats_raw = bytes(data[8:_V31_ENTRIES_OFF])
         base = _V31_ENTRIES_OFF
     rec.num_entries = n
     parsed = _parse_entries(data, base, n)
-    if parsed is None:
+    if isinstance(parsed, str):
+        _layout_alarm(data, parsed)
         return None
-    rec.entries, rec.framing_ambiguous, rec.unparsed_raw = parsed
+    rec.entries, rec.framing_ambiguous, rec.framing_relaxed = parsed
     return rec

@@ -56,9 +56,8 @@ every version; only the packing of the 16 B header differs
       [4:6]    earfcn u16 (pre-Rel-12 silicon: no 65536+ EARFCNs)
       [6]      bits 0-5 band_index, bit 6 tdd, bit 7 acq_failed (the low
                byte of the v0x03 header word); [7] zero
-      [8:12]   bits 0-19 raw (0x00421 const), bits 20-22 n_black
-               (CANDIDATE: 0 on every record), bits 23-25 n_pbch,
-               bits 26-30 n_cell
+      [8:12]   bits 0-19 raw (0x00421 const), bits 20-22 n_black,
+               bits 23-25 n_pbch, bits 26-30 n_cell, bit 31 zero
 
 Size = 16 + 4*n_black + 16*n_cell + 12*n_pbch held on 1897/1897 records from 5
 captures (3 versions, 5 chipsets); with the 12 B header, on all 6 v0x01
@@ -107,6 +106,18 @@ instead.
     On MDM9200 the selected-cell print carries two metric/SNR pairs,
     (+8, dB) and (+12, dB), so `word8_raw` is a second detection metric
     (CANDIDATE: PSS); v0x03+ leaves it zero. Band = EARFCN band (36.101) 6/6.
+  * v0x01 n_black. The 6 records above all have n_black 0. The C505 and
+    BandLuxe C525 (`QC_1_00013922`) setter-probe captures carry 18 v0x01
+    records with n_black 1-2 at bits 20-22, and every v0x01 record closes
+    the size formula exactly (none layout_ok=False). The
+    hash-only 0x92 print with args [_, band, earfcn, _, n, _, _] (the
+    `LTE_CPHY_ACQ_REQ … Band … earfcn … # black_cells` shape) equals n_black
+    37/37 in-window (13 non-zero) vs 16/37 on the attempt-1 baseline, and
+    each black PCI is a cell acquired on an earlier attempt on the EARFCN.
+  * Unnamed bits, corpus-wide (65,350 records of the sidecars; a 2,575-record
+    walk for the list fields): bytes 1-3 and v0x01 byte 7 zero; v0x03
+    count-word bits 8-31 and v0x10/v0x20 bits 11-31 zero; cell pci-word bits
+    10-15 zero. So the named fields plus body_raw lose nothing.
   * Not `# ant`: F3 printed 4 antennas while `info_raw` ranged 1-6.
 
 `band` is band_index+1. On v0x03 the index is 6 bits, and a 65+ band wraps
@@ -310,7 +321,9 @@ class Diag0xB176:
     source_detail=(
         "Body decoded on all four versions (byte 0 = 0x01 / 0x03 / 0x10 / 0x20, "
         "the sub-layout discriminator; v0x01 on MDM9200/MDM9625 has a 12 B "
-        "header with a u16 earfcn, F3-joined on all 6 corpus records). The 16 B header carries earfcn (u32@4), "
+        "header with a u16 earfcn, F3-joined on 6 corpus records; its n_black "
+        "at count-word bits 20-22 closes on 18 further C505 / C525 records, hash-only 0x92 "
+        "# black_cells 37/37 vs 16/37 baseline). The 16 B header carries earfcn (u32@4), "
         "band_index/tdd/acq_failed (header word) and n_black/n_cell/n_pbch (count "
         "word, packed differently on v0x03), followed by n_black u32 black-cell "
         "PCIs, n_cell 16 B detected cells and n_pbch 12 B PBCH decodes whose "

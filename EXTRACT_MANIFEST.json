@@ -28,6 +28,7 @@
     "src/diaggrok/parsers/_lte_pdcp_helpers.py",
     "src/diaggrok/parsers/_nas_l3.py",
     "src/diaggrok/parsers/_nr5g_nas_ota_helpers.py",
+    "src/diaggrok/parsers/_nr_acq_b9be_b9bf.py",
     "src/diaggrok/parsers/_pdsm_client_ids.py",
     "src/diaggrok/parsers/_short_form_4b.py",
     "src/diaggrok/parsers/_v0_tlv.py",
@@ -228,6 +229,7 @@
     "src/diaggrok/parsers/diag_0xb8fd.py",
     "src/diaggrok/parsers/diag_0xb8ff.py",
     "src/diaggrok/parsers/diag_0xb97f.py",
+    "src/diaggrok/parsers/diag_0xb9a6.py",
     "src/diaggrok/parsers/diag_0xb9b9.py",
     "src/diaggrok/parsers/gnss_helpers.py",
     "src/diaggrok/parsers/lte_nas_emm.py",
@@ -531,13 +533,14 @@
       "0xB8FD",
       "0xB8FF",
       "0xB97F",
+      "0xB9A6",
       "0xB9B9"
     ],
     "domains": [],
     "modem": null,
     "modem_mode": "intersect"
   },
-  "footprint_bytes": 4899766,
+  "footprint_bytes": 4979163,
   "generated_by": "diaggrok-extract 0.1.0",
   "modules": [
     "diaggrok._version",
@@ -552,6 +555,7 @@
     "diaggrok.parsers._lte_pdcp_helpers",
     "diaggrok.parsers._nas_l3",
     "diaggrok.parsers._nr5g_nas_ota_helpers",
+    "diaggrok.parsers._nr_acq_b9be_b9bf",
     "diaggrok.parsers._pdsm_client_ids",
     "diaggrok.parsers._short_form_4b",
     "diaggrok.parsers._v0_tlv",
@@ -752,6 +756,7 @@
     "diaggrok.parsers.diag_0xb8fd",
     "diaggrok.parsers.diag_0xb8ff",
     "diaggrok.parsers.diag_0xb97f",
+    "diaggrok.parsers.diag_0xb9a6",
     "diaggrok.parsers.diag_0xb9b9",
     "diaggrok.parsers.gnss_helpers",
     "diaggrok.parsers.lte_nas_emm",
@@ -983,6 +988,7 @@
     "0xB8FD",
     "0xB8FF",
     "0xB97F",
+    "0xB9A6",
     "0xB9B9"
   ],
   "roots": [
@@ -1181,10 +1187,11 @@
     "diaggrok.parsers.diag_0xb8fd",
     "diaggrok.parsers.diag_0xb8ff",
     "diaggrok.parsers.diag_0xb97f",
+    "diaggrok.parsers.diag_0xb9a6",
     "diaggrok.parsers.diag_0xb9b9"
   ],
   "schema_version": 1,
   "upstream": {
-    "diaggrok_version": "2026.10.31"
+    "diaggrok_version": "2026.11.8"
   }
 }

@@ -4,8 +4,71 @@ Changes to diaggrok's public decoders that can affect code reading their output.
 A parser's record shape is part of the public interface: renamed, removed or
 re-typed fields are listed here, even when the new decode is more correct.
 
-Releases are tagged `vYYYY.MM.DD`. Releases before this file existed
-(`v2026.08.05`, `v2026.08.23`) carry no entries.
+Releases are tagged `vYYYY.M.D` from `v2026.11.8` on (earlier tags are
+zero-padded, `vYYYY.MM.DD`), so a tag reads exactly like the version PyPI
+shows. Releases before this file existed (`v2026.08.05`, `v2026.08.23`) carry
+no entries.
+
+## v2026.11.8
+
+First release published to PyPI (`pip install diaggrok`). 197 log codes: the
+196 of `v2026.10.31` plus one new parser, `0xB9A6`. No parser was removed.
+Three record shapes change in ways that can break code reading them (below);
+every other shape change adds fields.
+
+### New log code
+
+| code | name | record type |
+|---|---|---|
+| `0xB9A6` | NR cell acquisition timeline (per-stage frame and USTMR stamps, RF config id, target cell's SSB and UL-centre NR-ARFCN) | `Diag0xB9A6` |
+
+It is grounded on the firmware's own F3 text for both versions it decodes
+(`v0x01`, `v0x02`). Its shared time-word decode ships as
+`parsers/_nr_acq_b9be_b9bf.py`, which registers no parser of its own.
+
+### Breaking: removed, renamed or re-typed fields
+
+| record | change |
+|---|---|
+| `DplRecord` (`0x11EB` and the other DPL codes) | `counter` is removed. The old 24-bit "counter" is two fields: `packet_seq` and `segment`, plus `last_segment` (bool). |
+| `Diag0xB8DD` | `slot` is removed: it was mis-modelled. The bits it read are `sfn_word_hi6`. |
+| `Diag0x1476` | `num_gps_svs`, `num_glo_svs`, `num_bds_svs`, `total_gps_svs`, `total_glo_svs` and `total_bds_svs` are `int \| None`: `None` on the `v21` form, which does not carry them, instead of a misread number. |
+| `Diag0xB825` | `cells` is always a list (`list[dict[str, Any]]`), never `None`; each cell also carries its raw wire words. |
+| `Diag0x1886` | `svs` items may also be the new `Sdx55GalSv`. |
+
+### Decode changes in existing parsers
+
+- `0x1886` (GNSS Galileo measurement) decodes the SDX55 variable-length
+  variant (`Sdx55GalSv`).
+- `0x197F` decodes its 9,244 B capture form (`Diag0x197FCapture`).
+- `0xB180` decodes the `v0x04` `8 + N×32` form, picking the stride from the
+  record size.
+- `0xB063` frames records whose RLC extension the strict layout rejected, and
+  marks them `framing_relaxed`.
+- `0xB064` decodes subpacket 8 versions 5, 7 and 8.
+- `0x18AE` and `0x4177` fix lossy reads: values that were truncated or skipped
+  are now exposed (see Fields added).
+- `0x1476`: the `v24` / `v26` SV-block tails and the `v21` tail are kept raw.
+  A cut MDM9600 record is rejected instead of half-decoded.
+- `0x506A`: `to_dict()`'s `tail_raw` is JSON-safe.
+- Every record these parsers now drop logs a warning saying why.
+- `codes`: `0x4801` is `LOG_WCDMA_RRC_ACQ_SUMMARY_INFORMATION` (it is a WCDMA
+  code). `LOG_LTE_CELL_SEARCH_RESULTS` remains as a deprecated alias.
+
+### Fields added
+
+| record | added fields |
+|---|---|
+| `Diag0x1476` | `sv_block_568_raw`, `sv_block_602_raw`, `sv_block_612_raw`, `sv_pad_566`, `sv_pad_600`, `v21_tail_raw` |
+| `Diag0x18AE` | `full_hdr_raw`, `full_trailer_raw`, `gts_raw_25`, `gts_raw_2_6`, `gts_raw_34`, `gts_raw_43`, `gts_raw_52_75`, `gts_raw_u32_48`, `timer_19m2` |
+| `Diag0x4177` | `hdr_count`, `hdr_s16`, `hdr_u16_at23`, `hdr_u16_at34`, `hdr_u16_at8`, `hdr_var_raw`, `hdr_word` |
+| `Diag0xB063` | `framing_relaxed` |
+| `Diag0xB0CD` | `tail_bytes` |
+| `Diag0xB0EE` | `guti_plmn_raw` |
+| `Diag0xB823` | `tac`, `nr_band`, `rel_major`, `word_22` |
+| `Diag0xB825` | `bands`, `blocks` |
+| `Diag0xB8DD` | `sfn_word_hi6` |
+| `HdlcStats` | `qsh_trace_sub_stream_frames` |
 
 ## v2026.10.31
 
