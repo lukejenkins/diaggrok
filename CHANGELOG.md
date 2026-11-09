@@ -9,6 +9,14 @@ zero-padded, `vYYYY.MM.DD`), so a tag reads exactly like the version PyPI
 shows. Releases before this file existed (`v2026.08.05`, `v2026.08.23`) carry
 no entries.
 
+## v2026.11.8.post2
+
+README only. Every link in the README is now a full GitHub URL: PyPI shows the
+README as the project page and resolves relative links against pypi.org, so
+the `LICENSE` and `CHANGELOG.md` links went nowhere there. The README also
+says that `apps/diagreplay/` and `EXTRACT_MANIFEST.json` are in the GitHub
+repo and not in the PyPI package. The code is identical to `v2026.11.8`.
+
 ## v2026.11.8.post1
 
 README only: the Installation section now says `pip install diaggrok`. The

@@ -26,7 +26,7 @@ Every parser was reverse engineered against real captures. Most of the early wor
 
 The thing I care most about: each parser knows its own byte layout and **refuses to guess**. If a record isn't the size it was reverse engineered against, or carries a version byte the parser doesn't know, the parser returns `None` instead of emitting plausible-looking garbage. Size invariance is not format invariance, and I'd rather see a parse-rate drop on a new firmware than trust a silently mis-decoded field. Those drops aren't silent either: when a registered parser declines a record, diaggrok logs a rate-limited warning, so a gap in coverage shows up in your logs instead of hiding in them.
 
-(`EXTRACT_MANIFEST.json` in the repo root lists exactly which log codes and modules made it into this carve.)
+([`EXTRACT_MANIFEST.json`](https://github.com/lukejenkins/diaggrok/blob/main/EXTRACT_MANIFEST.json) in the repo root lists exactly which log codes and modules made it into this carve.)
 
 ## Installation
 
@@ -77,10 +77,11 @@ for code, ts, payload in iter_records(Path("capture.dlf").read_bytes()):
         print(hex(code), result.to_dict())
 ```
 
-`apps/diagreplay/` wraps that in a small reader that also handles `.zst` / `.gz` compressed captures and can filter by log code. Its command line lists the records in a capture (timestamp, code, length, and with `--json` the raw payload as hex) without decoding them, which is handy for a first look:
+[`apps/diagreplay/`](https://github.com/lukejenkins/diaggrok/tree/main/apps/diagreplay) in the GitHub repo (it is not part of the PyPI package, so run it from a clone) wraps that in a small reader that also handles `.zst` / `.gz` compressed captures and can filter by log code. Its command line lists the records in a capture (timestamp, code, length, and with `--json` the raw payload as hex) without decoding them, which is handy for a first look:
 
 ```sh
-cd apps/diagreplay
+git clone https://github.com/lukejenkins/diaggrok.git
+cd diaggrok/apps/diagreplay
 python -m diagreplay capture.dlf.zst --code 0x1526 --json
 ```
 
@@ -107,7 +108,7 @@ Some of these log codes carry personal data, because the modem logs it: NAS and 
 
 ## Changes between releases
 
-Releases are tagged `vYYYY.MM.DD`. A parser's record shape is part of the public interface, so [CHANGELOG.md](./CHANGELOG.md) lists every renamed, removed, or re-typed field. `v2026.10.04` has breaking changes to 22 existing parsers (mostly placeholder fields replaced by real decodes, plus `0x4179`, which turned out to be a WCDMA record rather than LTE). Read the changelog before upgrading from `v2026.08.23`.
+Releases are tagged `vYYYY.M.D` (unpadded from `v2026.11.8` on, so the tag reads the same as the PyPI version; earlier tags are zero-padded). A parser's record shape is part of the public interface, so [CHANGELOG.md](https://github.com/lukejenkins/diaggrok/blob/main/CHANGELOG.md) lists every renamed, removed, or re-typed field. `v2026.10.04` has breaking changes to 22 existing parsers (mostly placeholder fields replaced by real decodes, plus `0x4179`, which turned out to be a WCDMA record rather than LTE). Read the changelog before upgrading from `v2026.08.23`.
 
 ## Scope, and some honesty
 
@@ -133,4 +134,4 @@ The AI 'bots are VERY good at finding patterns and matching values, exactly what
 
 ## License
 
-Apache-2.0. See [LICENSE](./LICENSE).
+Apache-2.0. See [LICENSE](https://github.com/lukejenkins/diaggrok/blob/main/LICENSE).
